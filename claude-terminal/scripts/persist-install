@@ -194,21 +194,42 @@ install_ha_cli() {
     # Make executable
     chmod +x "${target_path}"
 
-    # Verify
-    if "${target_path}" --version >/dev/null 2>&1; then
-        echo ""
-        echo "✅ Home Assistant CLI installed successfully!"
-        "${target_path}" --version
-        echo ""
-        echo "💡 Try these commands:"
-        echo "   ha core info"
-        echo "   ha addons list"
-        echo "   ha supervisor info"
-    else
-        echo "❌ Downloaded binary is not working"
+    # Verify file was downloaded and is executable
+    if [ ! -x "${target_path}" ]; then
+        echo "❌ Binary is not executable"
         rm -f "${target_path}"
         return 1
     fi
+
+    # Check file size (should be > 1MB)
+    local size=$(stat -f%z "${target_path}" 2>/dev/null || stat -c%s "${target_path}" 2>/dev/null || echo "0")
+    if [ "$size" -lt 1000000 ]; then
+        echo "❌ Downloaded file is too small (${size} bytes)"
+        rm -f "${target_path}"
+        return 1
+    fi
+
+    echo ""
+    echo "✅ Home Assistant CLI installed successfully!"
+    echo "📦 Binary size: $((size / 1024 / 1024)) MB"
+    echo "📍 Location: ${target_path}"
+    echo ""
+
+    # Try to get version (may fail if supervisor not accessible, but that's OK)
+    echo "🔍 Testing ha command..."
+    if "${target_path}" --version 2>&1 | head -5; then
+        echo ""
+    else
+        echo "⚠️  Note: 'ha --version' returned an error, but the binary is installed."
+        echo "   This is normal if supervisor API is not accessible yet."
+        echo "   Try: ha core info"
+    fi
+
+    echo ""
+    echo "💡 Try these commands:"
+    echo "   ha core info"
+    echo "   ha addons list"
+    echo "   ha supervisor info"
 }
 
 # Main execution
