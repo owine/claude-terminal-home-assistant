@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.2
+
+### 🐛 Critical Bug Fix - Express Route Order
+- **Fixed 404 errors on API endpoints**: API routes now registered before static file middleware
+  - **Root cause**: Static file middleware was placed before API routes in Express app
+  - **Impact**: `/config` returned HTML instead of JSON, `/terminal` returned 404
+  - **Solution**: Moved all API routes (/health, /config, /upload, /terminal) before static middleware
+  - **Result**: All endpoints now work correctly
+
+This is a common Express.js gotcha - middleware order matters! Static file middleware should come AFTER API routes to prevent it from intercepting API requests.
+
 ## 1.6.1
 
 ### 🐛 Bug Fixes - Image Paste Service
