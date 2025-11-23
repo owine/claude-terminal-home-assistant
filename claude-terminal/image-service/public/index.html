@@ -159,7 +159,8 @@
         let uploadDir = '/data/images';
 
         // Fetch configuration and load ttyd
-        fetch('/config')
+        // Use relative paths for Home Assistant ingress compatibility
+        fetch('config')
             .then(res => res.json())
             .then(config => {
                 ttydPort = config.ttydPort;
@@ -176,8 +177,8 @@
 
         function loadTerminal() {
             const iframe = document.getElementById('terminal-frame');
-            // Use proxy endpoint instead of direct port access
-            iframe.src = '/terminal/';
+            // Use relative path for Home Assistant ingress compatibility
+            iframe.src = 'terminal/';
         }
 
         const status = document.getElementById('status');
@@ -206,7 +207,8 @@
             uploadBtn.disabled = true;
 
             try {
-                const response = await fetch('/upload', {
+                // Use relative path for Home Assistant ingress compatibility
+                const response = await fetch('upload', {
                     method: 'POST',
                     body: formData
                 });
