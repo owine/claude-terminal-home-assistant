@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.5.2
+
+### 🐛 Critical Bug Fix - Persistent Packages PATH
+- **Fixed persistent packages not available in terminal**: Packages installed via `persist-install` are now correctly available in all bash sessions
+  - **Root cause**: Environment variables (PATH, LD_LIBRARY_PATH) were only set in parent run.sh process
+  - **Solution**: Created `/etc/profile.d/persistent-packages.sh` which is auto-sourced by all bash shells
+  - **Impact**: `python3`, `ha`, and other installed packages now work immediately after installation
+  - **Affected versions**: 1.4.0 - 1.5.1 (packages were installed correctly but not in PATH)
+
+- **Technical details**:
+  - ttyd spawns bash sessions that don't inherit parent process environment variables
+  - Standard Linux solution: Use `/etc/profile.d/` for system-wide environment configuration
+  - Profile script sets HOME, XDG variables, and persistent package paths for all sessions
+  - No changes needed to existing installations - automatic on container restart
+
+### 📚 Documentation Updates
+- Added troubleshooting section for PATH issues in CLAUDE.md
+- Documented the fix and migration path from older versions
+- Updated development notes with container testing workflow
+
+## 1.5.1
+
+### 🐛 Bug Fixes
+- Improved Home Assistant CLI installation verification
+- Enhanced error handling for ha command checks
+
+## 1.5.0
+
+### ✨ New Features
+- **Official Home Assistant CLI support**: Install with `persist-install --ha-cli`
+  - Auto-detects architecture (amd64, aarch64, armv7, armhf, i386)
+  - Downloads binary from official GitHub releases
+  - Provides full access to Home Assistant management commands
+  - Alternative to Supervisor REST API for programmatic access
+
 ## 1.4.0
 
 ### ✨ New Features - Persistent Package System
