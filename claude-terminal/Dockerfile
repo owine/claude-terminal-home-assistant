@@ -9,6 +9,9 @@ RUN apk add --no-cache \
     bash \
     curl \
     nano \
+    python3 \
+    py3-pip \
+    jq \
     && (npm config set registry https://registry.npmjs.org/ || true) \
     && (npm config set fetch-retries 3 || true) \
     && (npm config set fetch-retry-mintimeout 20000 || true) \
@@ -22,6 +25,26 @@ RUN apk add --no-cache \
         (echo "Attempt $i failed, retrying in 10 seconds..." && sleep 10); \
     done \
     && npm cache clean --force
+
+# Install Home Assistant CLI (ha command)
+# Download appropriate binary based on build architecture
+# Automatically fetches the latest version from GitHub
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+        amd64)   HA_ARCH="amd64" ;; \
+        arm64)   HA_ARCH="aarch64" ;; \
+        arm/v7)  HA_ARCH="armv7" ;; \
+        arm/v6)  HA_ARCH="armhf" ;; \
+        386)     HA_ARCH="i386" ;; \
+        *)       echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    echo "Fetching latest Home Assistant CLI version..." && \
+    HA_VERSION=$(curl -fsSL https://api.github.com/repos/home-assistant/cli/releases/latest | jq -r '.tag_name') && \
+    echo "Installing Home Assistant CLI ${HA_VERSION} for ${HA_ARCH}..." && \
+    curl -fsSL -o /usr/bin/ha \
+        "https://github.com/home-assistant/cli/releases/download/${HA_VERSION}/ha_${HA_ARCH}" && \
+    chmod +x /usr/bin/ha && \
+    echo "Home Assistant CLI ${HA_VERSION} installed successfully"
 
 # Create directory for Claude configuration and set working directory
 RUN mkdir -p /config/claude-config
