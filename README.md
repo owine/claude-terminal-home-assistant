@@ -10,6 +10,16 @@ For an enhanced Claude Code experience with Home Assistant, we recommend install
 
 These plugins provide Claude Code with specialized tools and context for Home Assistant development, including entity management, automation helpers, and more.
 
+### Installation
+
+Run this command inside Claude Terminal Pro:
+
+```bash
+npx claude-plugins install @ESJavadex/claude-homeassistant-plugins/homeassistant-config
+```
+
+This automatically creates a `CLAUDE.md` file in your Home Assistant config directory with context and instructions tailored for Home Assistant development.
+
 ## Fork Attribution
 
 This project is a fork of [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) created by Tom Cassady.
