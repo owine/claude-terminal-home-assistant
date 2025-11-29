@@ -2,35 +2,24 @@
 
 ## 2.0.0
 
-### 🎉 Major Release - Zero-Configuration Home Assistant Development
-
-This release transforms Claude Terminal Pro into a fully-featured, zero-configuration Home Assistant development environment.
+### 🎉 Major Release - Enhanced Developer Experience
 
 ### ✨ New Features
-
-- **Claude Home Assistant Plugins Pre-installed**: Plugins are now automatically installed during Docker build
-  - No manual installation required
-  - `CLAUDE.md` with HA-specific context automatically created in `/config`
-  - Provides Claude Code with specialized tools for Home Assistant development
-  - Plugin source: [@ESJavadex/claude-homeassistant-plugins](https://github.com/ESJavadex/claude-homeassistant-plugins)
 
 - **Git Pre-installed**: Git version control included in base Docker image
   - No need to use `persist-install git` anymore
   - Available immediately on fresh installs
   - Enables version control workflows within the terminal
 
-### 🚀 What's New Since v1.7.x
+### 📦 Recommended Plugins
 
-| Feature | Before (v1.7.x) | Now (v2.0.0) |
-|---------|-----------------|--------------|
-| HA Plugins | Manual install required | Pre-installed |
-| CLAUDE.md | Manual creation | Auto-generated |
-| Git | `persist-install git` | Pre-installed |
-| Setup time | Multiple steps | Zero config |
+For an enhanced experience, manually install the Claude Home Assistant Plugins:
 
-### 💡 Why v2.0.0?
+```bash
+npx claude-plugins install @ESJavadex/claude-homeassistant-plugins/homeassistant-config
+```
 
-This is a major version bump because the add-on now works out-of-the-box with Home Assistant-specific context and tools. No additional setup required - just install and start developing!
+See [claude-homeassistant-plugins](https://github.com/ESJavadex/claude-homeassistant-plugins) for details.
 
 ## 1.7.1
 

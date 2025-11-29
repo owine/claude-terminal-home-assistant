@@ -2,15 +2,23 @@
 
 An enhanced Home Assistant add-on that integrates Anthropic's Claude Code CLI with persistent package management and advanced features.
 
-## Pre-installed Plugins
+## Recommended Plugins
 
-Claude Terminal Pro comes with the **Claude Home Assistant Plugins** pre-installed:
+For an enhanced Claude Code experience with Home Assistant, we recommend installing the **Claude Home Assistant Plugins**:
 
 **[https://github.com/ESJavadex/claude-homeassistant-plugins](https://github.com/ESJavadex/claude-homeassistant-plugins)**
 
 These plugins provide Claude Code with specialized tools and context for Home Assistant development, including entity management, automation helpers, and more.
 
-A `CLAUDE.md` file is automatically created in your Home Assistant config directory with context and instructions tailored for Home Assistant development - no manual setup required!
+### Installation
+
+Run this command inside Claude Terminal Pro:
+
+```bash
+npx claude-plugins install @ESJavadex/claude-homeassistant-plugins/homeassistant-config
+```
+
+This creates a `CLAUDE.md` file in your Home Assistant config directory with context and instructions tailored for Home Assistant development.
 
 ## Fork Attribution
 

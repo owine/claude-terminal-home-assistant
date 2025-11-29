@@ -27,11 +27,6 @@ RUN apk add --no-cache \
     done \
     && npm cache clean --force
 
-# Install Claude Home Assistant Plugins
-# This creates CLAUDE.md in /config with HA-specific context
-RUN npx claude-plugins install @ESJavadex/claude-homeassistant-plugins/homeassistant-config \
-    && echo "Claude Home Assistant plugins installed successfully"
-
 # Install Home Assistant CLI (ha command)
 # Download appropriate binary based on build architecture
 # Automatically fetches the latest version from GitHub
