@@ -146,6 +146,43 @@ podman exec test-claude-dev chmod +x /opt/scripts/claude-session-picker.sh
 - Must handle credential persistence across container restarts
 - Requires multi-architecture compatibility
 
+## Release Management
+
+### CRITICAL: Always Update Version and Changelog
+
+**When making ANY changes to the add-on, you MUST:**
+
+1. **Bump the version** in `claude-terminal/config.yaml`
+   - Patch version (x.x.X) for bug fixes and small changes
+   - Minor version (x.X.0) for new features
+   - Major version (X.0.0) for breaking changes
+
+2. **Update the changelog** in `claude-terminal/CHANGELOG.md`
+   - Add new version section at the TOP of the file
+   - Use the format: `## X.X.X` followed by `### Category - Description`
+   - Categories: ✨ New Feature, 🐛 Bug Fix, 🛠️ Improvement, 📚 Documentation, 🔧 Technical
+   - Include bullet points describing what changed and why
+
+**Example workflow:**
+```bash
+# 1. Make your code changes
+# 2. Bump version in config.yaml (e.g., 1.7.3 → 1.7.4)
+# 3. Add changelog entry at the top of CHANGELOG.md
+# 4. Commit all changes together
+```
+
+**Changelog entry format:**
+```markdown
+## 1.7.4
+
+### ✨ New Feature - Short Description
+- **Bold summary**: Detailed explanation of the change
+  - Sub-bullet for additional details
+  - Another sub-bullet if needed
+```
+
+**DO NOT** commit changes without updating both the version and changelog!
+
 ## Persistent Package Management (v1.4.0+)
 
 ### CRITICAL: When Users Ask to Install Packages
