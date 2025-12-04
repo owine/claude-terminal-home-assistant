@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.2
+
+### 🐛 Bug Fix - Claude CLI Launch Failure
+- **Fixed session picker dropping to Node.js REPL**: Claude Code CLI now launches correctly
+  - **Root cause**: Scripts incorrectly used `node "$(which claude)"` which passes the claude binary path to Node.js as if it were a JS file to execute
+  - **Symptom**: Selecting "New interactive session" showed `Welcome to Node.js v20.15.1` and `>` prompt instead of launching Claude
+  - **Solution**: Changed all invocations to use `exec claude $flags` directly, since `claude` is already a properly wrapped executable
+  - **Affected scripts**: `claude-session-picker.sh`, `claude-auth-helper.sh`
+  - **Result**: All session picker options now correctly launch Claude Code CLI
+
 ## 2.0.1
 
 ### 🐛 Bug Fix - Build Error
