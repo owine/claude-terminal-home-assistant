@@ -58,21 +58,21 @@ launch_claude_new() {
     local flags=$(get_claude_flags)
     echo "🚀 Starting new Claude session..."
     sleep 1
-    exec claude $flags
+    exec /usr/local/bin/claude $flags
 }
 
 launch_claude_continue() {
     local flags=$(get_claude_flags)
     echo "⏩ Continuing most recent conversation..."
     sleep 1
-    exec claude -c $flags
+    exec /usr/local/bin/claude -c $flags
 }
 
 launch_claude_resume() {
     local flags=$(get_claude_flags)
     echo "📋 Opening conversation list for selection..."
     sleep 1
-    exec claude -r $flags
+    exec /usr/local/bin/claude -r $flags
 }
 
 launch_claude_custom() {
@@ -94,7 +94,7 @@ launch_claude_custom() {
         echo "🚀 Running: claude $custom_args $base_flags"
         sleep 1
         # Use eval to properly handle quoted arguments
-        eval "exec claude $custom_args $base_flags"
+        eval "exec /usr/local/bin/claude $custom_args $base_flags"
     fi
 }
 

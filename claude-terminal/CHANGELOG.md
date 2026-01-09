@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.5
+
+### 🐛 Bug Fix - Claude CLI Not Found
+- **Fixed session picker failing to launch Claude**: Used full path `/usr/local/bin/claude`
+  - ttyd bash sessions don't inherit full PATH from parent process
+  - All claude invocations now use absolute path for reliability
+
 ## 2.0.4
 
 ### ✨ New Feature - GitHub CLI Pre-installed
