@@ -20,7 +20,8 @@ RUN apk add --no-cache \
     git \
     vim \
     wget \
-    tree
+    tree \
+    tmux
 
 # Install Claude Code CLI using native installer (recommended by Anthropic)
 # Creates symlink to /usr/local/bin for script compatibility
