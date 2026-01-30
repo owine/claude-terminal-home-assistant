@@ -100,6 +100,13 @@ PROFILE_EOF
     # Migrate any existing authentication files from legacy locations
     migrate_legacy_auth_files "$claude_config_dir"
 
+    # Install tmux configuration to user home directory
+    if [ -f "/opt/scripts/tmux.conf" ]; then
+        cp /opt/scripts/tmux.conf "$data_home/.tmux.conf"
+        chmod 644 "$data_home/.tmux.conf"
+        bashio::log.info "  - tmux configuration installed"
+    fi
+
     # Setup Claude Code skills and commands
     if [ -d "/opt/.claude" ]; then
         if [ ! -d "$data_home/.claude" ]; then
@@ -350,6 +357,10 @@ start_web_terminal() {
 
     # Start the image upload service first
     start_image_service
+
+    # Set TTYD environment variable for tmux configuration
+    # This disables tmux mouse mode since ttyd has better mouse handling for web terminals
+    export TTYD=1
 
     # Run ttyd with improved configuration
     exec ttyd \
