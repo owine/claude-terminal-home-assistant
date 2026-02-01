@@ -36,13 +36,14 @@ show_menu() {
     echo "Choose your Claude session type:"
     echo ""
 
-    # Show reconnect option if session exists
+    # Show reconnect option if session exists (becomes default)
     if check_existing_session; then
-        echo "  0) 🔄 Reconnect to existing session (recommended)"
+        echo "  0) 🔄 Reconnect to existing session (default)"
         echo ""
+        echo "  1) 🆕 New interactive session"
+    else
+        echo "  1) 🆕 New interactive session (default)"
     fi
-
-    echo "  1) 🆕 New interactive session (default)"
     echo "  2) ⏩ Continue most recent conversation (-c)"
     echo "  3) 📋 Resume from conversation list (-r)"
     echo "  4) ⚙️  Custom Claude command (manual flags)"
