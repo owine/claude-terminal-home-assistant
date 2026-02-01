@@ -1,4 +1,4 @@
-# Claude Terminal Pro for Home Assistant
+# Claude Terminal Prowine for Home Assistant
 
 An enhanced Home Assistant add-on that integrates Anthropic's Claude Code CLI with persistent package management and advanced features.
 
@@ -12,7 +12,7 @@ These plugins provide Claude Code with specialized tools and context for Home As
 
 ### Installation
 
-Run this command inside Claude Terminal Pro:
+Run this command inside Claude Terminal Prowine:
 
 ```bash
 npx claude-plugins install @ESJavadex/claude-homeassistant-plugins/homeassistant-config
@@ -53,7 +53,7 @@ To add this repository to your Home Assistant instance:
 
 ## Add-ons
 
-### Claude Terminal Pro
+### Claude Terminal Prowine
 
 A web-based terminal interface with Claude Code CLI pre-installed and enhanced package management. This add-on provides a terminal environment directly in your Home Assistant dashboard, allowing you to use Claude's powerful AI capabilities for coding, automation, and configuration tasks.
 

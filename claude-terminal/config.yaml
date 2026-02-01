@@ -1,5 +1,5 @@
 ---
-name: "Claude Terminal Pro"
+name: "Claude Terminal Prowine"
 description: "Enhanced terminal interface for Anthropic's Claude Code CLI with persistent auth, package management, and image paste support"
 version: "1.0.0"
 slug: "claude_terminal_pro"
@@ -18,7 +18,7 @@ url: "https://github.com/owine/claude-terminal-home-assistant"
 ingress: true
 ingress_port: 7680
 panel_icon: mdi:code-braces-box
-panel_title: "Claude Terminal Pro"
+panel_title: "Claude Terminal Prowine"
 panel_admin: true
 
 # Port configuration
