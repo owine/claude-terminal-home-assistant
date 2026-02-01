@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1
+
+### 🐛 Bug Fix - Revert tmux auto-session
+
+- **Removed automatic tmux session management**: tmux was causing "sessions should be nested with care" errors when running inside ttyd's container environment
+  - Session picker now launches Claude directly without tmux wrapper
+  - tmux remains installed and available for manual use if desired
+  - All session picker options (new, continue, resume, custom) work correctly
+
 ## 1.0.0
 
 ### 🎉 Initial Release - Personal Fork
@@ -11,16 +20,13 @@ Personal fork maintained by [@owine](https://github.com/owine).
 - [ESJavadex/claude-code-ha](https://github.com/ESJavadex/claude-code-ha) - Enhanced fork by Javier Santos
 
 **Integrated PRs from upstream:**
-- [PR #46](https://github.com/heytcass/home-assistant-addons/pull/46) - tmux session persistence by Petter Sandholdt
+- [PR #46](https://github.com/heytcass/home-assistant-addons/pull/46) - tmux configuration by Petter Sandholdt (tmux available for manual use)
 - [PR #49](https://github.com/heytcass/home-assistant-addons/pull/49) - ha-mcp Home Assistant MCP integration by Brian Egge
 
 ### Current Features
 
 - **Native Claude Code Installation**: Uses Anthropic's official installer (`curl -fsSL https://claude.ai/install.sh`)
-- **tmux Session Persistence**: Terminal sessions survive navigation away from the add-on
-  - Reconnect to existing sessions automatically
-  - OSC 52 clipboard support for copy/paste
-  - 50k line scroll history
+- **tmux Available**: tmux is installed for manual use (not auto-launched due to container compatibility)
 - **Home Assistant MCP Integration**: Natural language control of Home Assistant via [ha-mcp](https://github.com/homeassistant-ai/ha-mcp)
   - 97+ tools for entity control, automations, scripts, dashboards, history
   - Automatic authentication via Supervisor API

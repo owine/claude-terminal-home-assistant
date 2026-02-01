@@ -2,9 +2,9 @@
 
 # Claude Session Picker - Interactive menu for choosing Claude session type
 # Provides options for new session, continue, resume, manual command, or regular shell
-# Now with tmux session persistence for reconnection on navigation
 
-TMUX_SESSION_NAME="claude"
+# Full path to claude
+CLAUDE_BIN="/usr/local/bin/claude"
 
 # Get Claude flags from environment
 get_claude_flags() {
@@ -12,7 +12,6 @@ get_claude_flags() {
     if [ "${CLAUDE_DANGEROUS_MODE}" = "true" ]; then
         flags="--dangerously-skip-permissions"
         echo "⚠️  Running in DANGEROUS mode (unrestricted file access)" >&2
-        # Set IS_SANDBOX=1 to allow dangerous mode when running as root
         export IS_SANDBOX=1
     fi
     echo "$flags"
@@ -27,23 +26,10 @@ show_banner() {
     echo ""
 }
 
-# Check if a tmux session exists and is running
-check_existing_session() {
-    tmux has-session -t "$TMUX_SESSION_NAME" 2>/dev/null
-}
-
 show_menu() {
     echo "Choose your Claude session type:"
     echo ""
-
-    # Show reconnect option if session exists (becomes default)
-    if check_existing_session; then
-        echo "  0) 🔄 Reconnect to existing session (default)"
-        echo ""
-        echo "  1) 🆕 New interactive session"
-    else
-        echo "  1) 🆕 New interactive session (default)"
-    fi
+    echo "  1) 🆕 New interactive session (default)"
     echo "  2) ⏩ Continue most recent conversation (-c)"
     echo "  3) 📋 Resume from conversation list (-r)"
     echo "  4) ⚙️  Custom Claude command (manual flags)"
@@ -56,85 +42,47 @@ show_menu() {
 
 get_user_choice() {
     local choice
-    local default="1"
-
-    # Default to 0 (reconnect) if session exists
-    if check_existing_session; then
-        default="0"
-    fi
-
-    printf "Enter your choice [0-8] (default: %s): " "$default" >&2
+    printf "Enter your choice [1-8] (default: 1): " >&2
     read -r choice
-    
 
-    # Use default if empty
     if [ -z "$choice" ]; then
-        choice="$default"
+        choice="1"
     fi
 
-    # Trim whitespace and return only the choice
     choice=$(echo "$choice" | tr -d '[:space:]')
     echo "$choice"
 }
 
-# Attach to existing tmux session
-attach_existing_session() {
-    echo "🔄 Reconnecting to existing Claude session..."
-    sleep 1
-    exec tmux attach-session -t "$TMUX_SESSION_NAME"
-}
-
-# Full path to claude (tmux doesn't inherit PATH)
-CLAUDE_BIN="/usr/local/bin/claude"
-
-# Start claude in a new tmux session (kills existing if any)
 launch_claude_new() {
     local flags=$(get_claude_flags)
     echo "🚀 Starting new Claude session..."
-
-    # Kill existing session if present
-    if check_existing_session; then
-        echo "   (closing previous session)"
-        tmux kill-session -t "$TMUX_SESSION_NAME" 2>/dev/null
-    fi
-
     sleep 1
     if [ -n "$flags" ]; then
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN $flags
+        exec $CLAUDE_BIN $flags
     else
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN
+        exec $CLAUDE_BIN
     fi
 }
 
 launch_claude_continue() {
     local flags=$(get_claude_flags)
     echo "⏩ Continuing most recent conversation..."
-
-    if check_existing_session; then
-        tmux kill-session -t "$TMUX_SESSION_NAME" 2>/dev/null
-    fi
-
     sleep 1
     if [ -n "$flags" ]; then
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN -c $flags
+        exec $CLAUDE_BIN -c $flags
     else
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN -c
+        exec $CLAUDE_BIN -c
     fi
 }
 
 launch_claude_resume() {
     local flags=$(get_claude_flags)
     echo "📋 Opening conversation list for selection..."
-
-    if check_existing_session; then
-        tmux kill-session -t "$TMUX_SESSION_NAME" 2>/dev/null
-    fi
-
     sleep 1
     if [ -n "$flags" ]; then
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN -r $flags
+        exec $CLAUDE_BIN -r $flags
     else
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN -r
+        exec $CLAUDE_BIN -r
     fi
 }
 
@@ -155,14 +103,8 @@ launch_claude_custom() {
         launch_claude_new
     else
         echo "🚀 Running: claude $custom_args $base_flags"
-
-        if check_existing_session; then
-            tmux kill-session -t "$TMUX_SESSION_NAME" 2>/dev/null
-        fi
-
         sleep 1
-        # Use bash -c for custom args to handle quoted strings properly
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- bash -c "$CLAUDE_BIN $custom_args $base_flags"
+        eval "exec $CLAUDE_BIN $custom_args $base_flags"
     fi
 }
 
@@ -178,17 +120,14 @@ launch_github_auth() {
     echo "════════════════════════════"
     echo ""
 
-    # Check if gh is installed
     if ! command -v gh &>/dev/null; then
         echo "❌ GitHub CLI (gh) is not installed!"
-        echo "   Update to Claude Terminal Pro v2.0.4+ to get gh pre-installed."
         echo ""
         printf "Press Enter to return to menu..." >&2
         read -r
         return
     fi
 
-    # Check current auth status
     echo "Checking current authentication status..."
     echo ""
     if gh auth status 2>/dev/null; then
@@ -231,11 +170,7 @@ launch_github_auth() {
         echo "  3. Select scopes: repo, read:org, workflow"
         echo "  4. Generate and copy the token"
         echo ""
-        gh auth login --with-token <<< "$(read -rsp 'Paste your token: ' token; echo "$token")" 2>/dev/null || {
-            # Fallback to interactive if the above fails
-            echo ""
-            gh auth login -p https -h github.com
-        }
+        gh auth login -p https -h github.com
     fi
 
     echo ""
@@ -257,7 +192,7 @@ launch_github_auth() {
 
 launch_bash_shell() {
     echo "🐚 Dropping to bash shell..."
-    echo "Tip: Run 'tmux new-session -A -s claude \"claude\"' to start with persistence"
+    echo "Tip: Run 'claude' to start Claude manually"
     sleep 1
     exec bash
 }
@@ -267,7 +202,6 @@ exit_session_picker() {
     exit 0
 }
 
-# Main execution flow
 main() {
     while true; do
         show_banner
@@ -275,14 +209,6 @@ main() {
         choice=$(get_user_choice)
 
         case "$choice" in
-            0)
-                if check_existing_session; then
-                    attach_existing_session
-                else
-                    echo "❌ No existing session found"
-                    sleep 1
-                fi
-                ;;
             1)
                 launch_claude_new
                 ;;
@@ -310,7 +236,7 @@ main() {
             *)
                 echo ""
                 echo "❌ Invalid choice: '$choice'"
-                echo "Please select a number between 0-8"
+                echo "Please select a number between 1-8"
                 echo ""
                 printf "Press Enter to continue..." >&2
                 read -r
@@ -319,8 +245,6 @@ main() {
     done
 }
 
-# Handle cleanup on exit - don't kill tmux session, just exit picker
 trap 'echo ""; exit 0' EXIT INT TERM
 
-# Run main function
 main "$@"

@@ -265,25 +265,20 @@ get_claude_launch_command() {
     fi
 
     if [ "$auto_launch_claude" = "true" ]; then
-        # Use tmux for session persistence - attach to existing or create new
-        # Using full path since tmux doesn't inherit PATH
+        # Auto-launch Claude directly
         if [ -n "$claude_flags" ]; then
-            echo "tmux new-session -A -s claude -- /usr/local/bin/claude $claude_flags"
+            echo "clear && echo 'Welcome to Claude Terminal!' && echo '' && echo 'Starting Claude...' && sleep 1 && /usr/local/bin/claude $claude_flags"
         else
-            echo "tmux new-session -A -s claude -- /usr/local/bin/claude"
+            echo "clear && echo 'Welcome to Claude Terminal!' && echo '' && echo 'Starting Claude...' && sleep 1 && /usr/local/bin/claude"
         fi
     else
-        # Show interactive session picker (also with tmux persistence)
+        # Show interactive session picker
         if [ -f /usr/local/bin/claude-session-picker ]; then
-            echo "tmux new-session -A -s claude-picker -- /usr/local/bin/claude-session-picker"
+            echo "clear && /usr/local/bin/claude-session-picker"
         else
             # Fallback if session picker is missing
             bashio::log.warning "Session picker not found, falling back to auto-launch"
-            if [ -n "$claude_flags" ]; then
-                echo "tmux new-session -A -s claude -- /usr/local/bin/claude $claude_flags"
-            else
-                echo "tmux new-session -A -s claude -- /usr/local/bin/claude"
-            fi
+            echo "clear && echo 'Welcome to Claude Terminal!' && echo '' && echo 'Starting Claude...' && sleep 1 && /usr/local/bin/claude"
         fi
     fi
 }
@@ -367,22 +362,12 @@ start_web_terminal() {
     # Start the image upload service first
     start_image_service
 
-    # Set TTYD environment variable for tmux configuration
-    # This disables tmux mouse mode since ttyd has better mouse handling for web terminals
-    export TTYD=1
-
-    # Run ttyd with improved configuration
-    # Write launch command to a script file to avoid quoting issues
-    local launcher="/tmp/claude-launcher.sh"
-    echo "#!/bin/bash" > "$launcher"
-    echo "$launch_command" >> "$launcher"
-    chmod +x "$launcher"
-
+    # Run ttyd with the launch command
     exec ttyd \
         --port "${port}" \
         --interface 0.0.0.0 \
         --writable \
-        "$launcher"
+        bash -c "$launch_command"
 }
 
 # Run health check
