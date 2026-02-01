@@ -21,7 +21,7 @@ init_environment() {
     bashio::log.info "Initializing Claude Code environment in /data..."
 
     # Create all required directories
-    if ! mkdir -p "$data_home" "$config_dir/claude" "$config_dir/gh" "$cache_dir" "$state_dir" "/data/.local" \
+    if ! mkdir -p "$data_home" "$data_home/.local/bin" "$config_dir/claude" "$config_dir/gh" "$cache_dir" "$state_dir" "/data/.local" \
                   "$persist_bin" "$persist_lib" "$persist_python"; then
         bashio::log.error "Failed to create directories in /data"
         exit 1
@@ -56,7 +56,8 @@ init_environment() {
     fi
 
     # Setup persistent package paths (HIGHEST PRIORITY)
-    export PATH="$persist_bin:$persist_python/venv/bin:$PATH"
+    # Include $HOME/.local/bin for Claude Code native components
+    export PATH="$persist_bin:$persist_python/venv/bin:$HOME/.local/bin:$PATH"
     export LD_LIBRARY_PATH="$persist_lib:${LD_LIBRARY_PATH:-}"
     export PKG_CONFIG_PATH="$persist_lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
@@ -82,7 +83,8 @@ export ANTHROPIC_HOME="/data"
 export GH_CONFIG_DIR="/data/.config/gh"
 
 # Persistent package paths (HIGHEST PRIORITY)
-export PATH="/data/packages/bin:/data/packages/python/venv/bin:$PATH"
+# Include $HOME/.local/bin for Claude Code native components
+export PATH="/data/packages/bin:/data/packages/python/venv/bin:$HOME/.local/bin:$PATH"
 export LD_LIBRARY_PATH="/data/packages/lib:${LD_LIBRARY_PATH:-}"
 export PKG_CONFIG_PATH="/data/packages/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 

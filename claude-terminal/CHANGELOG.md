@@ -11,6 +11,13 @@
 - **Updated health checks**: Network connectivity now validates `claude.ai` instead of npm registry
 - **Simplified run.sh**: Removed `node $(which claude)` wrapper, now calls `claude` directly
 
+### 🐛 Bug Fix - Claude Code Native Installation PATH
+- **Fixed "~/.local/bin is not in your PATH" warning**: Added `$HOME/.local/bin` to PATH
+  - Claude Code CLI may install native components to `~/.local/bin`
+  - Container HOME is `/data/home`, so this resolves to `/data/home/.local/bin`
+  - Directory is now created on startup and included in PATH
+  - Fix applies to both init_environment and profile script for all bash sessions
+
 ## 2.0.5
 
 ### 🐛 Bug Fix - Claude CLI Not Found
