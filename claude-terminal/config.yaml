@@ -33,12 +33,14 @@ ports_description:
 options:
   auto_launch_claude: true
   dangerously_skip_permissions: false
+  enable_ha_mcp: true
   persistent_apk_packages: []
   persistent_pip_packages: []
 
 schema:
   auto_launch_claude: bool?
   dangerously_skip_permissions: bool?
+  enable_ha_mcp: bool?
   persistent_apk_packages:
     - str?
   persistent_pip_packages:

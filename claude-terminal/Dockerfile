@@ -28,6 +28,12 @@ RUN apk add --no-cache \
 RUN curl -fsSL https://claude.ai/install.sh | bash \
     && ln -sf /root/.local/bin/claude /usr/local/bin/claude
 
+# Install uv for running ha-mcp (Python package manager/runner)
+# ha-mcp requires Python 3.13+, uv handles this automatically
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -sf /root/.local/bin/uv /usr/local/bin/uv \
+    && ln -sf /root/.local/bin/uvx /usr/local/bin/uvx
+
 # Install Home Assistant CLI (ha command)
 # Download appropriate binary based on build architecture
 # Automatically fetches the latest version from GitHub
