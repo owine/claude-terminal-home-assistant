@@ -95,7 +95,11 @@ launch_claude_new() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude $flags"
+    if [ -n "$flags" ]; then
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude $flags
+    else
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude
+    fi
 }
 
 launch_claude_continue() {
@@ -107,7 +111,11 @@ launch_claude_continue() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude -c $flags"
+    if [ -n "$flags" ]; then
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude -c $flags
+    else
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude -c
+    fi
 }
 
 launch_claude_resume() {
@@ -119,7 +127,11 @@ launch_claude_resume() {
     fi
 
     sleep 1
-    exec tmux new-session -s "$TMUX_SESSION_NAME" "claude -r $flags"
+    if [ -n "$flags" ]; then
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude -r $flags
+    else
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude -r
+    fi
 }
 
 launch_claude_custom() {
@@ -145,7 +157,8 @@ launch_claude_custom() {
         fi
 
         sleep 1
-        exec tmux new-session -s "$TMUX_SESSION_NAME" "claude $custom_args $base_flags"
+        # Use eval for custom args to handle quoted strings properly
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- bash -c "claude $custom_args $base_flags"
     fi
 }
 
