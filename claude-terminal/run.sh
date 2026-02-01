@@ -372,11 +372,17 @@ start_web_terminal() {
     export TTYD=1
 
     # Run ttyd with improved configuration
+    # Write launch command to a script file to avoid quoting issues
+    local launcher="/tmp/claude-launcher.sh"
+    echo "#!/bin/bash" > "$launcher"
+    echo "$launch_command" >> "$launcher"
+    chmod +x "$launcher"
+
     exec ttyd \
         --port "${port}" \
         --interface 0.0.0.0 \
         --writable \
-        bash -c "$launch_command"
+        "$launcher"
 }
 
 # Run health check
