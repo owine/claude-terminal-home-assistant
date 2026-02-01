@@ -1,7 +1,7 @@
 ---
 name: "Claude Terminal Pro"
-description: "Enhanced terminal interface for Anthropic's Claude Code CLI with persistent auth, package management, and image paste support. Fork of heytcass/home-assistant-addons"
-version: "2.0.6"
+description: "Enhanced terminal interface for Anthropic's Claude Code CLI with persistent auth, package management, and image paste support"
+version: "1.0.0"
 slug: "claude_terminal_pro"
 init: false
 
@@ -12,7 +12,7 @@ arch:
   - armv7
 
 # External resources
-url: "https://github.com/esjavadex/claude-code-ha"
+url: "https://github.com/owine/claude-terminal-home-assistant"
 
 # Web interface configuration
 ingress: true

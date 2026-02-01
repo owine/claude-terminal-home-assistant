@@ -22,18 +22,22 @@ This creates a `CLAUDE.md` file in your Home Assistant config directory with con
 
 ## Fork Attribution
 
-This project is a fork of [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) created by Tom Cassady.
+This project is a fork built upon work from two repositories:
 
-**Original project:** [https://github.com/heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons)
-**Maintained by:** Javier Santos ([@esjavadex](https://github.com/esjavadex))
+| Repository | Author | Description |
+|------------|--------|-------------|
+| [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) | Tom Cassady ([@heytcass](https://github.com/heytcass)) | **Original** Claude Terminal add-on |
+| [ESJavadex/claude-code-ha](https://github.com/ESJavadex/claude-code-ha) | Javier Santos ([@esjavadex](https://github.com/esjavadex)) | Enhanced fork with persistent packages |
 
-### What's Enhanced in This Fork
+**This fork:** [@owine](https://github.com/owine) - personal use
+
+### Features from Upstream
 
 - **Image Paste Support**: Upload images via paste (Ctrl+V), drag-drop, or upload button for Claude analysis
 - **Persistent Package Management**: Install system and Python packages that survive reboots
 - **Auto-install Configuration**: Configure packages to auto-install on startup
-- **Improved Credential Handling**: Enhanced authentication persistence
-- **Additional Documentation**: Comprehensive guides for development and usage
+- **Native Claude Installation**: Uses Anthropic's official installer
+- **GitHub CLI**: Pre-installed with persistent authentication
 
 This project maintains the same MIT license as the original.
 
@@ -44,7 +48,7 @@ To add this repository to your Home Assistant instance:
 1. Go to **Settings** → **Add-ons** → **Add-on Store**
 2. Click the three dots menu in the top right corner
 3. Select **Repositories**
-4. Add the URL: `https://github.com/esjavadex/claude-code-ha`
+4. Add the URL: `https://github.com/owine/claude-terminal-home-assistant`
 5. Click **Add**
 
 ## Add-ons
@@ -96,10 +100,10 @@ If you have any questions or issues with this add-on, please create an issue in 
 
 ## Credits
 
-**Original Creator:** Tom Cassady ([@heytcass](https://github.com/heytcass)) - Created the initial Claude Terminal add-on
-**Fork Maintainer:** Javier Santos ([@esjavadex](https://github.com/esjavadex)) - Added persistent package management and enhancements
+- **Original Creator:** Tom Cassady ([@heytcass](https://github.com/heytcass)) - Created the initial Claude Terminal add-on
+- **Enhanced By:** Javier Santos ([@esjavadex](https://github.com/esjavadex)) - Added persistent package management and enhancements
 
-This add-on was created and enhanced with the assistance of Claude Code itself! The development process, debugging, and documentation were all completed using Claude's AI capabilities.
+This add-on was created and enhanced with the assistance of Claude Code itself!
 
 ## License
 
