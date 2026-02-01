@@ -83,6 +83,9 @@ attach_existing_session() {
     exec tmux attach-session -t "$TMUX_SESSION_NAME"
 }
 
+# Full path to claude (tmux doesn't inherit PATH)
+CLAUDE_BIN="/usr/local/bin/claude"
+
 # Start claude in a new tmux session (kills existing if any)
 launch_claude_new() {
     local flags=$(get_claude_flags)
@@ -96,9 +99,9 @@ launch_claude_new() {
 
     sleep 1
     if [ -n "$flags" ]; then
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude $flags
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN $flags
     else
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN
     fi
 }
 
@@ -112,9 +115,9 @@ launch_claude_continue() {
 
     sleep 1
     if [ -n "$flags" ]; then
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude -c $flags
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN -c $flags
     else
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude -c
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN -c
     fi
 }
 
@@ -128,9 +131,9 @@ launch_claude_resume() {
 
     sleep 1
     if [ -n "$flags" ]; then
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude -r $flags
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN -r $flags
     else
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- claude -r
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- $CLAUDE_BIN -r
     fi
 }
 
@@ -157,8 +160,8 @@ launch_claude_custom() {
         fi
 
         sleep 1
-        # Use eval for custom args to handle quoted strings properly
-        exec tmux new-session -s "$TMUX_SESSION_NAME" -- bash -c "claude $custom_args $base_flags"
+        # Use bash -c for custom args to handle quoted strings properly
+        exec tmux new-session -s "$TMUX_SESSION_NAME" -- bash -c "$CLAUDE_BIN $custom_args $base_flags"
     fi
 }
 
