@@ -1,7 +1,10 @@
 #!/bin/bash
 
-# Claude Session Picker - Interactive menu for choosing Claude session type
-# Provides options for new session, continue, resume, manual command, or regular shell
+# Claude Terminal Menu - Interactive menu for Claude session management
+# Provides options for new session, continue, resume, custom commands, and tools
+#
+# With tmux integration, this menu is the "home base" - when Claude exits,
+# user returns here to start a new session or access other tools.
 
 # Full path to claude
 CLAUDE_BIN="/usr/local/bin/claude"
@@ -19,10 +22,10 @@ get_claude_flags() {
 
 show_banner() {
     clear
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                    🤖 Claude Terminal                        ║"
-    echo "║                   Interactive Session Picker                ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║                    🤖 Claude Terminal                      ║"
+    echo "║                          Menu                              ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
     echo ""
 }
 
@@ -35,8 +38,8 @@ show_menu() {
     echo "  4) ⚙️  Custom Claude command (manual flags)"
     echo "  5) 🔐 Claude authentication helper"
     echo "  6) 🐙 GitHub CLI login (gh auth)"
-    echo "  7) 🐚 Drop to bash shell"
-    echo "  8) ❌ Exit"
+    echo "  7) 🐚 Drop to bash shell (exit menu)"
+    echo "  8) 🔄 Clear & restart session (reset scrollback)"
     echo ""
 }
 
@@ -53,40 +56,53 @@ get_user_choice() {
     echo "$choice"
 }
 
-launch_claude_new() {
+# Show a message when returning from Claude
+show_return_message() {
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Claude session ended. Returning to menu..."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    sleep 2
+}
+
+# Run Claude and return to picker when done (no exec)
+run_claude_new() {
     local flags=$(get_claude_flags)
     echo "🚀 Starting new Claude session..."
     sleep 1
     if [ -n "$flags" ]; then
-        exec $CLAUDE_BIN $flags
+        $CLAUDE_BIN $flags
     else
-        exec $CLAUDE_BIN
+        $CLAUDE_BIN
     fi
+    show_return_message
 }
 
-launch_claude_continue() {
+run_claude_continue() {
     local flags=$(get_claude_flags)
     echo "⏩ Continuing most recent conversation..."
     sleep 1
     if [ -n "$flags" ]; then
-        exec $CLAUDE_BIN -c $flags
+        $CLAUDE_BIN -c $flags
     else
-        exec $CLAUDE_BIN -c
+        $CLAUDE_BIN -c
     fi
+    show_return_message
 }
 
-launch_claude_resume() {
+run_claude_resume() {
     local flags=$(get_claude_flags)
     echo "📋 Opening conversation list for selection..."
     sleep 1
     if [ -n "$flags" ]; then
-        exec $CLAUDE_BIN -r $flags
+        $CLAUDE_BIN -r $flags
     else
-        exec $CLAUDE_BIN -r
+        $CLAUDE_BIN -r
     fi
+    show_return_message
 }
 
-launch_claude_custom() {
+run_claude_custom() {
     local base_flags=$(get_claude_flags)
     echo ""
     echo "Enter your Claude command (e.g., 'claude --help' or 'claude -p \"hello\"'):"
@@ -100,21 +116,29 @@ launch_claude_custom() {
 
     if [ -z "$custom_args" ]; then
         echo "No arguments provided. Starting default session..."
-        launch_claude_new
+        run_claude_new
     else
         echo "🚀 Running: claude $custom_args $base_flags"
         sleep 1
-        eval "exec $CLAUDE_BIN $custom_args $base_flags"
+        eval "$CLAUDE_BIN $custom_args $base_flags"
+        show_return_message
     fi
 }
 
-launch_auth_helper() {
+run_auth_helper() {
     echo "🔐 Starting Claude authentication helper..."
     sleep 1
-    exec /opt/scripts/claude-auth-helper.sh
+    if [ -f "/opt/scripts/claude-auth-helper.sh" ]; then
+        /opt/scripts/claude-auth-helper.sh
+    else
+        echo "❌ Auth helper script not found at /opt/scripts/claude-auth-helper.sh"
+        echo ""
+        printf "Press Enter to return to menu..." >&2
+        read -r
+    fi
 }
 
-launch_github_auth() {
+run_github_auth() {
     echo ""
     echo "🐙 GitHub CLI Authentication"
     echo "════════════════════════════"
@@ -190,16 +214,36 @@ launch_github_auth() {
     read -r
 }
 
-launch_bash_shell() {
-    echo "🐚 Dropping to bash shell..."
-    echo "Tip: Run 'claude' to start Claude manually"
+# Clear and restart the session fresh
+restart_session() {
+    echo "🔄 Clearing session and restarting..."
     sleep 1
-    exec bash
+
+    # Clear tmux scrollback buffer if we're in tmux
+    if [ -n "$TMUX" ]; then
+        tmux clear-history 2>/dev/null || true
+    fi
+
+    # Clear the screen
+    clear
+
+    # Re-exec this script for a fresh start
+    exec "$0"
 }
 
-exit_session_picker() {
-    echo "👋 Goodbye!"
-    exit 0
+# Drop to bash shell - uses exec to exit the menu permanently
+drop_to_bash() {
+    echo "🐚 Dropping to bash shell..."
+    echo ""
+    echo "Tips:"
+    echo "  • Run 'claude' to start a new Claude session"
+    echo "  • Run 'claude -c' to continue most recent conversation"
+    echo "  • Run 'claude -r' to resume from conversation list"
+    echo "  • The menu will not return - this is a permanent shell"
+    echo ""
+    sleep 1
+    # Use exec to replace the menu with bash
+    exec bash -l
 }
 
 main() {
@@ -210,28 +254,28 @@ main() {
 
         case "$choice" in
             1)
-                launch_claude_new
+                run_claude_new
                 ;;
             2)
-                launch_claude_continue
+                run_claude_continue
                 ;;
             3)
-                launch_claude_resume
+                run_claude_resume
                 ;;
             4)
-                launch_claude_custom
+                run_claude_custom
                 ;;
             5)
-                launch_auth_helper
+                run_auth_helper
                 ;;
             6)
-                launch_github_auth
+                run_github_auth
                 ;;
             7)
-                launch_bash_shell
+                drop_to_bash
                 ;;
             8)
-                exit_session_picker
+                restart_session
                 ;;
             *)
                 echo ""
@@ -245,6 +289,7 @@ main() {
     done
 }
 
-trap 'echo ""; exit 0' EXIT INT TERM
+# Handle signals gracefully - prevent accidental exit
+trap 'echo ""; echo "Use option 7 to exit to bash shell."; sleep 2' INT TERM
 
 main "$@"

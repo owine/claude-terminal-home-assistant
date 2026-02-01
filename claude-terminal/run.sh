@@ -340,9 +340,33 @@ start_image_service() {
     fi
 }
 
+# Create or attach to tmux session
+# This function handles session lifecycle - creating new or reusing existing
+setup_tmux_session() {
+    local session_name="claude"
+    local launch_command="$1"
+
+    # Ensure TERM is set for proper color support in tmux
+    export TERM="${TERM:-xterm-256color}"
+
+    # Check if session already exists
+    if tmux has-session -t "$session_name" 2>/dev/null; then
+        bashio::log.info "tmux session '$session_name' exists - will attach"
+    else
+        bashio::log.info "Creating new tmux session '$session_name'..."
+        # Create detached session running our command
+        # The session runs bash with our launch command
+        # Set TERM and COLORTERM explicitly for full color support
+        tmux new-session -d -s "$session_name" -x 200 -y 50 \
+            "TERM=xterm-256color COLORTERM=truecolor bash -l -c '$launch_command; exec bash -l'"
+        bashio::log.info "tmux session created successfully"
+    fi
+}
+
 # Start main web terminal
 start_web_terminal() {
     local port=7681
+    local session_name="claude"
     bashio::log.info "Starting web terminal on port ${port}..."
 
     # Log environment information for debugging
@@ -362,12 +386,18 @@ start_web_terminal() {
     # Start the image upload service first
     start_image_service
 
-    # Run ttyd with the launch command
+    # Create the tmux session BEFORE ttyd starts (key insight from ttyd#1396)
+    # This avoids the "nested session" error because tmux session exists independently
+    setup_tmux_session "$launch_command"
+
+    # Run ttyd - it just attaches to the existing tmux session
+    # Each browser connection gets attached to the same session
+    bashio::log.info "Starting ttyd with tmux attach..."
     exec ttyd \
         --port "${port}" \
         --interface 0.0.0.0 \
         --writable \
-        bash -c "$launch_command"
+        tmux attach-session -t "$session_name"
 }
 
 # Run health check
