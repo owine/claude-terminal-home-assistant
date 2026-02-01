@@ -103,6 +103,10 @@ If you have any questions or issues with this add-on, please create an issue in 
 - **Original Creator:** Tom Cassady ([@heytcass](https://github.com/heytcass)) - Created the initial Claude Terminal add-on
 - **Enhanced By:** Javier Santos ([@esjavadex](https://github.com/esjavadex)) - Added persistent package management and enhancements
 
+**Integrated Contributions:**
+- Petter Sandholdt ([@petterl](https://github.com/petterl)) - tmux session persistence ([PR #46](https://github.com/heytcass/home-assistant-addons/pull/46))
+- Brian Egge ([@brianegge](https://github.com/brianegge)) - ha-mcp Home Assistant MCP integration ([PR #49](https://github.com/heytcass/home-assistant-addons/pull/49))
+
 This add-on was created and enhanced with the assistance of Claude Code itself!
 
 ## License
