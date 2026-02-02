@@ -1,7 +1,7 @@
 ---
 name: "Claude Terminal Prowine"
 description: "Enhanced terminal interface for Anthropic's Claude Code CLI with persistent auth, package management, and image paste support"
-version: "1.5.4"
+version: "1.5.5"
 slug: "claude_terminal_prowine"
 init: false
 
@@ -33,6 +33,9 @@ options:
   auto_launch_claude: true
   dangerously_skip_permissions: false
   enable_ha_mcp: true
+  # tmux_mouse_mode: Enable mouse support in tmux
+  #   When true: Mouse wheel scrolling works, but hold Shift to select text
+  #   When false: Normal text selection works, but no mouse scrolling (default)
   tmux_mouse_mode: false
   persistent_apk_packages: []
   persistent_pip_packages: []
@@ -41,13 +44,7 @@ schema:
   auto_launch_claude: bool?
   dangerously_skip_permissions: bool?
   enable_ha_mcp: bool?
-  tmux_mouse_mode:
-    name: Enable tmux mouse mode
-    description: >
-      When enabled: Mouse wheel scrolling works in tmux, but you must hold Shift while selecting text to copy.
-      When disabled: Normal browser text selection works (click and drag to copy), but no mouse scrolling.
-      Default is disabled for easier text copying.
-    type: bool?
+  tmux_mouse_mode: bool?
   persistent_apk_packages:
     - str?
   persistent_pip_packages:

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.5.5
+
+### 🐛 Bug Fix - Home Assistant Config Schema Validation Error
+- **Fixed invalid config.yaml schema for tmux_mouse_mode** (config.yaml)
+  - Error: `does not match regular expression` for `tmux_mouse_mode` schema
+  - Root cause: Nested `name`/`description` structure not supported in Home Assistant schema
+  - Previous structure: Incorrectly used nested object with `name`, `description`, `type` fields
+  - New structure: Simple `bool?` type definition with comment-based description
+  - Impact: Add-on config now validates correctly in Home Assistant Supervisor
+  - Users can now see and configure `tmux_mouse_mode` without schema warnings
+
+**Technical Details:**
+- Home Assistant's add-on schema validator doesn't support inline nested metadata
+- Schema field must be a type definition regex (e.g., `bool?`, `str?`, `int(0,100)?`)
+- Descriptions should be provided as comments in `options` section, not in `schema`
+- This fix resolves Supervisor warnings in `/data/addons/git/*/config.yaml` validation
+
 ## 1.5.4
 
 ### 🐛 Bug Fix - Claude Binary "Leftover npm Installation" Warning
