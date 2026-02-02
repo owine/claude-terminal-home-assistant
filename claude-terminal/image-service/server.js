@@ -101,14 +101,15 @@ app.use('/terminal', createProxyMiddleware({
     target: `http://localhost:${TTYD_PORT}`,
     changeOrigin: true,
     ws: true, // Enable WebSocket proxying
-    pathRewrite: {
-        '^/terminal': '' // Remove /terminal prefix when forwarding
+    // Note: In v3, the mount point '/terminal' is automatically stripped
+    // before forwarding to target, so no pathRewrite needed
+    on: {
+        error: (err, req, res) => {
+            console.error('Proxy error:', err.message);
+            res.status(502).send('Failed to connect to terminal');
+        }
     },
-    onError: (err, req, res) => {
-        console.error('Proxy error:', err.message);
-        res.status(502).send('Failed to connect to terminal');
-    },
-    logLevel: 'warn'
+    logger: console
 }));
 
 // Serve static files (HTML interface) - MUST be after API routes
