@@ -106,7 +106,15 @@ app.use('/terminal', createProxyMiddleware({
     on: {
         error: (err, req, res) => {
             console.error('Proxy error:', err.message);
-            res.status(502).send('Failed to connect to terminal');
+            // WebSocket upgrade errors don't have standard res.status()
+            // Check if res has status method before using it
+            if (res && typeof res.status === 'function') {
+                res.status(502).send('Failed to connect to terminal');
+            } else if (res && typeof res.writeHead === 'function') {
+                // WebSocket upgrade response
+                res.writeHead(502);
+                res.end('Failed to connect to terminal');
+            }
         }
     },
     logger: console
