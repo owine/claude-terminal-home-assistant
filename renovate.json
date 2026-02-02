@@ -4,88 +4,158 @@
     "config:best-practices",
     ":semanticCommits"
   ],
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
   "packageRules": [
     {
       "description": "Disable digest pinning for Home Assistant Builder (incompatible with SHA-based images)",
-      "matchManagers": ["github-actions"],
-      "matchPackageNames": ["home-assistant/builder"],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "home-assistant/builder"
+      ],
       "pinDigests": false
     },
     {
       "description": "Auto-merge patch updates for npm packages",
-      "matchDatasources": ["npm"],
-      "matchUpdateTypes": ["patch"],
+      "matchDatasources": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
       "automerge": true,
       "automergeType": "pr",
       "automergeStrategy": "squash"
     },
     {
       "description": "Group all npm dependency updates together",
-      "matchDatasources": ["npm"],
+      "matchDatasources": [
+        "npm"
+      ],
       "groupName": "npm dependencies",
-      "matchUpdateTypes": ["minor"]
+      "matchUpdateTypes": [
+        "minor"
+      ]
     },
     {
       "description": "Separate major npm updates",
-      "matchDatasources": ["npm"],
-      "matchUpdateTypes": ["major"],
-      "labels": ["dependencies", "major-update"]
+      "matchDatasources": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
     },
     {
       "description": "Docker base images - group patch updates",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["ghcr.io/home-assistant/amd64-base", "ghcr.io/home-assistant/aarch64-base"],
-      "matchUpdateTypes": ["patch"],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/home-assistant/amd64-base",
+        "ghcr.io/home-assistant/aarch64-base"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
       "groupName": "Home Assistant base images",
       "automerge": true,
       "automergeType": "pr"
     },
     {
       "description": "GitHub Actions - auto-merge digest updates",
-      "matchDatasources": ["github-tags", "github-releases"],
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["digest"],
+      "matchDatasources": [
+        "github-tags",
+        "github-releases"
+      ],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
       "automerge": true,
       "automergeType": "pr"
     },
     {
       "description": "GitHub Actions - group minor updates",
-      "matchDatasources": ["github-tags", "github-releases"],
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchDatasources": [
+        "github-tags",
+        "github-releases"
+      ],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "groupName": "GitHub Actions",
       "automerge": true,
       "automergeType": "pr"
     },
     {
       "description": "CLI tools in Dockerfile - group patch updates",
-      "matchDatasources": ["github-releases"],
-      "matchManagers": ["regex"],
-      "matchPackageNames": ["astral-sh/uv", "cli/cli", "home-assistant/cli"],
-      "matchUpdateTypes": ["patch"],
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "astral-sh/uv",
+        "cli/cli",
+        "home-assistant/cli"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
       "groupName": "CLI tools",
       "automerge": true,
       "automergeType": "pr"
     },
     {
       "description": "CLI tools in Dockerfile - separate major updates",
-      "matchDatasources": ["github-releases"],
-      "matchManagers": ["regex"],
-      "matchPackageNames": ["astral-sh/uv", "cli/cli", "home-assistant/cli"],
-      "matchUpdateTypes": ["major"],
-      "labels": ["dependencies", "major-update"]
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "astral-sh/uv",
+        "cli/cli",
+        "home-assistant/cli"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
     }
   ],
   "vulnerabilityAlerts": {
     "enabled": true,
-    "labels": ["security"]
+    "labels": [
+      "security"
+    ]
   },
   "customManagers": [
     {
       "description": "Update Claude Code version in Dockerfile",
       "customType": "regex",
-      "fileMatch": ["^claude-terminal/Dockerfile$"],
+      "managerFilePatterns": [
+        "/^claude-terminal/Dockerfile$/"
+      ],
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=custom\\.claude-code\\s+ARG\\s+CLAUDE_VERSION=(?<currentValue>[^\\s]+)"
       ],
@@ -95,7 +165,9 @@
     {
       "description": "Update Dockerfile ARG versions with renovate comments",
       "customType": "regex",
-      "fileMatch": ["^claude-terminal/Dockerfile$"],
+      "managerFilePatterns": [
+        "/^claude-terminal/Dockerfile$/"
+      ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+ARG [A-Z_]+_VERSION=(?<currentValue>\\S+)"
       ]
