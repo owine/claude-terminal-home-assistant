@@ -25,14 +25,56 @@ RUN apk add --no-cache \
     tree \
     tmux
 
-# Install Claude Code CLI using native installer (recommended by Anthropic)
-# Set PATH before installation to silence installer warnings
-# Creates symlink to /usr/local/bin for script compatibility
-# renovate: datasource=custom.anthropic depName=claude-code
-ARG CLAUDE_VERSION=latest
-RUN export PATH="$HOME/.local/bin:$PATH" \
-    && curl -fsSL https://claude.ai/install.sh | bash \
-    && ln -sf /root/.local/bin/claude /usr/local/bin/claude
+# Install Claude Code CLI with version pinning and integrity checking
+# Downloads specific version with SHA256 verification from manifest
+# renovate: datasource=custom.claude-code
+ARG CLAUDE_VERSION=2.1.29
+RUN set -eux; \
+    # Detect platform for Alpine Linux (musl-based)
+    case "$(uname -m)" in \
+        x86_64)  PLATFORM="linux-x64-musl" ;; \
+        aarch64) PLATFORM="linux-arm64-musl" ;; \
+        *)       echo "Unsupported architecture: $(uname -m)" && exit 1 ;; \
+    esac; \
+    \
+    # Base URL for Claude Code distribution
+    BASE_URL="https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"; \
+    \
+    # Download and parse manifest for SHA256 checksum
+    echo "Fetching Claude Code v${CLAUDE_VERSION} manifest..."; \
+    MANIFEST=$(curl -fsSL "${BASE_URL}/${CLAUDE_VERSION}/manifest.json"); \
+    EXPECTED_SHA=$(echo "$MANIFEST" | jq -r ".platforms.\"${PLATFORM}\".checksum"); \
+    \
+    # Validate checksum format
+    if [ -z "$EXPECTED_SHA" ] || [ "$EXPECTED_SHA" = "null" ]; then \
+        echo "ERROR: No checksum found for platform ${PLATFORM} in manifest"; \
+        exit 1; \
+    fi; \
+    \
+    # Download Claude Code binary
+    echo "Downloading Claude Code v${CLAUDE_VERSION} for ${PLATFORM}..."; \
+    curl -fsSL "${BASE_URL}/${CLAUDE_VERSION}/${PLATFORM}/claude" -o /tmp/claude; \
+    \
+    # Verify SHA256 checksum
+    echo "Verifying binary integrity..."; \
+    ACTUAL_SHA=$(sha256sum /tmp/claude | cut -d' ' -f1); \
+    if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then \
+        echo "ERROR: SHA256 mismatch!"; \
+        echo "Expected: $EXPECTED_SHA"; \
+        echo "Got:      $ACTUAL_SHA"; \
+        rm -f /tmp/claude; \
+        exit 1; \
+    fi; \
+    \
+    # Install verified binary
+    echo "Installing Claude Code v${CLAUDE_VERSION}..."; \
+    mkdir -p /root/.local/bin; \
+    mv /tmp/claude /root/.local/bin/claude; \
+    chmod +x /root/.local/bin/claude; \
+    ln -sf /root/.local/bin/claude /usr/local/bin/claude; \
+    \
+    # Verify installation
+    /usr/local/bin/claude --version
 
 # Install uv for running ha-mcp (Python package manager/runner)
 # ha-mcp requires Python 3.13+, uv handles this automatically

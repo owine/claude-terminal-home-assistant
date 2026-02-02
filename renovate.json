@@ -65,6 +65,16 @@
   },
   "customManagers": [
     {
+      "description": "Update Claude Code version in Dockerfile",
+      "customType": "regex",
+      "fileMatch": ["^claude-terminal/Dockerfile$"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=custom\\.claude-code\\s+ARG\\s+CLAUDE_VERSION=(?<currentValue>[^\\s]+)"
+      ],
+      "datasourceTemplate": "custom.claude-code",
+      "depNameTemplate": "claude-code"
+    },
+    {
       "description": "Update Dockerfile ARG versions with renovate comments",
       "customType": "regex",
       "managerFilePatterns": ["(^|/)claude-terminal/Dockerfile$"],
@@ -72,5 +82,11 @@
         "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)( versioning=(?<versioning>.*?))?\\s+ARG .*?_VERSION=(?<currentValue>.*)\\s"
       ]
     }
-  ]
+  ],
+  "customDatasources": {
+    "claude-code": {
+      "defaultRegistryUrlTemplate": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest",
+      "format": "plain"
+    }
+  }
 }
