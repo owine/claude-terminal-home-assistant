@@ -25,18 +25,23 @@ RUN apk add --no-cache \
 
 # Install Claude Code CLI using native installer (recommended by Anthropic)
 # Creates symlink to /usr/local/bin for script compatibility
+# renovate: datasource=custom.anthropic depName=claude-code
+ARG CLAUDE_VERSION=latest
 RUN curl -fsSL https://claude.ai/install.sh | bash \
     && ln -sf /root/.local/bin/claude /usr/local/bin/claude
 
 # Install uv for running ha-mcp (Python package manager/runner)
 # ha-mcp requires Python 3.13+, uv handles this automatically
+# renovate: datasource=github-releases depName=astral-sh/uv
+ARG UV_VERSION=latest
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && ln -sf /root/.local/bin/uv /usr/local/bin/uv \
     && ln -sf /root/.local/bin/uvx /usr/local/bin/uvx
 
 # Install Home Assistant CLI (ha command)
 # Download appropriate binary based on build architecture
-# Automatically fetches the latest version from GitHub
+# renovate: datasource=github-releases depName=home-assistant/cli
+ARG HA_CLI_VERSION=latest
 ARG TARGETARCH
 RUN case "${TARGETARCH}" in \
         amd64)   HA_ARCH="amd64" ;; \
@@ -56,6 +61,8 @@ RUN case "${TARGETARCH}" in \
 
 # Install GitHub CLI (gh command)
 # Download appropriate binary based on build architecture
+# renovate: datasource=github-releases depName=cli/cli
+ARG GH_CLI_VERSION=latest
 RUN case "${TARGETARCH}" in \
         amd64)   GH_ARCH="amd64" ;; \
         arm64)   GH_ARCH="arm64" ;; \

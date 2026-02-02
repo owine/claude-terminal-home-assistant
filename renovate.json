@@ -1,0 +1,83 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":automergeDigest"
+  ],
+  "labels": ["dependencies"],
+  "assignees": ["@owine"],
+  "reviewers": ["@owine"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "separateMajorMinor": true,
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "description": "Auto-merge patch updates for npm packages",
+      "matchDatasources": ["npm"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash"
+    },
+    {
+      "description": "Group all npm dependency updates together",
+      "matchDatasources": ["npm"],
+      "groupName": "npm dependencies",
+      "matchUpdateTypes": ["minor"]
+    },
+    {
+      "description": "Separate major npm updates",
+      "matchDatasources": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "major-update"]
+    },
+    {
+      "description": "Docker base images - group patch updates",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/home-assistant/amd64-base", "ghcr.io/home-assistant/aarch64-base", "ghcr.io/home-assistant/armv7-base"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "Home Assistant base images",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "GitHub Actions - auto-merge digest updates",
+      "matchDatasources": ["github-tags", "github-releases"],
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest"],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "GitHub Actions - group minor updates",
+      "matchDatasources": ["github-tags", "github-releases"],
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "GitHub Actions",
+      "automerge": true,
+      "automergeType": "pr"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "assignees": ["@owine"]
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on the first day of the month"]
+  },
+  "customManagers": [
+    {
+      "description": "Update Alpine packages in Dockerfile RUN commands",
+      "customType": "regex",
+      "managerFilePatterns": ["/^claude-terminal/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)( versioning=(?<versioning>.*?))?\\s+ARG .*?_VERSION=(?<currentValue>.*)\\s"
+      ]
+    }
+  ]
+}
