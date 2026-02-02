@@ -7,6 +7,12 @@
   "labels": ["dependencies"],
   "packageRules": [
     {
+      "description": "Disable digest pinning for Home Assistant Builder (incompatible with SHA-based images)",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["home-assistant/builder"],
+      "pinDigests": false
+    },
+    {
       "description": "Auto-merge patch updates for npm packages",
       "matchDatasources": ["npm"],
       "matchUpdateTypes": ["patch"],
