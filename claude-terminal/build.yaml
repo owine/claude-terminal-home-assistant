@@ -1,6 +1,11 @@
-# Pre-built images from GitHub Container Registry
-# Built via GitHub Actions on version tags
-# {arch} replaced by HA with: amd64, aarch64, or armv7
+# Build configuration for GitHub Actions builder
+build_from:
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.23
+  amd64: ghcr.io/home-assistant/amd64-base:3.23
+  armv7: ghcr.io/home-assistant/armv7-base:3.23
+
+# Pre-built images location (what users pull)
+# Built via GitHub Actions, then pushed to ghcr.io
 image: "ghcr.io/owine/claude-terminal-prowine-{arch}"
 
 labels:
