@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.2.4
+
+### 🔧 Critical Fix - Pin Exact Dependency Versions
+
+- **CRITICAL: Removed semver ranges from package.json**
+  - Changed `^5.2.1` → `5.2.1` (express)
+  - Changed `^2.0.2` → `2.0.2` (multer)
+  - Changed `^3.0.5` → `3.0.5` (http-proxy-middleware)
+
+**Root Cause:**
+- Home Assistant's build process was not using package-lock.json
+- Even after removing/re-adding repository, HA installed wrong versions
+- npm with semver ranges (`^3.0.5`) can resolve to different versions
+- Without lockfile enforcement, npm installed http-proxy-middleware v2 instead of v3
+
+**Impact:** v1.2.0-1.2.3 all failed to deploy correct dependencies despite:
+- package-lock.json being committed (v1.2.3)
+- Changing slug to force fresh build
+- Completely removing and re-adding repository
+- Multiple clean reinstalls
+
+**Solution:** Pin exact versions in package.json as last resort
+- Even if HA ignores package-lock.json, it MUST respect exact versions
+- This guarantees correct dependency installation regardless of build environment
+
+**This is the final fix** - exact versions ensure deterministic builds even when lockfile is ignored.
+
 ## 1.2.3
 
 ### 🔧 Build Fix - Missing Package Lockfile
