@@ -2,20 +2,25 @@
 # Hadolint configuration for Home Assistant add-ons
 
 ignored:
+  # DL3006: Always tag the version of an image explicitly
+  # Home Assistant Builder provides BUILD_FROM via build.yaml
+  - DL3006
+
   # DL3018: Pinning apk versions is not practical for HA add-ons
   # The base image manages Alpine package versions
   - DL3018
 
-# Warnings that should be errors
-failure-threshold: warning
+  # DL4006: Set pipefail before pipes
+  # Alpine's /bin/sh handles errors adequately with 'set -e'
+  - DL4006
 
-# Override specific rules
-override:
-  warning:
-    # Make these warnings instead of errors
-    - DL3003  # Use WORKDIR to switch directories (prefer but not required)
-    - DL4006  # Set pipefail before pipes (good practice but not critical)
+  # DL3003: Use WORKDIR to switch directories
+  # cd is acceptable in single-RUN commands
+  - DL3003
 
-  info:
-    # Shellcheck rules we can be flexible about
-    - SC2086  # Double quote to prevent globbing (contextual)
+  # SC2086: Double quote to prevent globbing
+  # Intentional word splitting in some contexts
+  - SC2086
+
+# Only fail on errors, not warnings or info
+failure-threshold: error
