@@ -24,10 +24,12 @@ RUN apk add --no-cache \
     tmux
 
 # Install Claude Code CLI using native installer (recommended by Anthropic)
+# Set PATH before installation to silence installer warnings
 # Creates symlink to /usr/local/bin for script compatibility
 # renovate: datasource=custom.anthropic depName=claude-code
 ARG CLAUDE_VERSION=latest
-RUN curl -fsSL https://claude.ai/install.sh | bash \
+RUN export PATH="$HOME/.local/bin:$PATH" \
+    && curl -fsSL https://claude.ai/install.sh | bash \
     && ln -sf /root/.local/bin/claude /usr/local/bin/claude
 
 # Install uv for running ha-mcp (Python package manager/runner)
