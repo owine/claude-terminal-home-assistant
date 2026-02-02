@@ -17,4 +17,5 @@ jobs:
             --test \
             --all \
             --target ./claude-terminal \
+            --image "claude-terminal-prowine-{arch}" \
             --docker-hub ghcr.io/${{ github.repository_owner }}
