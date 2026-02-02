@@ -29,16 +29,21 @@ direnv allow
 - `lint-dockerfile` - Lint Dockerfile using hadolint
 - `test-endpoint` - Test web endpoint availability (curl localhost:7681)
 
-### Manual Commands (without aliases)
+### Manual Commands (for local testing)
 ```bash
-# Build
-podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 -t local/claude-terminal-prowine ./claude-terminal
+# IMPORTANT: Replace {arch} with amd64 (x86_64) or aarch64 (ARM64/Apple Silicon)
+
+# Build (use docker or podman)
+docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
+  -t local/claude-terminal-prowine ./claude-terminal
 
 # Build without cache (required when dependencies change)
-podman build --no-cache --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 -t local/claude-terminal-prowine ./claude-terminal
+docker build --no-cache \
+  --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
+  -t local/claude-terminal-prowine ./claude-terminal
 
 # Run locally
-podman run -p 7681:7681 -v $(pwd)/config:/config local/claude-terminal-prowine
+docker run -p 7681:7681 -v $(pwd)/config:/config local/claude-terminal-prowine
 
 # Lint
 hadolint ./claude-terminal/Dockerfile
@@ -90,15 +95,37 @@ The add-on implements a sophisticated credential management system:
 ## Development Notes
 
 ### Local Container Testing
-For rapid development and debugging without pushing new versions:
+For rapid development and debugging without pushing new versions.
+
+**IMPORTANT:** You must provide `--build-arg BUILD_FROM=...` because the Dockerfile has no default (this prevents multi-arch build issues).
+
+#### Determine Your Architecture
+
+```bash
+# Check your system architecture
+uname -m
+# x86_64  → use amd64-base
+# aarch64 → use aarch64-base (Apple Silicon, Raspberry Pi 4/5)
+# arm64   → use aarch64-base (macOS reports as arm64)
+```
 
 #### Quick Build & Test
-```bash
-# Build test version
-podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 -t local/claude-terminal:test ./claude-terminal
 
-# Build without cache (required after dependency changes)
-podman build --no-cache --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 -t local/claude-terminal:test ./claude-terminal
+Use `docker` or `podman` (commands are interchangeable):
+
+```bash
+# For x86_64 / Intel / AMD systems:
+docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 \
+  -t local/claude-terminal:test ./claude-terminal
+
+# For aarch64 / ARM64 / Apple Silicon systems:
+docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/aarch64-base:3.23 \
+  -t local/claude-terminal:test ./claude-terminal
+
+# Build without cache (required after dependency changes):
+docker build --no-cache \
+  --build-arg BUILD_FROM=ghcr.io/home-assistant/aarch64-base:3.23 \
+  -t local/claude-terminal:test ./claude-terminal
 
 # Create test config directory
 mkdir -p /tmp/test-config/claude-config
@@ -107,47 +134,51 @@ mkdir -p /tmp/test-config/claude-config
 echo '{"auto_launch_claude": false}' > /tmp/test-config/options.json
 
 # Run test container
-podman run -d --name test-claude-dev -p 7681:7681 -v /tmp/test-config:/config local/claude-terminal:test
+docker run -d --name test-claude-dev -p 7681:7681 \
+  -v /tmp/test-config:/config \
+  local/claude-terminal:test
 
 # Check logs
-podman logs test-claude-dev
+docker logs test-claude-dev
 
 # Test web interface at http://localhost:7681
 
 # Stop and cleanup
-podman stop test-claude-dev && podman rm test-claude-dev
+docker stop test-claude-dev && docker rm test-claude-dev
 ```
 
 #### Interactive Testing
 ```bash
 # Test session picker directly
-podman run --rm -it local/claude-terminal:test /opt/scripts/claude-session-picker.sh
+docker run --rm -it local/claude-terminal:test /opt/scripts/claude-session-picker.sh
 
 # Execute commands inside running container
-podman exec -it test-claude-dev /bin/bash
+docker exec -it test-claude-dev /bin/bash
 
 # Test script modifications without rebuilding
-podman cp ./claude-terminal/scripts/claude-session-picker.sh test-claude-dev:/opt/scripts/
-podman exec test-claude-dev chmod +x /opt/scripts/claude-session-picker.sh
+docker cp ./claude-terminal/scripts/claude-session-picker.sh test-claude-dev:/opt/scripts/
+docker exec test-claude-dev chmod +x /opt/scripts/claude-session-picker.sh
 ```
 
 #### Development Workflow
 1. **Make changes** to scripts or Dockerfile
-2. **Rebuild** with `podman build -t local/claude-terminal:test ./claude-terminal`
-3. **Stop/remove** old container: `podman stop test-claude-dev && podman rm test-claude-dev`
+2. **Rebuild** with `docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 -t local/claude-terminal:test ./claude-terminal`
+3. **Stop/remove** old container: `docker stop test-claude-dev && docker rm test-claude-dev`
 4. **Start new** container with updated image
 5. **Test** changes at http://localhost:7681
 6. **Repeat** until satisfied, then commit and push
 
+**Note:** Replace `{arch}` with `amd64` or `aarch64` based on your system architecture.
+
 #### Debugging Tips
-- **Check container logs**: `podman logs -f test-claude-dev` (follow mode)
-- **Inspect running processes**: `podman exec test-claude-dev ps aux`
-- **Test individual scripts**: `podman exec test-claude-dev /opt/scripts/script-name.sh`
+- **Check container logs**: `docker logs -f test-claude-dev` (follow mode)
+- **Inspect running processes**: `docker exec test-claude-dev ps aux`
+- **Test individual scripts**: `docker exec test-claude-dev /opt/scripts/script-name.sh`
 - **Volume contents**: `ls -la /tmp/test-config/` to verify persistence
 
 ### Production Testing
-- **Local Testing**: Use `run-addon` to test on localhost:7681
-- **Container Health**: Check logs with `podman logs <container-id>`
+- **Local Testing**: Build and test locally before creating releases
+- **Container Health**: Check logs with `docker logs <container-id>`
 - **Authentication**: Use `claude-auth debug` within terminal for credential troubleshooting
 
 ### File Conventions
@@ -387,8 +418,10 @@ The **image-service** directory contains a Node.js Express server that handles i
 3. **Rebuild without cache:**
    ```bash
    # For Home Assistant deployment, this happens automatically on reinstall
-   # For local testing:
-   podman build --no-cache -t local/claude-terminal:test ./claude-terminal
+   # For local testing (replace {arch} with amd64 or aarch64):
+   docker build --no-cache \
+     --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
+     -t local/claude-terminal:test ./claude-terminal
    ```
 
 **IMPORTANT:** The `.gitignore` file has a specific exception for this lockfile:
