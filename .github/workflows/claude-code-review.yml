@@ -1,3 +1,26 @@
+# OPTIONAL WORKFLOW: Claude Code Automated PR Review
+#
+# This workflow automatically reviews pull requests using Claude Code's AI analysis.
+#
+# How it works:
+# 1. PR is opened, updated, or marked ready for review
+# 2. Claude Code analyzes the diff, code quality, and potential issues
+# 3. Provides inline comments and suggestions
+# 4. Checks for common mistakes, security issues, and best practices
+#
+# Requirements:
+# - CLAUDE_CODE_OAUTH_TOKEN secret configured in repository settings
+# - Active Claude Code subscription
+#
+# This is NOT required for the add-on to function. It's a development productivity
+# tool that can be disabled without affecting the core project.
+#
+# Configuration:
+# - allowed_bots: 'renovate' - Also reviews Renovate dependency PRs
+# - Can be customized to filter by PR author or file paths
+#
+# See: https://github.com/anthropics/claude-code-action
+
 name: Claude Code Review
 
 on:

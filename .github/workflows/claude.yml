@@ -1,3 +1,22 @@
+# OPTIONAL WORKFLOW: Claude Code Comment Automation
+#
+# This workflow enables AI-assisted development by responding to @claude mentions
+# in GitHub issues, pull requests, and comments.
+#
+# How it works:
+# 1. User mentions @claude in an issue or PR comment
+# 2. Claude Code CLI analyzes the context (code, issue, PR diff)
+# 3. Claude responds with suggestions, code fixes, or answers
+#
+# Requirements:
+# - CLAUDE_CODE_OAUTH_TOKEN secret configured in repository settings
+# - Active Claude Code subscription
+#
+# This is NOT required for the add-on to function. It's a development productivity
+# tool that can be disabled without affecting the core project.
+#
+# See: https://github.com/anthropics/claude-code-action
+
 name: Claude Code
 
 on:
