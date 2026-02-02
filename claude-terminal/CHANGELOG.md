@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.5.3
+
+### ✨ New Feature - Configurable tmux Mouse Mode
+- **Added configuration option for tmux mouse mode** (config.yaml, run.sh, tmux.conf)
+  - Users can now choose between mouse mode on/off in add-on settings
+  - **Default: Disabled** (mouse mode off) for easier text selection
+  - When disabled: Normal browser text selection works (click and drag to copy)
+  - When enabled: Mouse wheel scrolling in tmux, but requires Shift+select to copy text
+  - Setting is applied dynamically at container startup
+  - Configuration: Settings → Add-ons → Claude Terminal Prowine → Configuration → "Enable tmux mouse mode"
+
+**Why this matters:**
+- Previous versions had mouse mode always enabled, making text selection difficult
+- Users reported text deselects immediately when trying to copy
+- Now users can choose based on their preference:
+  - Prefer easy text copying? Keep disabled (default)
+  - Prefer mouse scrolling? Enable in settings (requires Shift+select for copying)
+
 ## 1.5.2
 
 ### 🐛 Bug Fix - WebSocket Connection Failure (Blank Terminal)

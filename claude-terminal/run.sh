@@ -104,6 +104,19 @@ PROFILE_EOF
     if [ -f "/opt/scripts/tmux.conf" ]; then
         cp /opt/scripts/tmux.conf "$data_home/.tmux.conf"
         chmod 644 "$data_home/.tmux.conf"
+
+        # Apply tmux mouse mode setting from configuration
+        local tmux_mouse_mode
+        tmux_mouse_mode=$(bashio::config 'tmux_mouse_mode' 'false')
+
+        if [ "$tmux_mouse_mode" = "true" ]; then
+            sed -i 's/set -g mouse off/set -g mouse on/' "$data_home/.tmux.conf"
+            bashio::log.info "  - tmux mouse mode: enabled (use Shift+select to copy text)"
+        else
+            sed -i 's/set -g mouse on/set -g mouse off/' "$data_home/.tmux.conf"
+            bashio::log.info "  - tmux mouse mode: disabled (normal text selection enabled)"
+        fi
+
         bashio::log.info "  - tmux configuration installed"
     fi
 
