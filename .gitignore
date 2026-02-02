@@ -7,11 +7,8 @@ yarn-error.log
 package-lock.json
 yarn.lock
 
-# Exception: image-service lockfile needed for Docker builds
+# Exception: image-service lockfile needed for deterministic builds
 !claude-terminal/image-service/package-lock.json
-
-# Exception: Bundle image-service node_modules (HA build system broken)
-!claude-terminal/image-service/node_modules/
 
 # Logs
 *.log

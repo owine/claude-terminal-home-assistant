@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.3.0
+
+### 🚀 Major Change - Pre-Built Images via GitHub Container Registry
+
+- **BREAKING: Now uses pre-built Docker images instead of local builds**
+  - Images built in GitHub Actions (controlled environment)
+  - Published to GitHub Container Registry (ghcr.io)
+  - Fast installation (~30 seconds vs ~5 minutes)
+  - Guaranteed correct dependency versions
+
+**Why this change:**
+- Home Assistant's local build system is fundamentally broken
+- Ignores package-lock.json, ignores exact version pins
+- Random build failures, slow builds, inconsistent results
+- Pre-built images are standard practice for production HA add-ons
+
+**What changed:**
+- `build.yaml`: Now references `ghcr.io/owine/claude-terminal-prowine-{arch}`
+- GitHub Actions: Builds images on version tags (v1.3.0)
+- Dockerfile: Restored proper `npm ci` (runs in GHA, not HA)
+- Removed bundled node_modules (no longer needed)
+
+**User impact:**
+- ✅ Much faster installation (download vs build)
+- ✅ More reliable (no build failures)
+- ✅ Automatic updates when new versions released
+- ❌ Requires GitHub Container Registry access (free, public)
+
+**For developers:**
+- Images built automatically on `git push origin v1.3.0`
+- Multi-arch support: amd64, aarch64, armv7
+- Uses GitHub Actions build cache for speed
+
+This is the **correct long-term solution** vs the v1.2.5 workaround
+of bundling node_modules.
+
 ## 1.2.5
 
 ### 🔴 NUCLEAR OPTION - Bundle node_modules in Repository
