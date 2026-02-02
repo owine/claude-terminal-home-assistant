@@ -86,11 +86,10 @@ RUN mkdir -p /config/claude-config
 WORKDIR /config
 
 # Copy and install image service
+# NOTE: node_modules is bundled in repository due to HA build system
+# not respecting package-lock.json or exact version pins
 COPY image-service/ /opt/image-service/
-RUN cd /opt/image-service \
-    && npm install --production --no-optional \
-    && npm cache clean --force \
-    && chmod +x server.js
+RUN chmod +x /opt/image-service/server.js
 
 # Copy startup script and modular scripts
 COPY run.sh /run.sh

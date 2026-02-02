@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.2.5
+
+### 🔴 NUCLEAR OPTION - Bundle node_modules in Repository
+
+- **CRITICAL: Pre-install node_modules to bypass broken HA build system**
+  - Home Assistant's npm install is fundamentally broken
+  - Ignores package-lock.json, ignores exact version pins
+  - Installs http-proxy-middleware v2 despite explicit v3.0.5 pin
+  - Even removing/re-adding repository doesn't clear cache
+
+**What we tried (all failed):**
+1. ✅ v1.2.3: Added package-lock.json - HA ignored it
+2. ✅ v1.2.4: Pinned exact versions (no ^ semver) - HA ignored it
+3. ✅ Changed slug to force fresh build - HA used old cache
+4. ✅ Removed/re-added repository - HA still installed wrong versions
+
+**Root Cause:**
+Home Assistant's Docker build system has an aggressive npm cache or
+pre-built image cache that CANNOT be bypassed by any conventional means.
+
+**Nuclear Solution: Bundle node_modules (8.5MB)**
+- Commit the entire node_modules directory with correct versions
+- Skip `npm install` in Dockerfile entirely
+- Guarantees correct dependencies regardless of HA build process
+- Trade-off: Larger repository, but deterministic builds
+
+**This is the final, last-resort fix.** If this doesn't work, the HA build
+system is irreparably broken and would require switching to a different
+deployment method entirely.
+
 ## 1.2.4
 
 ### 🔧 Critical Fix - Pin Exact Dependency Versions
