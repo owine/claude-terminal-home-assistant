@@ -1,7 +1,7 @@
 ---
 name: "Claude Terminal Prowine"
 description: "Enhanced terminal interface for Anthropic's Claude Code CLI with persistent auth, package management, and image paste support"
-version: "1.2.1"
+version: "1.2.2"
 slug: "claude_terminal_pro"
 init: false
 

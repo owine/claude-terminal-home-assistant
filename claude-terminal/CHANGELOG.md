@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2.2
+
+### 🔴 Critical Fix - WebSocket Upgrade Handler
+
+- **CRITICAL: Fixed WebSocket proxying in http-proxy-middleware v3**
+  - Added explicit `server.on('upgrade', terminalProxy.upgrade)` handler
+  - WebSocket upgrade now properly forwarded to ttyd terminal
+  - Fixes "illegal ws path: /terminal/ws" errors
+
+**Root Cause:**
+- http-proxy-middleware v3 requires explicit upgrade event handling
+- The `ws: true` option alone is insufficient for WebSocket proxying
+- Must call `proxy.upgrade` on the server's upgrade event
+
+**Impact:** Without this fix, terminal WebSocket connections fail completely, preventing interactive terminal access.
+
+**Technical Details:**
+- Extracted proxy middleware to named constant for upgrade handler registration
+- Server now properly handles HTTP → WebSocket protocol upgrade
+- Added logging to confirm WebSocket handler is registered
+
+This is a **critical hotfix** for v1.2.0 and v1.2.1 - WebSocket functionality was broken in both versions.
+
 ## 1.2.1
 
 ### 🐛 Bug Fix - WebSocket Error Handling
