@@ -49,6 +49,13 @@
       "groupName": "Home Assistant base images"
     },
     {
+      "description": "Home Assistant base images - disable digest pinning in build.yaml",
+      "matchDatasources": ["docker"],
+      "matchManagers": ["regex"],
+      "matchPackageNames": ["ghcr.io/home-assistant/amd64-base", "ghcr.io/home-assistant/aarch64-base"],
+      "pinDigests": false
+    },
+    {
       "description": "GitHub Actions - auto-merge digest updates",
       "matchDatasources": ["github-tags", "github-releases"],
       "matchManagers": ["github-actions"],
