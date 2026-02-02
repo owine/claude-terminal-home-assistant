@@ -11,7 +11,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Test build
-        uses: home-assistant/builder@21bc64d76dad7a5184c67826aab41c6b6f89023a # 2025.11.0
+        uses: home-assistant/builder@2025.11.0
         with:
           args: |
             --test \
