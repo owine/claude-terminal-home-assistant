@@ -6,8 +6,8 @@
 # With tmux integration, this menu is the "home base" - when Claude exits,
 # user returns here to start a new session or access other tools.
 
-# Full path to claude
-CLAUDE_BIN="/usr/local/bin/claude"
+# Claude binary (now in PATH via /root/.local/bin)
+CLAUDE_BIN="claude"
 
 # Get Claude flags from environment
 get_claude_flags() {
