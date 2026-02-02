@@ -28,9 +28,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
 
+      # Use pre-installed shellcheck on GitHub Actions runners
       - name: Run shellcheck
         run: |
-          # shellcheck is pre-installed on GitHub Actions runners
           shellcheck --version
           shellcheck --external-sources --severity=error \
             claude-terminal/run.sh \
@@ -43,9 +43,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
 
+      # Use pre-installed yamllint on GitHub Actions runners
       - name: Run yamllint
         run: |
-          # yamllint is pre-installed on GitHub Actions runners
           yamllint --version
           yamllint -c .yamllint.yml \
             claude-terminal/config.yaml \
