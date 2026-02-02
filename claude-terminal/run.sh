@@ -130,6 +130,15 @@ PROFILE_EOF
         fi
     fi
 
+    # Copy Claude binary to persistent home directory if not present
+    # This ensures Claude is in $HOME/.local/bin (already in PATH)
+    if [ -f "/root/.local/bin/claude" ] && [ ! -f "$data_home/.local/bin/claude" ]; then
+        mkdir -p "$data_home/.local/bin"
+        cp /root/.local/bin/claude "$data_home/.local/bin/claude"
+        chmod +x "$data_home/.local/bin/claude"
+        bashio::log.info "  - Claude binary installed to persistent home"
+    fi
+
     bashio::log.info "Environment initialized:"
     bashio::log.info "  - Home: $HOME"
     bashio::log.info "  - Config: $XDG_CONFIG_HOME"
@@ -280,9 +289,9 @@ get_claude_launch_command() {
     if [ "$auto_launch_claude" = "true" ]; then
         # Auto-launch Claude directly
         if [ -n "$claude_flags" ]; then
-            echo "clear && echo 'Welcome to Claude Terminal!' && echo '' && echo 'Starting Claude...' && sleep 1 && /usr/local/bin/claude $claude_flags"
+            echo "clear && echo 'Welcome to Claude Terminal!' && echo '' && echo 'Starting Claude...' && sleep 1 && claude $claude_flags"
         else
-            echo "clear && echo 'Welcome to Claude Terminal!' && echo '' && echo 'Starting Claude...' && sleep 1 && /usr/local/bin/claude"
+            echo "clear && echo 'Welcome to Claude Terminal!' && echo '' && echo 'Starting Claude...' && sleep 1 && claude"
         fi
     else
         # Show interactive session picker
@@ -291,7 +300,7 @@ get_claude_launch_command() {
         else
             # Fallback if session picker is missing
             bashio::log.warning "Session picker not found, falling back to auto-launch"
-            echo "clear && echo 'Welcome to Claude Terminal!' && echo '' && echo 'Starting Claude...' && sleep 1 && /usr/local/bin/claude"
+            echo "clear && echo 'Welcome to Claude Terminal!' && echo '' && echo 'Starting Claude...' && sleep 1 && claude"
         fi
     fi
 }
