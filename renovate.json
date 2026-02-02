@@ -33,13 +33,20 @@
       "labels": ["dependencies", "major-update"]
     },
     {
-      "description": "Docker base images - group patch updates",
+      "description": "Home Assistant base images - auto-merge patch updates",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["ghcr.io/home-assistant/amd64-base", "ghcr.io/home-assistant/aarch64-base"],
       "matchUpdateTypes": ["patch"],
       "groupName": "Home Assistant base images",
       "automerge": true,
       "automergeType": "pr"
+    },
+    {
+      "description": "Home Assistant base images - group minor updates",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/home-assistant/amd64-base", "ghcr.io/home-assistant/aarch64-base"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "Home Assistant base images"
     },
     {
       "description": "GitHub Actions - auto-merge digest updates",
@@ -99,6 +106,15 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+ARG [A-Z_]+_VERSION=(?<currentValue>\\S+)"
       ]
+    },
+    {
+      "description": "Update build_from base images in build.yaml",
+      "customType": "regex",
+      "managerFilePatterns": ["/^claude-terminal/build\\.yaml$/"],
+      "matchStrings": [
+        "(?:aarch64|amd64):\\s*(?<depName>ghcr\\.io/[^:]+):(?<currentValue>[^\\s]+)"
+      ],
+      "datasourceTemplate": "docker"
     }
   ],
   "customDatasources": {

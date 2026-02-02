@@ -1,4 +1,7 @@
 # Build configuration for GitHub Actions builder
+# Architecture-specific base images (managed by Renovate)
+# renovate: datasource=docker depName=ghcr.io/home-assistant/aarch64-base versioning=loose
+# renovate: datasource=docker depName=ghcr.io/home-assistant/amd64-base versioning=loose
 build_from:
   aarch64: ghcr.io/home-assistant/aarch64-base:3.23
   amd64: ghcr.io/home-assistant/amd64-base:3.23
