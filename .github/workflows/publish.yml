@@ -24,10 +24,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish
-        uses: home-assistant/builder@2024.08.2
+        uses: home-assistant/builder@2025.11.0
         with:
           args: |
-            --all \
+            --amd64 \
+            --aarch64 \
             --cosign \
             --target ./claude-terminal \
             --image "claude-terminal-prowine-{arch}" \
