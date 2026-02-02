@@ -27,7 +27,8 @@ jobs:
         uses: home-assistant/builder@21bc64d76dad7a5184c67826aab41c6b6f89023a # 2025.11.0
         with:
           args: |
-            --all \
+            --amd64 \
+            --aarch64 \
             --cosign \
             --target ./claude-terminal \
             --image "claude-terminal-prowine-{arch}" \
