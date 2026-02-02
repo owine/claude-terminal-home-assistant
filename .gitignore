@@ -7,6 +7,9 @@ yarn-error.log
 package-lock.json
 yarn.lock
 
+# Exception: image-service lockfile needed for Docker builds
+!claude-terminal/image-service/package-lock.json
+
 # Logs
 *.log
 

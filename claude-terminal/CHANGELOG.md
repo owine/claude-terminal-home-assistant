@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.2.3
+
+### 🔧 Build Fix - Missing Package Lockfile
+
+- **CRITICAL: Added package-lock.json for deterministic builds**
+  - Previous versions (1.2.0-1.2.2) failed to deploy updated dependencies
+  - `npm install` in Docker build was resolving versions from scratch
+  - Docker layer caching caused old dependency versions to be used
+  - Added gitignore exception for `claude-terminal/image-service/package-lock.json`
+
+**Root Cause:**
+- `.gitignore` blanket-ignored all `package-lock.json` files
+- Docker builds ran `npm install` without a lockfile
+- This caused npm to install unpredictable versions or use cached layers with old dependencies (http-proxy-middleware v2 instead of v3)
+
+**Impact:** v1.2.0-1.2.2 code changes were correct, but couldn't be deployed because:
+- `util._extend` deprecation persisted (still using http-proxy-middleware v2)
+- WebSocket upgrade handler existed but wasn't running (old code in container)
+- Security fixes in multer v2 and express v5 weren't applied
+
+**Fix:**
+- Generated package-lock.json with correct versions (express 5.2.1, multer 2.0.2, http-proxy-middleware 3.0.5)
+- Added gitignore exception to track the lockfile in version control
+- **REBUILD REQUIRED:** `podman build --no-cache` to bypass Docker layer cache
+
+This is a **critical build fix** - v1.2.0-1.2.2 will not work without rebuilding with this lockfile.
+
 ## 1.2.2
 
 ### 🔴 Critical Fix - WebSocket Upgrade Handler
