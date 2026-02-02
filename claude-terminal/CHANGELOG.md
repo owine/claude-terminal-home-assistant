@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.2.0
+
+### 🛡️ Security - Critical Dependency Updates & Automation
+
+- **Major dependency security updates**:
+  - multer: 1.4.5-lts.2 → 2.0.2 (fixes 4 critical CVEs: CVE-2025-47935, CVE-2025-47944, CVE-2025-48997, CVE-2025-7338)
+  - express: 4.18.2 → 5.2.1 (security improvements, CVE-2024-47764)
+  - http-proxy-middleware: 2.0.6 → 3.0.5 (eliminates Node.js deprecation warnings)
+
+- **Code modernization**:
+  - Migrated http-proxy-middleware to v3 API (new event syntax, auto-stripping mount points)
+  - Updated proxy configuration for compatibility with latest version
+  - Eliminated `util._extend` deprecation warning
+
+- **Automated dependency management**:
+  - Added Renovate for automatic dependency updates
+  - Smart auto-merge rules for patch updates
+  - Security vulnerability alerts enabled
+  - Tracks 25+ dependencies across npm, Docker, and GitHub Actions
+
+- **CI/CD improvements**:
+  - Fixed Claude Code Review workflow to support Renovate bot
+  - GitHub Actions updated: actions/checkout v4 → v6
+  - Improved automation reliability
+
+### 🔧 Technical Details
+
+- **Breaking dependency changes** (transparent to users):
+  - Express v5: Stricter status code validation, removed `res.redirect('back')`
+  - http-proxy-middleware v3: New event handler syntax, automatic path stripping
+  - multer v2: Requires Node.js 10.16+ (already met by Alpine 3.23)
+
+- **Renovate configuration**:
+  - Auto-merge enabled for patch updates
+  - Grouped minor updates for easy review
+  - Individual PRs for major updates requiring careful review
+  - Monthly lockfile maintenance
+
+All changes are backward compatible for add-on users. Internal dependencies modernized with no breaking changes to add-on functionality.
+
 ## 1.1.0
 
 ### ✨ Feature - tmux Session Persistence & Menu Improvements
