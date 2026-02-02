@@ -1,5 +1,80 @@
 # Changelog
 
+## 1.5.0
+
+### 🔒 Security - Binary Integrity Verification & Supply Chain Hardening
+
+- **Implemented SHA256 checksum verification for all verifiable dependencies**
+  - Claude Code: Verifies SHA256 from manifest.json before installation
+  - uv: Downloads and verifies platform-specific .sha256 files
+  - GitHub CLI: Verifies against checksums.txt from releases
+  - All builds fail on checksum mismatch (prevents compromised binaries)
+
+- **Discovered and fixed security issue in uv installer**
+  - Official uv installer script does NOT verify checksums despite having verification code
+  - Replaced with manual download + SHA256 verification
+  - Binary integrity now guaranteed for all CLI tools
+
+- **Enhanced supply chain security**
+  - Version pinning for all dependencies tracked by Renovate
+  - Automated dependency updates via Renovate PRs
+  - SHA256 digest pinning for GitHub Actions
+  - SHA256 digest pinning for Docker base images
+
+**Security coverage:**
+- ✅ Claude Code 2.1.29 - SHA256 verified (manifest.json)
+- ✅ uv 0.9.28 - SHA256 verified (.sha256 file)
+- ✅ GitHub CLI 2.86.0 - SHA256 verified (checksums.txt)
+- ✅ GitHub Actions - SHA256 digest pinned
+- ✅ Docker base images - SHA256 digest pinned
+- ❌ Home Assistant CLI - No checksums provided by upstream
+
+**Technical implementation:**
+- Download manifest/checksum file for each dependency
+- Extract platform-specific expected SHA256
+- Download binary and compute actual SHA256
+- Fail build if mismatch detected
+- Install only verified binaries
+
+### 🔧 CI/CD Improvements
+
+- **Pinned GitHub Actions runner to ubuntu-24.04**
+  - Replaces ubuntu-latest (moving target)
+  - Ensures reproducible builds across all workflows
+  - Prevents unexpected breakage from runner upgrades
+  - Applies to: test, publish, claude, claude-code-review workflows
+
+- **Enhanced Renovate dependency management**
+  - Custom regex managers for Dockerfile ARG versions
+  - Automatic detection of uv, gh CLI, and ha CLI versions
+  - Grouped patch updates with auto-merge for CLI tools
+  - Separate PRs for major updates with clear labeling
+  - Fixed configuration to use correct manager syntax
+
+**Renovate tracking:**
+- 21 total dependencies monitored
+- 4 custom regex dependencies (Claude Code, uv, gh CLI, ha CLI)
+- Automated PR creation for all updates
+- Smart grouping reduces PR noise
+
+**Updated workflows:**
+- All workflows now use ubuntu-24.04 instead of ubuntu-latest
+- Digest pinning for actions (except home-assistant/builder)
+- Best-practices preset with semantic commits
+
+### 📚 Documentation
+
+- Updated CLAUDE.md with comprehensive release process documentation
+- Documented two-stage CI/CD workflow (test on push, publish on release)
+- Added troubleshooting guide for pre-built images
+- Clarified GitHub Container Registry usage
+
+**Files updated:**
+- Dockerfile - Added SHA256 verification for Claude Code, uv, and GitHub CLI
+- renovate.json - Added custom managers and package rules for CLI tools
+- .github/workflows/* - Pinned ubuntu-24.04, digest pinning
+- CLAUDE.md - Enhanced release documentation
+
 ## 1.4.0
 
 ### ⚠️ Breaking Change - Remove armv7 Support
