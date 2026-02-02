@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.5.4
+
+### 🐛 Bug Fix - Claude Binary "Leftover npm Installation" Warning
+- **Eliminated false warning about npm installation** (Dockerfile, run.sh)
+  - Root cause: Claude CLI detects `/usr/local/bin/claude` and assumes old npm install
+  - Previous approach: Binary installed to `/root/.local/bin/` with symlink to `/usr/local/bin/`
+  - The symlink triggered Claude's built-in warning about deprecated npm installations
+  - New approach: Copy binary to persistent home directory on first run
+  - Changes:
+    - Removed symlink from Dockerfile (no more `/usr/local/bin/claude`)
+    - Added copy logic in run.sh to copy `/root/.local/bin/claude` → `/data/home/.local/bin/claude`
+    - Copy happens once on first run (persistent across restarts and updates)
+    - Leverages existing `$HOME/.local/bin` in PATH (no PATH modifications needed)
+  - Benefits:
+    - ✅ Warning eliminated (no file at `/usr/local/bin/claude`)
+    - ✅ Claude accessible via PATH (`which claude` works)
+    - ✅ Binary persists in `/data/home` (survives updates)
+    - ✅ Follows same pattern as skills installation
+    - ✅ No additional PATH entries needed
+
+### 📚 Documentation - Claude Command Examples
+- **Fixed incorrect Claude command examples in DOCS.md**
+  - Removed incorrect `node` prefix (Claude is a native binary, not Node.js script)
+  - Before: `node /usr/local/bin/claude`
+  - After: `claude`
+  - Simplified all command examples to use PATH-resolved `claude`
+
+**Technical Note:**
+- Claude CLI checks standard locations (`/usr/local/bin`) for deprecated npm installations
+- Modern installation uses native binaries in `~/.local/bin` (XDG Base Directory spec)
+- By removing the symlink and using persistent home directory, we follow best practices
+
 ## 1.5.3
 
 ### ✨ New Feature - Configurable tmux Mouse Mode
