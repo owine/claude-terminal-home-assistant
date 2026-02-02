@@ -57,6 +57,24 @@
       "groupName": "GitHub Actions",
       "automerge": true,
       "automergeType": "pr"
+    },
+    {
+      "description": "CLI tools in Dockerfile - group patch updates",
+      "matchDatasources": ["github-releases"],
+      "matchManagers": ["regex"],
+      "matchPackageNames": ["astral-sh/uv", "cli/cli", "home-assistant/cli"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "CLI tools",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "CLI tools in Dockerfile - separate major updates",
+      "matchDatasources": ["github-releases"],
+      "matchManagers": ["regex"],
+      "matchPackageNames": ["astral-sh/uv", "cli/cli", "home-assistant/cli"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "major-update"]
     }
   ],
   "vulnerabilityAlerts": {
@@ -77,9 +95,9 @@
     {
       "description": "Update Dockerfile ARG versions with renovate comments",
       "customType": "regex",
-      "managerFilePatterns": ["(^|/)claude-terminal/Dockerfile$"],
+      "fileMatch": ["^claude-terminal/Dockerfile$"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)( versioning=(?<versioning>.*?))?\\s+ARG .*?_VERSION=(?<currentValue>.*)\\s"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+ARG [A-Z_]+_VERSION=(?<currentValue>\\S+)"
       ]
     }
   ],
