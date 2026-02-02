@@ -66,15 +66,14 @@ RUN set -eux; \
         exit 1; \
     fi; \
     \
-    # Install verified binary
+    # Install verified binary to /root/.local/bin (native binary location)
     echo "Installing Claude Code v${CLAUDE_VERSION}..."; \
     mkdir -p /root/.local/bin; \
     mv /tmp/claude /root/.local/bin/claude; \
     chmod +x /root/.local/bin/claude; \
-    ln -sf /root/.local/bin/claude /usr/local/bin/claude; \
     \
-    # Verify installation
-    /usr/local/bin/claude --version
+    # Verify installation (PATH will include /root/.local/bin at runtime)
+    /root/.local/bin/claude --version
 
 # Install uv for running ha-mcp (Python package manager/runner) with SHA256 verification
 # ha-mcp requires Python 3.13+, uv handles this automatically
