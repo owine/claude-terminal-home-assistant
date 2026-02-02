@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.3.1
+
+### 🔧 CI/CD Improvements - Enhanced Build Security & Testing
+
+- **Two-stage CI/CD workflow**:
+  - Test builds on pull requests (using `--test` flag, no publishing)
+  - Production builds on version tags with image signing
+  - Manual workflow dispatch with test-only option
+
+- **Cosign image signing**: All published images now cryptographically signed
+  - Enables verification of build chain integrity
+  - Adds `id-token: write` permission for cosign
+  - Follows Home Assistant Builder security best practices
+
+- **Fixed Claude CLI PATH warning during Docker build**:
+  - Set `PATH` before running installer to silence warnings
+  - Warning was harmless (symlink + runtime PATH worked correctly)
+  - Build output now cleaner without false-positive warnings
+
+**Why this matters:**
+- PRs are now validated with actual builds before merging
+- Published images are cryptographically signed for security
+- CI/CD follows Home Assistant's recommended two-stage workflow
+
+**Technical details:**
+- `test-build` job: Runs on PRs, uses `--test` flag (no registry push)
+- `publish-build` job: Runs on tags, uses `--cosign` flag for signing
+- Dockerfile: Sets PATH before Claude installer to prevent warnings
+
 ## 1.3.0
 
 ### 🚀 Major Change - Pre-Built Images via GitHub Container Registry
