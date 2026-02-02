@@ -1,18 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    ":dependencyDashboard",
-    ":semanticCommits",
-    ":automergeDigest"
+    "config:best-practices",
+    ":semanticCommits"
   ],
   "labels": ["dependencies"],
-  "assignees": ["@owine"],
-  "reviewers": ["@owine"],
-  "prConcurrentLimit": 5,
-  "prHourlyLimit": 2,
-  "separateMajorMinor": true,
-  "rangeStrategy": "bump",
   "packageRules": [
     {
       "description": "Auto-merge patch updates for npm packages",
@@ -63,18 +55,13 @@
   ],
   "vulnerabilityAlerts": {
     "enabled": true,
-    "labels": ["security"],
-    "assignees": ["@owine"]
-  },
-  "lockFileMaintenance": {
-    "enabled": true,
-    "schedule": ["before 6am on the first day of the month"]
+    "labels": ["security"]
   },
   "customManagers": [
     {
-      "description": "Update Alpine packages in Dockerfile RUN commands",
+      "description": "Update Dockerfile ARG versions with renovate comments",
       "customType": "regex",
-      "managerFilePatterns": ["/^claude-terminal/Dockerfile$/"],
+      "managerFilePatterns": ["(^|/)claude-terminal/Dockerfile$"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)( versioning=(?<versioning>.*?))?\\s+ARG .*?_VERSION=(?<currentValue>.*)\\s"
       ]
