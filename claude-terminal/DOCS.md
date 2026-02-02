@@ -1,10 +1,10 @@
-# Claude Terminal Pro
+# Claude Terminal Prowine
 
 An enhanced terminal interface for Anthropic's Claude Code CLI in Home Assistant.
 
 ## About
 
-Claude Terminal Pro is an enhanced fork of the original Claude Terminal add-on, providing a web-based terminal with Claude Code CLI pre-installed plus persistent package management capabilities. Access Claude's powerful AI capabilities directly from your Home Assistant dashboard with the added benefit of installing and persisting custom packages across restarts.
+Claude Terminal Prowine is an enhanced fork of the original Claude Terminal add-on, providing a web-based terminal with Claude Code CLI pre-installed plus persistent package management capabilities. Access Claude's powerful AI capabilities directly from your Home Assistant dashboard with the added benefit of installing and persisting custom packages across restarts.
 
 ## Installation
 
@@ -12,7 +12,7 @@ Claude Terminal Pro is an enhanced fork of the original Claude Terminal add-on, 
    - Go to Settings → Add-ons → Add-on Store
    - Click the menu (⋮) and select Repositories
    - Add: `https://github.com/esjavadex/claude-code-ha`
-2. Install the Claude Terminal Pro add-on
+2. Install the Claude Terminal Prowine add-on
 3. Start the add-on
 4. Click "OPEN WEB UI" to access the terminal
 5. On first use, follow the OAuth prompts to log in to your Anthropic account

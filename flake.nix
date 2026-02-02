@@ -52,7 +52,7 @@
             echo "To get started: build-addon"
 
             # Build and run aliases
-            alias build-addon='podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.19 -t local/claude-terminal ./claude-terminal'
+            alias build-addon='podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 -t local/claude-terminal ./claude-terminal'
             alias run-addon='podman run -p 7681:7681 -v $(pwd)/config:/config local/claude-terminal'
             alias test-endpoint='curl -X GET http://localhost:7681/ || echo "Add-on not running. Use: run-addon"'
 

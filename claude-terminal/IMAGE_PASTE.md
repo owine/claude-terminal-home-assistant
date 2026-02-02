@@ -2,7 +2,7 @@
 
 ## Overview
 
-Claude Terminal Pro now supports pasting and uploading images directly in the web interface! This feature allows you to easily share images with Claude for analysis, OCR, or any other image-related tasks.
+Claude Terminal Prowine now supports pasting and uploading images directly in the web interface! This feature allows you to easily share images with Claude for analysis, OCR, or any other image-related tasks.
 
 ## How It Works
 
