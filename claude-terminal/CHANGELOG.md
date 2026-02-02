@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.1
+
+### 🐛 Bug Fix - WebSocket Error Handling
+
+- **Fixed critical WebSocket proxy error**: TypeError when WebSocket upgrade fails
+  - Error handler now properly checks if `res.status` exists before calling
+  - WebSocket errors use `res.writeHead` for proper error responses
+  - Prevents image service crash when WebSocket connection fails
+
+**Technical Details:**
+- http-proxy-middleware v3 has different error signatures for HTTP vs WebSocket
+- WebSocket upgrade errors don't have Express's `res.status()` method
+- Added defensive checks to handle both error types gracefully
+
+This hotfix is required for v1.2.0 to work properly with WebSocket connections.
+
 ## 1.2.0
 
 ### 🛡️ Security - Critical Dependency Updates & Automation
