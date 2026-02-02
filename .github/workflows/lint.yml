@@ -29,12 +29,12 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
 
       - name: Run shellcheck
-        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca # v2.0.0
-        with:
-          scandir: './claude-terminal'
-          severity: error
-        env:
-          SHELLCHECK_OPTS: --external-sources
+        run: |
+          # shellcheck is pre-installed on GitHub Actions runners
+          shellcheck --version
+          shellcheck --external-sources --severity=error \
+            claude-terminal/run.sh \
+            claude-terminal/scripts/*.sh
 
   yamllint:
     name: YAML Files
@@ -44,12 +44,12 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
 
       - name: Run yamllint
-        uses: ibiqlik/action-yamllint@2576378a8e339169678f9939646ee3ee325e845c # v3.1.1
-        with:
-          config_file: .yamllint.yml
-          file_or_dir: |
-            claude-terminal/config.yaml
-            claude-terminal/build.yaml
+        run: |
+          # yamllint is pre-installed on GitHub Actions runners
+          yamllint --version
+          yamllint -c .yamllint.yml \
+            claude-terminal/config.yaml \
+            claude-terminal/build.yaml \
             .github/workflows/
 
   actionlint:
@@ -60,7 +60,4 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
 
       - name: Run actionlint
-        uses: reviewdog/action-actionlint@7eeec1dd160c2301eb28e1568721837d084558ad # v1.57.0
-        with:
-          fail_on_error: true
-          filter_mode: nofilter
+        uses: raven-actions/actionlint@db5c8b1e8bbfbd0e6fd7d9ef704c4c64b7823f47 # v2.0.0

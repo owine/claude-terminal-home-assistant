@@ -6,10 +6,12 @@ This repository uses comprehensive linting to maintain code quality and consiste
 
 All linting runs automatically on every push and pull request via `.github/workflows/lint.yml`:
 
-- **hadolint** - Dockerfile best practices
-- **shellcheck** - Shell script analysis
-- **yamllint** - YAML file validation
-- **actionlint** - GitHub Actions workflow validation
+- **hadolint** - Dockerfile best practices (via action)
+- **shellcheck** - Shell script analysis (pre-installed on runners)
+- **yamllint** - YAML file validation (pre-installed on runners)
+- **actionlint** - GitHub Actions workflow validation (via action)
+
+**Note:** shellcheck and yamllint use the pre-installed versions on GitHub Actions runners, reducing external dependencies and improving CI speed.
 
 ## Local Development
 
