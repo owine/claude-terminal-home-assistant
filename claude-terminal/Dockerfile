@@ -51,9 +51,6 @@ ARG TARGETARCH
 RUN case "${TARGETARCH}" in \
         amd64)   HA_ARCH="amd64" ;; \
         arm64)   HA_ARCH="aarch64" ;; \
-        arm/v7)  HA_ARCH="armv7" ;; \
-        arm/v6)  HA_ARCH="armhf" ;; \
-        386)     HA_ARCH="i386" ;; \
         *)       echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
     esac && \
     echo "Installing Home Assistant CLI ${HA_CLI_VERSION} for ${HA_ARCH}..." && \
@@ -69,8 +66,6 @@ ARG GH_CLI_VERSION=2.86.0
 RUN case "${TARGETARCH}" in \
         amd64)   GH_ARCH="amd64" ;; \
         arm64)   GH_ARCH="arm64" ;; \
-        arm/v7)  GH_ARCH="armv7" ;; \
-        386)     GH_ARCH="386" ;; \
         *)       echo "Unsupported architecture for gh: ${TARGETARCH}" && exit 1 ;; \
     esac && \
     echo "Installing GitHub CLI v${GH_CLI_VERSION} for ${GH_ARCH}..." && \

@@ -29,7 +29,7 @@
     {
       "description": "Docker base images - group patch updates",
       "matchDatasources": ["docker"],
-      "matchPackageNames": ["ghcr.io/home-assistant/amd64-base", "ghcr.io/home-assistant/aarch64-base", "ghcr.io/home-assistant/armv7-base"],
+      "matchPackageNames": ["ghcr.io/home-assistant/amd64-base", "ghcr.io/home-assistant/aarch64-base"],
       "matchUpdateTypes": ["patch"],
       "groupName": "Home Assistant base images",
       "automerge": true,

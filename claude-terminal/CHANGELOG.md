@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.4.0
+
+### ⚠️ Breaking Change - Remove armv7 Support
+
+- **BREAKING: Removed armv7 (32-bit ARM) architecture support**
+  - Modern Home Assistant installations primarily use 64-bit systems
+  - Simplifies build and maintenance overhead
+  - Reduces CI/CD build time by ~33%
+
+**Supported architectures:**
+- ✅ amd64 (x86-64)
+- ✅ aarch64 (64-bit ARM)
+- ❌ armv7 (32-bit ARM) - removed
+
+**Impact:**
+- Users on 32-bit ARM systems (Raspberry Pi 2, older devices) cannot use v1.4.0+
+- Most modern systems (Raspberry Pi 3+, 4, 5) use aarch64 and are unaffected
+
+**Updated files:**
+- build.yaml - Removed armv7 base image
+- config.yaml - Removed armv7 from arch list
+- Dockerfile - Removed armv7 architecture cases
+- renovate.json - Removed armv7 base image tracking
+- Documentation - Updated to reflect amd64/aarch64 only
+
 ## 1.3.1
 
 ### 🔧 CI/CD Improvements - Enhanced Build Security & Testing

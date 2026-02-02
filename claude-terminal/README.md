@@ -27,7 +27,7 @@ This add-on provides a web-based terminal interface with Claude Code CLI pre-ins
 - **Direct Config Access**: Terminal starts in your `/config` directory for immediate access to all Home Assistant files
 - **Home Assistant Integration**: Access directly from your dashboard
 - **Panel Icon**: Quick access from the sidebar with the code-braces-box icon
-- **Multi-Architecture Support**: Works on amd64, aarch64, and armv7 platforms
+- **Multi-Architecture Support**: Works on amd64 and aarch64 platforms
 - **Secure Credential Management**: Persistent authentication with safe credential storage
 - **Automatic Recovery**: Built-in fallbacks and error handling for reliable operation
 

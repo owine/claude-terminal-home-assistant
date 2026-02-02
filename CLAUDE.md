@@ -52,7 +52,7 @@ curl -X GET http://localhost:7681/
 ### Add-on Structure (claude-terminal/)
 - **config.yaml** - Home Assistant add-on configuration (slug: `claude_terminal_prowine`)
 - **Dockerfile** - Alpine 3.23-based container with Node.js and Claude Code CLI
-- **build.yaml** - Multi-architecture build configuration (amd64, aarch64, armv7)
+- **build.yaml** - Multi-architecture build configuration (amd64, aarch64)
 - **run.sh** - Main startup script with credential management and ttyd terminal
 - **scripts/** - Modular credential management scripts
 - **image-service/** - Express.js server for image uploads and terminal proxy
@@ -66,7 +66,7 @@ curl -X GET http://localhost:7681/
 2. **Image Service**: Express.js server handling image uploads and WebSocket proxying to ttyd
 3. **Credential Management**: Persistent authentication storage in `/data/.config/claude/`
 4. **Service Integration**: Home Assistant ingress support with panel icon
-5. **Multi-Architecture**: Supports amd64, aarch64, armv7 platforms
+5. **Multi-Architecture**: Supports amd64, aarch64 platforms
 6. **Package Management**: Persistent package installation via `persist-install` script
 
 ### Credential System
@@ -168,7 +168,7 @@ podman exec test-claude-dev chmod +x /opt/scripts/claude-session-picker.sh
 - No sudo privileges available in development environment
 - Add-on targets Home Assistant OS (Alpine Linux 3.23 base)
 - Must handle credential persistence across container restarts
-- Requires multi-architecture compatibility (amd64, aarch64, armv7)
+- Requires multi-architecture compatibility (amd64, aarch64)
 - **CRITICAL:** `image-service/package-lock.json` must be committed for deterministic builds
 - Docker builds require `--no-cache` when npm dependencies change
 
@@ -227,7 +227,7 @@ The add-on uses **pre-built Docker images** published to GitHub Container Regist
 
 5. **Test workflow runs automatically**
    - Triggered by push to main or pull requests
-   - Builds all architectures (amd64, aarch64, armv7) using `--test` flag
+   - Builds all architectures (amd64, aarch64) using `--test` flag
    - Validates build succeeds without publishing images
    - See `.github/workflows/test.yml`
 
@@ -299,7 +299,6 @@ The add-on uses **pre-built Docker images** published to GitHub Container Regist
 - `ghcr.io/owine/claude-terminal-prowine-amd64:1.3.1`
 - `ghcr.io/owine/claude-terminal-prowine-aarch64:latest`
 - `ghcr.io/owine/claude-terminal-prowine-aarch64:1.3.1`
-- `ghcr.io/owine/claude-terminal-prowine-armv7:latest` (if supported)
 
 **Image configuration:**
 - Defined in `claude-terminal/build.yaml`
