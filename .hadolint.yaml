@@ -1,0 +1,21 @@
+---
+# Hadolint configuration for Home Assistant add-ons
+
+ignored:
+  # DL3018: Pinning apk versions is not practical for HA add-ons
+  # The base image manages Alpine package versions
+  - DL3018
+
+# Warnings that should be errors
+failure-threshold: warning
+
+# Override specific rules
+override:
+  warning:
+    # Make these warnings instead of errors
+    - DL3003  # Use WORKDIR to switch directories (prefer but not required)
+    - DL4006  # Set pipefail before pipes (good practice but not critical)
+
+  info:
+    # Shellcheck rules we can be flexible about
+    - SC2086  # Double quote to prevent globbing (contextual)

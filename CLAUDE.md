@@ -24,10 +24,18 @@ direnv allow
 ```
 
 ### Core Development Commands
+
+**Build & Test:**
 - `build-addon` - Build the Claude Terminal Prowine add-on with Podman
 - `run-addon` - Run add-on locally on port 7681 with volume mapping
-- `lint-dockerfile` - Lint Dockerfile using hadolint
 - `test-endpoint` - Test web endpoint availability (curl localhost:7681)
+
+**Linting:**
+- `lint-all` - Run all linters (hadolint, shellcheck, yamllint, actionlint)
+- `lint-dockerfile` - Lint Dockerfile using hadolint
+- `lint-shell` - Lint all shell scripts using shellcheck
+- `lint-yaml` - Lint YAML files using yamllint
+- `lint-actions` - Lint GitHub Actions workflows using actionlint
 
 ### Manual Commands (for local testing)
 ```bash
