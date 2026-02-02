@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.1
+
+### 🐛 Bug Fix - Session Picker Immediately Exits
+- **Fixed critical shell quoting bug in tmux session creation** (run.sh:361)
+  - Root cause: Single quotes in `bash -l -c '$launch_command'` prevented variable expansion
+  - Bash received literal string `$launch_command` instead of actual command
+  - Result: "command not found" → immediate session exit
+  - Fix: Changed to `bash -l -c \"$launch_command\"` with escaped double quotes
+  - Sessions now start correctly with the session picker menu when `auto_launch_claude: false`
+
 ## 1.5.0
 
 ### 🔒 Security - Binary Integrity Verification & Supply Chain Hardening

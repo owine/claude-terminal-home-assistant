@@ -358,7 +358,7 @@ setup_tmux_session() {
         # The session runs bash with our launch command
         # Set TERM and COLORTERM explicitly for full color support
         tmux new-session -d -s "$session_name" -x 200 -y 50 \
-            "TERM=xterm-256color COLORTERM=truecolor bash -l -c '$launch_command; exec bash -l'"
+            "TERM=xterm-256color COLORTERM=truecolor bash -l -c \"$launch_command; exec bash -l\""
         bashio::log.info "tmux session created successfully"
     fi
 }
