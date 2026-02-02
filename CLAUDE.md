@@ -209,6 +209,146 @@ podman exec test-claude-dev chmod +x /opt/scripts/claude-session-picker.sh
 
 **DO NOT** commit changes without updating both the version and changelog!
 
+### Release Process (v1.3.0+)
+
+The add-on uses **pre-built Docker images** published to GitHub Container Registry (ghcr.io) with a **two-stage CI/CD workflow**:
+
+#### Development Workflow
+
+1. **Make changes** to the codebase
+2. **Update version** in `claude-terminal/config.yaml`
+3. **Update changelog** in `claude-terminal/CHANGELOG.md`
+4. **Commit and push** to main branch
+   ```bash
+   git add .
+   git commit -m "feat: description of changes"
+   git push origin main
+   ```
+
+5. **Test workflow runs automatically**
+   - Triggered by push to main or pull requests
+   - Builds all architectures (amd64, aarch64, armv7) using `--test` flag
+   - Validates build succeeds without publishing images
+   - See `.github/workflows/test.yml`
+
+#### Publishing a Release
+
+**When ready to publish a new version:**
+
+1. **Create a GitHub Release**
+   ```bash
+   # Via GitHub CLI
+   gh release create v1.3.1 \
+     --title "v1.3.1" \
+     --notes "$(cat <<EOF
+   ## Changes
+   - Feature: Description
+   - Fix: Description
+
+   See CHANGELOG.md for full details.
+   EOF
+   )"
+
+   # Or via GitHub web UI:
+   # - Go to Releases → Draft a new release
+   # - Choose tag: v1.3.1 (create new tag)
+   # - Title: v1.3.1
+   # - Description: Copy from CHANGELOG.md
+   # - Click "Publish release"
+   ```
+
+2. **Publish workflow runs automatically**
+   - Triggered by GitHub release publication
+   - Builds all architectures with Home Assistant Builder
+   - **Signs images with cosign** for cryptographic verification
+   - Publishes to `ghcr.io/owine/claude-terminal-prowine-{arch}`
+   - Tags images with version (e.g., `1.3.1`) and `latest`
+   - See `.github/workflows/publish.yml`
+
+3. **Verify publication**
+   ```bash
+   # Check workflow status
+   gh run list --workflow=publish.yml --limit 3
+
+   # Verify images published
+   gh api /user/packages/container/claude-terminal-prowine-amd64/versions \
+     --jq '.[0] | {tags: .metadata.container.tags, created: .created_at}'
+   ```
+
+#### CI/CD Workflows
+
+**Test Workflow** (`.github/workflows/test.yml`)
+- **Triggers:** Push to any branch, pull requests
+- **Purpose:** Validate builds without publishing
+- **Builder flags:** `--test --all`
+- **Duration:** ~2 minutes
+- **Output:** Build validation only (no registry push)
+
+**Publish Workflow** (`.github/workflows/publish.yml`)
+- **Triggers:** GitHub release published
+- **Purpose:** Build and publish signed production images
+- **Builder flags:** `--all --cosign`
+- **Duration:** ~2-3 minutes
+- **Output:** Multi-arch images at ghcr.io with cosign signatures
+- **Permissions:** Requires `id-token: write` for cosign
+
+#### Image Locations
+
+**Published images:**
+- `ghcr.io/owine/claude-terminal-prowine-amd64:latest`
+- `ghcr.io/owine/claude-terminal-prowine-amd64:1.3.1`
+- `ghcr.io/owine/claude-terminal-prowine-aarch64:latest`
+- `ghcr.io/owine/claude-terminal-prowine-aarch64:1.3.1`
+- `ghcr.io/owine/claude-terminal-prowine-armv7:latest` (if supported)
+
+**Image configuration:**
+- Defined in `claude-terminal/build.yaml`
+- `image:` field points to ghcr.io location
+- Home Assistant pulls these pre-built images (no local build)
+
+#### Why Pre-Built Images?
+
+Prior to v1.3.0, Home Assistant built images locally during installation. This approach had critical flaws:
+
+**Problems with local builds:**
+- ✗ Home Assistant's npm install ignored `package-lock.json`
+- ✗ Ignored exact version pins in `package.json`
+- ✗ Random build failures from Docker layer caching
+- ✗ 5+ minute installation time
+- ✗ Inconsistent dependency versions across installs
+
+**Benefits of pre-built images (v1.3.0+):**
+- ✓ Fast installation (~30 seconds download vs ~5 minutes build)
+- ✓ Guaranteed correct dependency versions (built in controlled environment)
+- ✓ Cryptographically signed with cosign for supply chain security
+- ✓ Standard practice for production Home Assistant add-ons
+- ✓ Test builds validate changes before publication
+
+#### Troubleshooting Releases
+
+**Build fails in test workflow:**
+- Check GitHub Actions logs: `gh run view <run-id> --log-failed`
+- Common issues: Dockerfile syntax, missing files, npm dependency errors
+- Fix issues and push again (test workflow re-runs automatically)
+
+**Build fails in publish workflow:**
+- Verify GitHub release was created correctly
+- Check cosign permissions (`id-token: write` required)
+- Ensure `--image` parameter matches `build.yaml` configuration
+- Review builder logs for specific error messages
+
+**Images not appearing in ghcr.io:**
+- Check workflow completed successfully
+- Verify GITHUB_TOKEN has `packages: write` permission
+- Check package visibility settings (should be public)
+- Allow a few minutes for registry propagation
+
+**Home Assistant can't pull images:**
+- Verify images exist: `gh api /user/packages/container/claude-terminal-prowine-amd64/versions`
+- Check package is public (not private)
+- Ensure `build.yaml` image field matches published location
+- Try manual pull: `docker pull ghcr.io/owine/claude-terminal-prowine-amd64:latest`
+
 ## Image Service & Dependency Management
 
 ### CRITICAL: package-lock.json Requirement
