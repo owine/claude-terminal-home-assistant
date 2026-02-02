@@ -1,6 +1,6 @@
 # Home Assistant base image
 # renovate: datasource=docker depName=ghcr.io/home-assistant/amd64-base
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23@sha256:7de749eb4528709824b48f1fe00ea0f981b01cca0b65e1bd633c85081beb1ada
 FROM ${BUILD_FROM}
 
 # Install packages in a single layer to minimize image size
