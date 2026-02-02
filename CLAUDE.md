@@ -4,9 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository contains Home Assistant add-ons, specifically the **Claude Terminal Pro** add-on which provides a web-based terminal interface with Claude Code CLI pre-installed and persistent package management. The add-on allows Home Assistant users to access Claude AI capabilities directly from their dashboard.
+This repository contains Home Assistant add-ons, specifically the **Claude Terminal Prowine** add-on which provides a web-based terminal interface with Claude Code CLI pre-installed and persistent package management. The add-on allows Home Assistant users to access Claude AI capabilities directly from their dashboard.
 
-**Fork Attribution:** This is an enhanced fork of [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) by Tom Cassady, maintained by Javier Santos ([@esjavadex](https://github.com/esjavadex)). The fork adds persistent package management, auto-install configuration, and enhanced documentation.
+**Fork Attribution:** This is a personal fork maintained by [@owine](https://github.com/owine), built upon:
+- [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) - Original Claude Terminal add-on by Tom Cassady
+- [ESJavadex/claude-code-ha](https://github.com/ESJavadex/claude-code-ha) - Enhanced fork by Javier Santos
+
+**Current Version:** v1.2.3
 
 ## Development Environment
 
@@ -20,7 +24,7 @@ direnv allow
 ```
 
 ### Core Development Commands
-- `build-addon` - Build the Claude Terminal Pro add-on with Podman
+- `build-addon` - Build the Claude Terminal Prowine add-on with Podman
 - `run-addon` - Run add-on locally on port 7681 with volume mapping
 - `lint-dockerfile` - Lint Dockerfile using hadolint
 - `test-endpoint` - Test web endpoint availability (curl localhost:7681)
@@ -28,10 +32,13 @@ direnv allow
 ### Manual Commands (without aliases)
 ```bash
 # Build
-podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.19 -t local/claude-terminal-pro ./claude-terminal
+podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 -t local/claude-terminal-prowine ./claude-terminal
+
+# Build without cache (required when dependencies change)
+podman build --no-cache --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 -t local/claude-terminal-prowine ./claude-terminal
 
 # Run locally
-podman run -p 7681:7681 -v $(pwd)/config:/config local/claude-terminal-pro
+podman run -p 7681:7681 -v $(pwd)/config:/config local/claude-terminal-prowine
 
 # Lint
 hadolint ./claude-terminal/Dockerfile
@@ -43,17 +50,24 @@ curl -X GET http://localhost:7681/
 ## Architecture
 
 ### Add-on Structure (claude-terminal/)
-- **config.yaml** - Home Assistant add-on configuration (multi-arch, ingress, ports)
-- **Dockerfile** - Alpine-based container with Node.js and Claude Code CLI
+- **config.yaml** - Home Assistant add-on configuration (slug: `claude_terminal_prowine`)
+- **Dockerfile** - Alpine 3.23-based container with Node.js and Claude Code CLI
 - **build.yaml** - Multi-architecture build configuration (amd64, aarch64, armv7)
 - **run.sh** - Main startup script with credential management and ttyd terminal
 - **scripts/** - Modular credential management scripts
+- **image-service/** - Express.js server for image uploads and terminal proxy
+  - **server.js** - Main service (port 7680)
+  - **package.json** - Node.js dependencies (express 5.x, multer 2.x, http-proxy-middleware 3.x)
+  - **package-lock.json** - **CRITICAL:** Ensures deterministic builds with exact dependency versions
+  - **public/** - HTML interface with embedded ttyd terminal
 
 ### Key Components
-1. **Web Terminal**: Uses ttyd to provide browser-based terminal access
-2. **Credential Management**: Persistent authentication storage in `/config/claude-config/`
-3. **Service Integration**: Home Assistant ingress support with panel icon
-4. **Multi-Architecture**: Supports amd64, aarch64, armv7 platforms
+1. **Web Terminal**: Uses ttyd (v1.7.7) to provide browser-based terminal access
+2. **Image Service**: Express.js server handling image uploads and WebSocket proxying to ttyd
+3. **Credential Management**: Persistent authentication storage in `/data/.config/claude/`
+4. **Service Integration**: Home Assistant ingress support with panel icon
+5. **Multi-Architecture**: Supports amd64, aarch64, armv7 platforms
+6. **Package Management**: Persistent package installation via `persist-install` script
 
 ### Credential System
 The add-on implements a sophisticated credential management system:
@@ -63,11 +77,15 @@ The add-on implements a sophisticated credential management system:
 - **Security**: Proper file permissions (600) and safe directory operations
 
 ### Container Execution Flow
-1. Initialize environment and create credential directories
-2. Install ttyd and tools via apk
-3. Setup modular credential management scripts
-4. Start background credential monitoring service
-5. Launch ttyd web terminal with Claude auto-start
+1. Run system health check (memory, disk, network, Node.js, Claude CLI)
+2. Initialize environment in `/data` (home, config, cache directories)
+3. Install ttyd and additional tools via apk
+4. Setup persistent package management system
+5. Configure Home Assistant MCP integration (if enabled)
+6. Start image service on port 7680 (Express.js with WebSocket proxy)
+7. Create tmux session for terminal persistence
+8. Launch ttyd on port 7681 (attaches to tmux session)
+9. Display session picker menu (if auto_launch_claude: false)
 
 ## Development Notes
 
@@ -77,7 +95,10 @@ For rapid development and debugging without pushing new versions:
 #### Quick Build & Test
 ```bash
 # Build test version
-podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.19 -t local/claude-terminal:test ./claude-terminal
+podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 -t local/claude-terminal:test ./claude-terminal
+
+# Build without cache (required after dependency changes)
+podman build --no-cache --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 -t local/claude-terminal:test ./claude-terminal
 
 # Create test config directory
 mkdir -p /tmp/test-config/claude-config
@@ -136,15 +157,20 @@ podman exec test-claude-dev chmod +x /opt/scripts/claude-session-picker.sh
 - **Permissions**: Credential files must have 600 permissions
 
 ### Key Environment Variables
-- `CLAUDE_CREDENTIALS_DIRECTORY=/config/claude-config`
-- `ANTHROPIC_CONFIG_DIR=/config/claude-config`
-- `HOME=/root`
+- `ANTHROPIC_CONFIG_DIR=/data/.config/claude` - Claude Code configuration directory
+- `HOME=/data/home` - User home directory (persistent across restarts)
+- `SUPERVISOR_TOKEN` - Auto-populated token for Home Assistant Supervisor API
+- `IMAGE_SERVICE_PORT=7680` - Image upload service port
+- `TTYD_PORT=7681` - ttyd terminal port
+- `UPLOAD_DIR=/data/images` - Directory for uploaded images
 
 ### Important Constraints
 - No sudo privileges available in development environment
-- Add-on targets Home Assistant OS (Alpine Linux base)
+- Add-on targets Home Assistant OS (Alpine Linux 3.23 base)
 - Must handle credential persistence across container restarts
-- Requires multi-architecture compatibility
+- Requires multi-architecture compatibility (amd64, aarch64, armv7)
+- **CRITICAL:** `image-service/package-lock.json` must be committed for deterministic builds
+- Docker builds require `--no-cache` when npm dependencies change
 
 ## Release Management
 
@@ -180,6 +206,71 @@ podman exec test-claude-dev chmod +x /opt/scripts/claude-session-picker.sh
   - Sub-bullet for additional details
   - Another sub-bullet if needed
 ```
+
+**DO NOT** commit changes without updating both the version and changelog!
+
+## Image Service & Dependency Management
+
+### CRITICAL: package-lock.json Requirement
+
+The **image-service** directory contains a Node.js Express server that handles image uploads and WebSocket proxying. This service has specific npm dependencies that MUST be locked for deterministic builds.
+
+**Why package-lock.json is critical:**
+- Without it, `npm install` in Docker builds can install different versions than expected
+- Docker layer caching can cause old dependency versions to be used
+- This led to issues in v1.2.0-1.2.2 where security updates and WebSocket fixes didn't deploy
+
+**Current locked dependencies (v1.2.3):**
+```json
+{
+  "express": "5.2.1",           // Security improvements, stricter validation
+  "multer": "2.0.2",            // Fixes 4 critical CVEs
+  "http-proxy-middleware": "3.0.5"  // Eliminates util._extend deprecation
+}
+```
+
+### When Updating Dependencies
+
+**If you modify `image-service/package.json`:**
+
+1. **Regenerate the lockfile:**
+   ```bash
+   cd claude-terminal/image-service
+   npm install
+   ```
+
+2. **Commit the lockfile:**
+   ```bash
+   git add package-lock.json
+   git commit -m "chore: update npm dependencies"
+   ```
+
+3. **Rebuild without cache:**
+   ```bash
+   # For Home Assistant deployment, this happens automatically on reinstall
+   # For local testing:
+   podman build --no-cache -t local/claude-terminal:test ./claude-terminal
+   ```
+
+**IMPORTANT:** The `.gitignore` file has a specific exception for this lockfile:
+```gitignore
+# Blanket ignore for lockfiles
+package-lock.json
+
+# Exception: image-service lockfile needed for Docker builds
+!claude-terminal/image-service/package-lock.json
+```
+
+### Dependency Update Automation
+
+The repository uses **Renovate** for automated dependency updates:
+- Auto-merges patch updates (x.x.X)
+- Groups minor updates (x.X.0) for review
+- Individual PRs for major updates (X.0.0)
+- Security vulnerability alerts enabled
+- Tracks npm, Docker, and GitHub Actions dependencies
+
+See `renovate.json` for configuration details.
 
 **DO NOT** commit changes without updating both the version and changelog!
 
