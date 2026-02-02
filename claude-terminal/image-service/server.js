@@ -101,8 +101,11 @@ const terminalProxy = createProxyMiddleware({
     target: `http://localhost:${TTYD_PORT}`,
     changeOrigin: true,
     ws: true, // Enable WebSocket proxying
-    // Note: In v3, the mount point '/terminal' is automatically stripped
-    // before forwarding to target, so no pathRewrite needed
+    // Explicitly strip /terminal prefix for WebSocket upgrades
+    // While v3 strips mount points for HTTP, WebSocket upgrades need explicit rewrite
+    pathRewrite: {
+        '^/terminal': '' // Remove /terminal prefix
+    },
     on: {
         error: (err, req, res) => {
             console.error('Proxy error:', err.message);
