@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.5.2
+
+### 🐛 Bug Fix - WebSocket Connection Failure (Blank Terminal)
+- **Fixed critical WebSocket path rewriting bug in image-service proxy** (server.js:100-121)
+  - Root cause: WebSocket upgrade handler didn't strip `/terminal` prefix like HTTP requests
+  - HTTP proxy worked: `/terminal/token` → `/token` (path stripped ✓)
+  - WebSocket failed: `/terminal/ws` → `/terminal/ws` (path NOT stripped ✗)
+  - Result: ttyd rejected connections with "illegal ws path: /terminal/ws"
+  - Symptom: Blank terminal window with "Press Enter to Reconnect" message
+  - Fix: Added explicit `pathRewrite: {'^/terminal': ''}` to proxy configuration
+  - WebSocket upgrades now correctly strip ingress prefix before forwarding to ttyd
+  - Terminal now loads and displays session picker/Claude interface correctly
+
+### 🔧 Technical - Multi-Arch Build System Fix
+- **Fixed multi-arch build configuration** (Dockerfile, build.yaml, renovate.json)
+  - Removed hardcoded `BUILD_FROM` default with architecture-specific SHA256 digest
+  - Before: `ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23@sha256:...` (hardcoded amd64)
+  - After: `ARG BUILD_FROM` (no default, provided by builder or developer)
+  - Benefits:
+    - Eliminates risk of aarch64 builds using amd64 base image
+    - Clear separation: `build.yaml` controls CI/CD, `--build-arg` controls local builds
+    - Local Docker testing works (home-assistant base is standalone-capable)
+    - Renovate tracks both architectures in `build.yaml` via custom regex manager
+  - Added Renovate comments to `build.yaml` for automated version updates
+  - Updated CLAUDE.md with correct local build command using `--build-arg`
+
 ## 1.5.1
 
 ### 🐛 Bug Fix - Session Picker Immediately Exits
