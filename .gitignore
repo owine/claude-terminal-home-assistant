@@ -41,3 +41,6 @@ Thumbs.db
 # NOTE: This ignores .claude/ in the root directory (user's local Claude config)
 # BUT: claude-terminal/.claude/ IS committed (contains add-on Claude commands & skills)
 .claude/
+
+# Git worktrees
+.worktrees/
