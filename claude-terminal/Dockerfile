@@ -136,7 +136,7 @@ RUN set -eux; \
 # Install Home Assistant CLI (ha command)
 # Download appropriate binary based on build architecture
 # renovate: datasource=github-releases depName=home-assistant/cli
-ARG HA_CLI_VERSION=4.45.0
+ARG HA_CLI_VERSION=4.46.0
 ARG TARGETARCH
 RUN case "${TARGETARCH}" in \
         amd64)   HA_ARCH="amd64" ;; \
