@@ -11,7 +11,7 @@ Claude Terminal Prowine is an enhanced fork of the original Claude Terminal add-
 1. Add this repository to your Home Assistant add-on store:
    - Go to Settings → Add-ons → Add-on Store
    - Click the menu (⋮) and select Repositories
-   - Add: `https://github.com/esjavadex/claude-code-ha`
+   - Add: `https://github.com/owine/claude-terminal-home-assistant`
 2. Install the Claude Terminal Prowine add-on
 3. Start the add-on
 4. Click "OPEN WEB UI" to access the terminal
@@ -24,7 +24,14 @@ The add-on offers several configuration options:
 ### Auto Launch Claude
 - **Default**: `true`
 - When enabled, Claude starts automatically when you open the terminal
-- When disabled, shows an interactive session picker menu
+- When disabled, shows an interactive session picker menu with options for:
+  - New interactive session
+  - Continue most recent conversation
+  - Resume from conversation list
+  - Custom Claude commands
+  - Authentication helper
+  - GitHub CLI login
+  - Drop to bash shell (with `menu` alias to return)
 
 ### Dangerously Skip Permissions
 - **Default**: `false`
@@ -55,25 +62,58 @@ Your OAuth credentials are stored in the `/config/claude-config` directory and w
 | Option | Default | Description |
 |--------|---------|-------------|
 | `auto_launch_claude` | `true` | Automatically start Claude when opening the terminal |
+| `dangerously_skip_permissions` | `false` | Run Claude with unrestricted file access ⚠️ |
 | `enable_ha_mcp` | `true` | Enable Home Assistant MCP server integration |
+| `tmux_mouse_mode` | `false` | Enable mouse support in tmux (use Shift+select to copy) |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |
 
 ## Usage
 
-Claude launches automatically when you open the terminal. You can also start Claude manually with:
+Claude launches automatically when you open the terminal (if `auto_launch_claude: true`). When set to `false`, you'll see an interactive session picker menu.
+
+### Session Picker Menu
+
+When the menu is enabled, you can:
+- Start a new Claude session
+- Continue your most recent conversation
+- Resume from a list of past conversations
+- Enter custom Claude commands
+- Use the authentication helper
+- Login to GitHub CLI
+- Drop to bash shell
+
+**Tip:** If you drop to bash shell, type `menu` to return to the session picker!
+
+### Manual Claude Commands
 
 ```bash
+# Start Claude
 claude
+
+# Interactive session
+claude -i
+
+# Continue most recent conversation
+claude -c
+
+# Resume from conversation list
+claude -r
+
+# Ask a single question
+claude "your prompt"
+
+# Analyze a file
+claude process myfile.py
+
+# Get help
+claude --help
 ```
 
 ### Common Commands
 
-- `claude -i` - Start an interactive Claude session
-- `claude --help` - See all available commands
-- `claude "your prompt"` - Ask Claude a single question
-- `claude process myfile.py` - Have Claude analyze a file
-- `claude --editor` - Start an interactive editor session
+- `menu` - Return to session picker from bash shell
+- `persist-install` - Install packages that survive reboots (see Persistent Packages section)
 
 The terminal starts directly in your `/config` directory, giving you immediate access to all your Home Assistant configuration files. This makes it easy to get help with your configuration, create automations, and troubleshoot issues.
 
@@ -81,12 +121,17 @@ The terminal starts directly in your `/config` directory, giving you immediate a
 
 ### Core Features
 - **Web Terminal**: Access a full terminal environment via your browser
-- **Auto-Launching**: Claude starts automatically when you open the terminal
+- **Session Picker**: Interactive menu for starting, continuing, or resuming Claude sessions
+- **Menu Alias**: Type `menu` from bash to return to session picker
+- **Auto-Launching**: Claude starts automatically when you open the terminal (configurable)
 - **Claude AI**: Access Claude's AI capabilities for programming, troubleshooting and more
+- **Image Paste Support**: Paste images (Ctrl+V), drag-drop, or upload for Claude analysis
 - **Direct Config Access**: Terminal starts in `/config` for immediate access to all Home Assistant files
 - **Simple Setup**: Uses OAuth for easy authentication
 - **Home Assistant Integration**: Access directly from your dashboard
 - **Home Assistant MCP Server**: Built-in integration with [ha-mcp](https://github.com/homeassistant-ai/ha-mcp) for natural language control
+- **tmux Session Persistence**: Terminal sessions persist across browser refreshes
+- **Persistent Package Management**: Install packages that survive reboots with `persist-install`
 
 ## Home Assistant MCP Integration
 
@@ -122,11 +167,115 @@ If you don't want the Home Assistant MCP integration, you can disable it in the 
 enable_ha_mcp: false
 ```
 
-### Enhanced Features (Pro)
-- **Persistent Packages**: Install system (APK) and Python (pip) packages that survive restarts
-- **Auto-Install Configuration**: Set packages to auto-install on startup
-- **Simple Management**: Use `persist-install` command for easy package installation
-- **Python Virtual Environment**: Isolated Python environment in `/data/packages`
+### Enhanced Features
+
+#### Image Paste Support
+
+Claude Terminal Prowine supports pasting and uploading images directly in the web interface for analysis, OCR, or any other image-related tasks.
+
+##### Usage Methods
+
+**Method 1: Paste (Keyboard)**
+1. Copy an image to your clipboard (from screenshot, browser, etc.)
+2. Focus on the terminal window
+3. Press **Ctrl+V** (or **Cmd+V** on Mac)
+4. The image uploads automatically
+5. Use the path with Claude: `analyze /data/images/pasted-123456.png`
+
+**Method 2: Drag and Drop**
+1. Drag an image file from your file manager
+2. Drop it anywhere on the terminal window
+3. The image uploads automatically
+4. Use the file path shown in the status bar
+
+**Method 3: Upload Button**
+1. Click the **📎 Upload Image** button in the top right
+2. Select an image file from the file picker
+3. The image uploads automatically
+
+##### File Storage
+
+- **Location**: `/data/images/`
+- **Persistence**: Images survive container restarts
+- **Naming**: Files are automatically named `pasted-<timestamp>.<ext>`
+- **Formats**: JPEG, PNG, GIF, WebP, and SVG
+- **Size Limit**: 10MB per file
+
+##### Examples
+
+```bash
+# Analyze an image
+analyze /data/images/pasted-1732374829123.png
+
+# Extract text from screenshot (OCR)
+extract the text from /data/images/pasted-1732374829123.png
+
+# Compare images
+compare /data/images/pasted-123.png and /data/images/pasted-456.png
+```
+
+##### Technical Details
+
+**Architecture:**
+- Node.js image upload service runs on port 7680 (main web interface)
+- ttyd terminal embedded on port 7681
+- Handles uploads via paste, drag-drop, or button click
+- Saves to `/data/images/` (persistent storage)
+
+**Dependencies:**
+- Express v5.2.1 (HTTP server with security improvements)
+- Multer v2.0.2 (multipart/form-data handling, fixes 4 critical CVEs)
+- ARM-compatible for Raspberry Pi
+
+**Resource Usage:**
+- Memory: ~10-15MB for Node.js service
+- CPU: Minimal (only active during uploads)
+- Storage: `/data/images/`
+
+**Security:**
+- MIME type validation (images only)
+- 10MB file size limit
+- Isolated storage directory
+- No execution permissions on uploaded files
+
+##### Troubleshooting
+
+**Image not uploading:**
+- Check browser console for errors (F12)
+- Verify file is an image (JPEG, PNG, GIF, WebP, SVG)
+- Ensure file is under 10MB
+- Check add-on logs
+
+**Can't see uploaded images:**
+```bash
+ls -la /data/images/          # List images
+ls -ld /data/images/          # Check permissions
+df -h /data                   # Check disk space
+```
+
+**Paste not working:**
+- Click on page first to focus it
+- Check browser clipboard permissions
+- Try drag-drop or upload button instead
+
+**Browser Compatibility:**
+- ✅ Chrome/Edge 90+, Firefox 90+, Safari 14+
+- ⚠️ Older browsers: use drag-drop or upload button
+
+#### Persistent Package Management
+- **System packages**: Install APK packages that survive restarts
+- **Python packages**: Install pip packages in persistent virtual environment
+- **Auto-install**: Configure packages to install automatically on startup
+- **Simple command**: Use `persist-install` for all package management
+- **Storage location**: `/data/packages/` (permanent storage)
+
+See [PERSISTENT_PACKAGES.md](PERSISTENT_PACKAGES.md) for complete guide.
+
+#### Session Management
+- **Interactive menu**: Choose between new, continue, or resume sessions
+- **GitHub CLI**: Pre-installed with persistent authentication
+- **tmux integration**: Sessions persist across browser refreshes
+- **Mouse support**: Optional tmux mouse mode (configurable)
 
 ## Troubleshooting
 

@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.5.6
+
+### ✨ New Feature - 'menu' Shell Alias for Easy Navigation
+- **Added convenient 'menu' alias to return to session picker from bash** (run.sh, claude-session-picker.sh)
+  - When users drop to bash shell (menu option 7), they can now type `menu` to return
+  - Alias automatically added to `/etc/profile.d/persistent-packages.sh` during startup
+  - Available in all bash login shells without additional configuration
+  - Updated drop-to-bash tips to highlight the new `menu` command
+  - Improves user experience: No need to remember the full path `/usr/local/bin/claude-session-picker`
+
+**Use Case:**
+Users frequently drop to bash for quick commands, then want to return to the menu to start a new Claude session. Previously required typing the full script path or restarting the add-on. Now just type `menu`.
+
+### 📚 Documentation - Comprehensive Cleanup and Consolidation
+- **Fixed incorrect installation URLs** (README.md, DOCS.md)
+  - Updated all references from ESJavadex repository to owine's fork
+  - Ensures users add the correct repository: `https://github.com/owine/claude-terminal-home-assistant`
+- **Removed outdated version history** (README.md)
+  - Replaced v1.0.x version history with reference to CHANGELOG.md
+  - Prevents confusion about current version (was showing v1.0.2, actual is 1.5.6)
+- **Updated dependency versions** (DOCS.md, IMAGE_PASTE.md → DOCS.md)
+  - Express: v4.18.2 → v5.2.1 (security improvements)
+  - Multer: v1.4.5 → v2.0.2 (fixes 4 critical CVEs)
+  - Added security context to dependency descriptions
+- **Enhanced DOCS.md with recent features**
+  - Added session picker menu documentation with all 8 options
+  - Documented `menu` alias for returning to picker from bash
+  - Added tmux mouse mode configuration option
+  - Expanded image paste support details (formats, storage, usage)
+  - Added persistent package management overview
+  - Included session management features (GitHub CLI, tmux persistence)
+  - Updated configuration options table with all current settings
+- **Consolidated documentation files**
+  - Merged IMAGE_PASTE.md (172 lines) into DOCS.md as detailed subsection
+  - Deleted `config/README.md` (40 lines) - test directory is self-explanatory
+  - Deleted `tools/README.md` (36 lines) - single tool with its own documentation
+  - Reduced total markdown file count: 16 → 13 files
+  - Single source of truth for image paste feature documentation
+
+**Impact**: Users now have accurate, up-to-date, and well-organized documentation that reflects the current state of the add-on with all recent features. Streamlined file structure is easier to navigate and maintain.
+
 ## 1.5.5
 
 ### 🐛 Bug Fix - Home Assistant Config Schema Validation Error

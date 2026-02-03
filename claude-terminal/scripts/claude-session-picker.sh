@@ -236,10 +236,10 @@ drop_to_bash() {
     echo "🐚 Dropping to bash shell..."
     echo ""
     echo "Tips:"
+    echo "  • Run 'menu' to return to this menu"
     echo "  • Run 'claude' to start a new Claude session"
     echo "  • Run 'claude -c' to continue most recent conversation"
     echo "  • Run 'claude -r' to resume from conversation list"
-    echo "  • The menu will not return - this is a permanent shell"
     echo ""
     sleep 1
     # Use exec to replace the menu with bash

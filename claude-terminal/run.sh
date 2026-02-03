@@ -92,6 +92,9 @@ export PKG_CONFIG_PATH="/data/packages/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 if [ -d "/data/packages/python/venv" ]; then
     export VIRTUAL_ENV="/data/packages/python/venv"
 fi
+
+# Convenience alias to return to menu from bash shell
+alias menu='/usr/local/bin/claude-session-picker'
 PROFILE_EOF
 
     chmod 644 /etc/profile.d/persistent-packages.sh

@@ -64,7 +64,7 @@ claude-logout
 1. Add this repository to your Home Assistant add-on store:
    - Go to Settings → Add-ons → Add-on Store
    - Click the menu (⋮) and select Repositories
-   - Add: `https://github.com/esjavadex/claude-code-ha`
+   - Add: `https://github.com/owine/claude-terminal-home-assistant`
 2. Install the Claude Terminal Prowine add-on
 3. Start the add-on
 4. Click "OPEN WEB UI" or the sidebar icon to access
@@ -147,21 +147,9 @@ For detailed usage instructions, see the [documentation](DOCS.md).
 
 ## Version History
 
-### v1.0.2 (Current) - Security & Bug Fix Release
-- 🔒 **CRITICAL**: Fixed dangerous filesystem operations
-- 🐛 Added missing armv7 architecture support
-- 🔧 Pinned NPM packages and improved error handling
-- 🛠️ Enhanced development environment with Podman support
+**Current Version:** v1.5.6
 
-### v1.0.1
-- Improved credential management
-- Enhanced startup reliability
-
-### v1.0.0
-- Initial stable release
-- Web terminal interface with ttyd
-- Pre-installed Claude Code CLI
-- OAuth authentication support
+For complete version history and detailed changelog, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Useful Links
 
