@@ -41,11 +41,13 @@ show_menu() {
     echo "  7) 🐚 Drop to bash shell (exit menu)"
     echo "  8) 🔄 Clear & restart session (reset scrollback)"
     echo ""
+    echo "  ─────────────────────────────────────"
+    echo "  9) ⚠️  YOLO Mode (skip all permissions)"
 }
 
 get_user_choice() {
     local choice
-    printf "Enter your choice [1-8] (default: 1): " >&2
+    printf "Enter your choice [1-9] (default: 1): " >&2
     read -r choice
 
     if [ -z "$choice" ]; then
@@ -246,6 +248,80 @@ drop_to_bash() {
     exec bash -l
 }
 
+# YOLO Mode - run Claude with --dangerously-skip-permissions
+run_claude_yolo() {
+    clear
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║                  ⚠️  YOLO MODE WARNING ⚠️                    ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "You are about to launch Claude with --dangerously-skip-permissions"
+    echo ""
+    echo "This mode will:"
+    echo "  • Skip ALL permission prompts automatically"
+    echo "  • Allow Claude to execute ANY command without confirmation"
+    echo "  • Allow Claude to read/write ANY file without asking"
+    echo "  • Allow Claude to make network requests freely"
+    echo ""
+    echo "⚠️  THIS IS DANGEROUS! Only use if you understand the risks."
+    echo ""
+    printf "Type 'YOLO' to confirm (or anything else to cancel): "
+    read -r confirmation
+
+    if [ "$confirmation" != "YOLO" ]; then
+        echo ""
+        echo "❌ YOLO Mode cancelled. Returning to main menu..."
+        sleep 2
+        return
+    fi
+
+    echo ""
+    echo "✅ YOLO Mode confirmed!"
+    echo ""
+    echo "Select session type for YOLO Mode:"
+    echo "  1) 🆕 New session"
+    echo "  2) ⏩ Continue most recent conversation"
+    echo "  3) 📋 Resume from conversation list"
+    echo ""
+    printf "Enter your choice [1-3] (default: 1): "
+    read -r yolo_choice
+
+    # Default to 1 if empty
+    if [ -z "$yolo_choice" ]; then
+        yolo_choice=1
+    fi
+
+    # Set sandbox environment variable
+    export IS_SANDBOX=1
+
+    case "$yolo_choice" in
+        1)
+            echo "🚀 Starting new YOLO session..."
+            sleep 1
+            $CLAUDE_BIN --dangerously-skip-permissions
+            show_return_message
+            ;;
+        2)
+            echo "⏩ Continuing most recent conversation in YOLO mode..."
+            sleep 1
+            $CLAUDE_BIN -c --dangerously-skip-permissions
+            show_return_message
+            ;;
+        3)
+            echo "📋 Opening conversation list for YOLO mode..."
+            sleep 1
+            $CLAUDE_BIN -r --dangerously-skip-permissions
+            show_return_message
+            ;;
+        *)
+            echo "❌ Invalid choice. Starting new YOLO session..."
+            sleep 1
+            $CLAUDE_BIN --dangerously-skip-permissions
+            show_return_message
+            ;;
+    esac
+}
+
 main() {
     while true; do
         show_banner
@@ -277,10 +353,13 @@ main() {
             8)
                 restart_session
                 ;;
+            9)
+                run_claude_yolo
+                ;;
             *)
                 echo ""
                 echo "❌ Invalid choice: '$choice'"
-                echo "Please select a number between 1-8"
+                echo "Please select a number between 1-9"
                 echo ""
                 printf "Press Enter to continue..." >&2
                 read -r
