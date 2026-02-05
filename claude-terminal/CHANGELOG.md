@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.6.0
+
+### ✨ New Feature - YOLO Mode for Unrestricted Sessions
+- **Menu option 9: Launch Claude with `--dangerously-skip-permissions`** (claude-session-picker.sh) - *contributed by @alexcf*
+  - Provides unrestricted file access and command execution for power users
+  - Requires typing "YOLO" to confirm understanding of security risks
+  - Visual separator in menu distinguishes dangerous option from standard modes
+  - Comprehensive warning screen explains all risks before proceeding
+  - Sub-menu for session type selection (New/Continue/Resume)
+  - Command-scoped `IS_SANDBOX=1` prevents environment pollution
+  - Pre-flight validation ensures Claude binary exists before showing prompts
+  - Error handling with actionable messages for exit codes 1-128
+  - Logs all operations to stderr for debugging and monitoring
+  - Returns to menu after session ends (consistent with other options)
+
+**Use Case:** Advanced users who trust Claude completely and want to eliminate permission prompts for faster workflows. Similar to `sudo` in Linux - powerful but requires understanding of risks.
+
+**Security Notes:**
+- Only use YOLO mode when you fully trust the code Claude will execute
+- Different from config option `dangerously_skip_permissions` (global) - this is per-session
+- Uses undocumented `IS_SANDBOX=1` workaround to bypass root privilege restrictions
+- Exit code handling provides visibility into session outcomes
+
+### 🔧 Technical - Dependency Updates
+- **Updated Claude Code CLI to v2.1.32** (Dockerfile)
+  - Patch version update with bug fixes and improvements
+  - Automatic SHA256 integrity verification during build
+- **Updated claude-code-action to digest 006aaf2** (.github/workflows/)
+  - Internal refactor for better action performance
+  - Includes Claude Code v2.1.32 and Agent SDK v0.2.32
+  - CI/CD workflow improvements
+
 ## 1.5.6
 
 ### ✨ New Feature - 'menu' Shell Alias for Easy Navigation
