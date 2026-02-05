@@ -204,9 +204,26 @@ Before submitting a PR, verify:
 
 ### Automated Testing
 
-- Linting runs automatically on all PRs
-- Test workflow validates builds for all architectures
-- Check GitHub Actions results before requesting review
+All PRs trigger automated workflows:
+
+**Linting** (`.github/workflows/lint.yml`)
+- hadolint for Dockerfile
+- shellcheck for shell scripts
+- yamllint for YAML files
+- actionlint for GitHub Actions
+
+**Test Builds** (`.github/workflows/test.yml`)
+- Builds for both amd64 and aarch64
+- Uses `--test` flag (no registry push)
+- Validates build configuration before merge
+
+**AI Code Review** (`.github/workflows/claude-code-review.yml`)
+- Claude Code analyzes PR changes
+- Provides inline comments and suggestions
+- Checks for security issues and best practices
+- Also reviews Renovate dependency PRs
+
+Check GitHub Actions results before requesting review
 
 ## Common Issues
 

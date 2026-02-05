@@ -10,7 +10,11 @@ This repository contains Home Assistant add-ons, specifically the **Claude Termi
 - [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) - Original Claude Terminal add-on by Tom Cassady
 - [ESJavadex/claude-code-ha](https://github.com/ESJavadex/claude-code-ha) - Enhanced fork by Javier Santos
 
-**Current Version:** v1.2.3
+**Current Version:** v1.5.6
+
+## Task Completion
+
+When reviewing PRs, complete the full review cycle before ending - summarize findings, provide actionable feedback, and confirm next steps with the user.
 
 ## Development Environment
 
@@ -74,6 +78,63 @@ curl -X GET http://localhost:7681/
   - **package-lock.json** - **CRITICAL:** Ensures deterministic builds with exact dependency versions
   - **public/** - HTML interface with embedded ttyd terminal
 
+### Build Configuration (build.yaml)
+
+The `build.yaml` file configures the Home Assistant Builder for multi-architecture builds:
+
+```yaml
+# Architecture-specific base images (managed by Renovate)
+build_from:
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.23
+  amd64: ghcr.io/home-assistant/amd64-base:3.23
+
+# Pre-built images location (what users pull)
+image: "ghcr.io/owine/claude-terminal-prowine-{arch}"
+
+# OCI container labels
+labels:
+  org.opencontainers.image.title: "Claude Terminal Prowine"
+  org.opencontainers.image.description: "Enhanced terminal interface for Claude Code CLI"
+  org.opencontainers.image.source: "https://github.com/owine/claude-terminal-home-assistant"
+  org.opencontainers.image.licenses: "MIT"
+```
+
+**Key Points:**
+- `build_from` - Specifies base images per architecture (Home Assistant maintains these)
+- `image` - Template for published image names (`{arch}` replaced with amd64/aarch64)
+- `labels` - OCI-compliant metadata embedded in images
+
+**Renovate Integration:**
+The file includes special comments that Renovate parses to track base image updates:
+```yaml
+# renovate: datasource=docker depName=ghcr.io/home-assistant/aarch64-base versioning=loose
+```
+When Home Assistant releases new base images, Renovate creates a PR to update the version.
+
+### Configuration Options (config.yaml)
+
+The add-on exposes these configuration options to users:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `auto_launch_claude` | bool | `true` | Start Claude automatically or show session picker |
+| `dangerously_skip_permissions` | bool | `false` | Run Claude with unrestricted file access |
+| `enable_ha_mcp` | bool | `true` | Enable Home Assistant MCP server integration |
+| `tmux_mouse_mode` | bool | `false` | Enable mouse support in tmux (hold Shift to select text) |
+| `persistent_apk_packages` | list | `[]` | System packages to auto-install on startup |
+| `persistent_pip_packages` | list | `[]` | Python packages to auto-install on startup |
+
+**API Permissions (config.yaml):**
+- `hassio_api: true` - Access to Supervisor API
+- `hassio_role: manager` - Manager-level access for add-on operations
+- `homeassistant_api: true` - Access to Home Assistant Core API
+- `auth_api: true` - Access to authentication API
+
+**Panel Configuration:**
+- `panel_icon: mdi:code-braces-box` - Sidebar icon
+- `panel_title: "Claude Terminal Prowine"` - Sidebar title
+- `panel_admin: true` - Only visible to admin users
+
 ### Key Components
 1. **Web Terminal**: Uses ttyd (v1.7.7) to provide browser-based terminal access
 2. **Image Service**: Express.js server handling image uploads and WebSocket proxying to ttyd
@@ -90,15 +151,30 @@ The add-on implements a sophisticated credential management system:
 - **Security**: Proper file permissions (600) and safe directory operations
 
 ### Container Execution Flow
-1. Run system health check (memory, disk, network, Node.js, Claude CLI)
-2. Initialize environment in `/data` (home, config, cache directories)
-3. Install ttyd and additional tools via apk
-4. Setup persistent package management system
-5. Configure Home Assistant MCP integration (if enabled)
-6. Start image service on port 7680 (Express.js with WebSocket proxy)
-7. Create tmux session for terminal persistence
-8. Launch ttyd on port 7681 (attaches to tmux session)
-9. Display session picker menu (if auto_launch_claude: false)
+
+The main startup script (`run.sh`) orchestrates the add-on initialization:
+
+1. **Health Check** (`run_health_check`) - Verify memory, disk, network, Node.js, Claude CLI
+2. **Environment Init** (`init_environment`) - Create `/data` directories, set XDG variables
+   - Migrate legacy auth files from old locations (`/root/.config/anthropic`, `/config/claude-config`)
+   - Create `/etc/profile.d/persistent-packages.sh` for all bash sessions
+   - Copy tmux.conf and apply mouse mode setting from configuration
+   - Install Claude skills and commands from `/opt/.claude` to `$HOME/.claude`
+   - Copy Claude binary to persistent home (`$HOME/.local/bin/claude`)
+3. **Install Tools** (`install_tools`) - Install ttyd, jq, curl, tmux via apk
+4. **Session Picker** (`setup_session_picker`) - Copy script to `/usr/local/bin/claude-session-picker`
+5. **Persistent Packages** (`setup_persistent_packages`) - Install persist-install command, auto-install configured packages
+6. **HA MCP** (`setup_ha_mcp`) - Configure Home Assistant MCP server integration (if enabled)
+7. **Image Service** (`start_image_service`) - Start Express.js on port 7680 with WebSocket proxy
+8. **tmux Session** (`setup_tmux_session`) - Create detached tmux session BEFORE ttyd starts
+9. **Web Terminal** - Launch ttyd on port 7681, attach to existing tmux session
+
+**Key Functions in run.sh:**
+- `init_environment()` - Core environment setup with XDG variables
+- `migrate_legacy_auth_files()` - One-time migration from old credential locations
+- `get_claude_launch_command()` - Determine startup command based on configuration
+- `start_image_service()` - Launch Node.js image upload server
+- `setup_tmux_session()` - Create/attach tmux session (avoids nesting errors per ttyd#1396)
 
 ## Development Notes
 
@@ -189,6 +265,14 @@ docker exec test-claude-dev chmod +x /opt/scripts/claude-session-picker.sh
 - **Container Health**: Check logs with `docker logs <container-id>`
 - **Authentication**: Use `claude-auth debug` within terminal for credential troubleshooting
 
+## Documentation
+
+For documentation cleanup tasks: 1) List all files to be modified/deleted first, 2) Get explicit user approval, 3) Process in batches with checkpoints.
+
+## Design & Planning
+
+During design discussions and requirements gathering, create a running summary document that captures decisions made so far, so progress isn't lost if session ends.
+
 ### File Conventions
 - **Shell Scripts**: Use `#!/usr/bin/with-contenv bashio` for add-on scripts
 - **Indentation**: 2 spaces for YAML, 4 spaces for shell scripts
@@ -196,12 +280,27 @@ docker exec test-claude-dev chmod +x /opt/scripts/claude-session-picker.sh
 - **Permissions**: Credential files must have 600 permissions
 
 ### Key Environment Variables
+
+**Core Application:**
 - `ANTHROPIC_CONFIG_DIR=/data/.config/claude` - Claude Code configuration directory
 - `HOME=/data/home` - User home directory (persistent across restarts)
 - `SUPERVISOR_TOKEN` - Auto-populated token for Home Assistant Supervisor API
 - `IMAGE_SERVICE_PORT=7680` - Image upload service port
 - `TTYD_PORT=7681` - ttyd terminal port
 - `UPLOAD_DIR=/data/images` - Directory for uploaded images
+
+**XDG Base Directory Spec (set in run.sh):**
+- `XDG_CONFIG_HOME=/data/.config` - User configuration files
+- `XDG_CACHE_HOME=/data/.cache` - Non-essential cached data
+- `XDG_STATE_HOME=/data/.local/state` - State data that should persist
+- `XDG_DATA_HOME=/data/.local/share` - User data files
+
+**GitHub CLI:**
+- `GH_CONFIG_DIR=/data/.config/gh` - GitHub CLI persistent configuration
+
+**Claude Permissions:**
+- `CLAUDE_DANGEROUS_MODE` - Set to "true" when dangerously_skip_permissions is enabled
+- `IS_SANDBOX=1` - Required for --dangerously-skip-permissions when running as root
 
 ### Important Constraints
 - No sudo privileges available in development environment
@@ -389,6 +488,45 @@ Prior to v1.3.0, Home Assistant built images locally during installation. This a
 
 ## Image Service & Dependency Management
 
+### Image Service Architecture (server.js)
+
+The image service (`claude-terminal/image-service/server.js`) is a Node.js Express server that provides:
+
+**Core Functions:**
+1. **Image Uploads** - Handle paste/drag-drop image uploads from browser
+2. **Terminal Proxy** - WebSocket proxy to ttyd for Home Assistant ingress compatibility
+3. **Static File Serving** - Serve the HTML interface with embedded terminal
+
+**Endpoints:**
+- `GET /health` - Health check, returns `{ status: 'ok', uploadDir: '/data/images' }`
+- `GET /config` - Configuration for frontend `{ ttydPort, uploadDir }`
+- `POST /upload` - Image upload (multipart/form-data with 'image' field)
+- `GET /terminal/*` - Proxy to ttyd terminal (HTTP and WebSocket)
+- `GET /` - Static HTML interface
+
+**WebSocket Proxy Configuration:**
+```javascript
+const terminalProxy = createProxyMiddleware({
+    target: `http://localhost:${TTYD_PORT}`,
+    changeOrigin: true,
+    ws: true,
+    pathRewrite: {
+        '^/terminal': '' // Strip /terminal prefix for WebSocket upgrades
+    },
+    // ... error handling
+});
+```
+
+The `pathRewrite` is critical - http-proxy-middleware v3 strips mount points for HTTP requests automatically, but WebSocket upgrades require explicit path rewriting. Without this, ttyd rejects connections with "illegal ws path: /terminal/ws".
+
+**Middleware Order:**
+1. API routes (`/health`, `/config`, `/upload`) - MUST come first
+2. Terminal proxy (`/terminal`) - WebSocket-aware proxy to ttyd
+3. Static files (`express.static`) - HTML interface
+4. Error handler - Multer and general error handling
+
+This order is important because Express matches routes in order. Static middleware before API routes would intercept API requests.
+
 ### CRITICAL: package-lock.json Requirement
 
 The **image-service** directory contains a Node.js Express server that handles image uploads and WebSocket proxying. This service has specific npm dependencies that MUST be locked for deterministic builds.
@@ -398,7 +536,7 @@ The **image-service** directory contains a Node.js Express server that handles i
 - Docker layer caching can cause old dependency versions to be used
 - This led to issues in v1.2.0-1.2.2 where security updates and WebSocket fixes didn't deploy
 
-**Current locked dependencies (v1.2.3):**
+**Current locked dependencies (v1.5.6):**
 ```json
 {
   "express": "5.2.1",           // Security improvements, stricter validation
@@ -451,6 +589,92 @@ The repository uses **Renovate** for automated dependency updates:
 - Tracks npm, Docker, and GitHub Actions dependencies
 
 See `renovate.json` for configuration details.
+
+## GitHub Actions Workflows
+
+This repository uses several GitHub Actions workflows for CI/CD and development automation.
+
+### CI/CD Workflows
+
+**Test Workflow** (`.github/workflows/test.yml`)
+- **Purpose:** Validate builds on every push and pull request
+- **Triggers:** `push`, `pull_request` (any branch)
+- **What it does:**
+  - Builds images for both amd64 and aarch64 using Home Assistant Builder
+  - Uses `--test` flag (validates build without publishing to registry)
+  - Fast feedback on PR build compatibility
+- **Duration:** ~2 minutes
+- **Builder version:** 2025.11.0
+
+**Lint Workflow** (`.github/workflows/lint.yml`)
+- **Purpose:** Enforce code quality standards
+- **Triggers:** Push/PR to `main` branch
+- **Jobs:**
+  - `hadolint` - Dockerfile best practices
+  - `shellcheck` - Shell script analysis (uses pre-installed version on runners)
+  - `yamllint` - YAML validation (uses pre-installed version on runners)
+  - `actionlint` - GitHub Actions workflow validation
+- **Configuration files:** `.hadolint.yaml`, `.shellcheckrc`, `.yamllint.yml`
+- **See also:** `.github/LINTING.md` for detailed linting documentation
+
+**Publish Workflow** (`.github/workflows/publish.yml`)
+- **Purpose:** Build and publish signed production images
+- **Triggers:** GitHub release published
+- **What it does:**
+  - Logs into GitHub Container Registry (ghcr.io)
+  - Builds images for amd64 and aarch64
+  - Signs images with cosign (`--cosign` flag)
+  - Publishes to `ghcr.io/owine/claude-terminal-prowine-{arch}`
+- **Permissions required:**
+  - `contents: read` - Read repository
+  - `packages: write` - Push to Container Registry
+  - `id-token: write` - Required for cosign keyless signing (OIDC)
+- **Duration:** ~2-3 minutes
+
+### Development Automation Workflows
+
+**Claude Code Review** (`.github/workflows/claude-code-review.yml`)
+- **Purpose:** Automated AI code review for pull requests
+- **Triggers:** PR opened, synchronized, ready for review, reopened
+- **What it does:**
+  - Uses Claude Code Action to analyze PR changes
+  - Provides inline comments and suggestions
+  - Checks for code quality, security issues, best practices
+- **Configuration:**
+  - `allowed_bots: 'renovate'` - Also reviews Renovate dependency PRs
+  - Uses code-review plugin from claude-code-plugins marketplace
+- **Requirements:**
+  - `CLAUDE_CODE_OAUTH_TOKEN` secret configured in repository settings
+  - Active Claude Code subscription
+- **Note:** Optional workflow - can be disabled without affecting the add-on
+
+**Claude Code Comment** (`.github/workflows/claude.yml`)
+- **Purpose:** Respond to @claude mentions in issues and PRs
+- **Triggers:**
+  - `issue_comment.created` with @claude mention
+  - `pull_request_review_comment.created` with @claude mention
+  - `issues.opened` or `issues.assigned` with @claude mention
+  - `pull_request_review.submitted` with @claude mention
+- **What it does:**
+  - Analyzes context (code, issue, PR diff)
+  - Responds with suggestions, code fixes, or answers
+- **Permissions:**
+  - Standard read permissions for issues and PRs
+  - `actions: read` - Read CI results on PRs
+- **Requirements:**
+  - `CLAUDE_CODE_OAUTH_TOKEN` secret configured
+- **Note:** Optional workflow - can be disabled without affecting the add-on
+
+### Actions Pinning Strategy
+
+All GitHub Actions use SHA256 digest pinning for security:
+```yaml
+uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+```
+
+This prevents supply chain attacks where a tag could be moved to malicious code. Renovate automatically updates these digests when new versions are released.
+
+**Exception:** `home-assistant/builder` uses version tags (e.g., `@2025.11.0`) because it's a first-party tool and digest pinning is not supported by Renovate for this action.
 
 **DO NOT** commit changes without updating both the version and changelog!
 

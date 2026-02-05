@@ -40,6 +40,39 @@ The add-on offers several configuration options:
 - Use only if you understand the security implications
 - Useful for advanced users who need full file access
 
+### YOLO Mode (Session Picker Option 9)
+
+YOLO Mode provides on-demand access to `--dangerously-skip-permissions` without enabling it globally in your configuration.
+
+**When to Use:**
+- You need unrestricted file access for a single session
+- You want to test automation scripts without permission prompts
+- You prefer keeping the global setting disabled for safety
+- You understand the security implications and accept the risks
+
+**How It Works:**
+1. Select option 9 from the session picker menu
+2. Read the warning screen explaining the risks
+3. Type "YOLO" (case-sensitive) to confirm
+4. Choose your session type (New/Continue/Resume)
+5. Claude launches with `--dangerously-skip-permissions`
+6. Returns to menu when Claude session ends
+
+**Security Notes:**
+- `IS_SANDBOX=1` is set automatically during YOLO sessions
+- The flag only applies to the current session (not persistent)
+- Must type "YOLO" exactly - any other input cancels
+- Invalid sub-menu choices safely return to menu
+
+**YOLO Mode vs Global Config:**
+
+| Aspect | YOLO Mode (Option 9) | Global Config Setting |
+|--------|---------------------|---------------------|
+| Scope | Single session | All sessions |
+| Persistence | None | Survives restarts |
+| Requires confirmation | Yes ("YOLO" typing) | No |
+| Use case | Occasional need | Always unrestricted |
+
 ### Persistent Packages
 - Configure APK and pip packages to auto-install on startup
 - Packages are stored in `/data/packages` and survive restarts
@@ -74,16 +107,22 @@ Claude launches automatically when you open the terminal (if `auto_launch_claude
 
 ### Session Picker Menu
 
-When the menu is enabled, you can:
-- Start a new Claude session
-- Continue your most recent conversation
-- Resume from a list of past conversations
-- Enter custom Claude commands
-- Use the authentication helper
-- Login to GitHub CLI
-- Drop to bash shell
+When the menu is enabled (`auto_launch_claude: false`), you'll see a numbered menu with these options:
 
-**Tip:** If you drop to bash shell, type `menu` to return to the session picker!
+1. **New interactive session** - Start a fresh Claude conversation
+2. **Continue most recent** - Resume your last conversation (`-c` flag)
+3. **Resume from list** - Choose from past conversations (`-r` flag)
+4. **Custom command** - Enter manual Claude flags and arguments
+5. **Authentication helper** - Debug and fix credential issues
+6. **GitHub CLI login** - Authenticate `gh` for repository access
+7. **Drop to bash** - Exit to shell (type `menu` to return)
+8. **Clear & restart** - Reset tmux scrollback and restart menu
+9. **YOLO Mode** - Launch with `--dangerously-skip-permissions` (requires "YOLO" confirmation)
+
+**Tips:**
+- If you drop to bash shell, type `menu` to return to the session picker
+- Pressing Ctrl+C in the menu shows a reminder to use option 7 to exit
+- When Claude exits, you automatically return to the menu
 
 ### Manual Claude Commands
 

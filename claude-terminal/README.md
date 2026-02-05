@@ -110,19 +110,22 @@ test-endpoint
 
 ## Architecture
 
-- **Base Image**: Home Assistant Alpine Linux base (3.19)
+- **Base Image**: Home Assistant Alpine Linux base (3.23)
 - **Container Runtime**: Compatible with Docker/Podman
-- **Web Terminal**: ttyd for browser-based access
-- **Process Management**: s6-overlay for reliable service startup
+- **Web Terminal**: ttyd (v1.7.7) for browser-based access
+- **Session Persistence**: tmux for terminal session management
+- **Image Service**: Express.js server for image uploads and WebSocket proxying
 - **Networking**: Ingress support with Home Assistant reverse proxy
 
 ## Security
 
-Version 1.0.2 includes important security improvements:
-- ✅ **Secure Credential Management**: Limited filesystem access to safe directories only
-- ✅ **Safe Cleanup Operations**: No more dangerous system-wide file deletions
-- ✅ **Proper Permission Handling**: Consistent file permissions (600) for credentials
-- ✅ **Input Validation**: Enhanced error checking and bounds validation
+Security features and improvements:
+- **Secure Credential Management**: Limited filesystem access to safe directories only
+- **Safe Cleanup Operations**: No dangerous system-wide file deletions
+- **Proper Permission Handling**: Consistent file permissions (600) for credentials
+- **Input Validation**: Enhanced error checking and bounds validation
+- **Binary Verification** (v1.5.0+): SHA256 checksums verified for Claude Code, uv, and GitHub CLI
+- **Image Signing** (v1.3.0+): Published images cryptographically signed with cosign
 
 ## Development Environment
 
