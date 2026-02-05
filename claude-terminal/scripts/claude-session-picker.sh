@@ -11,18 +11,18 @@ CLAUDE_BIN="claude"
 
 # Get Claude flags from environment.
 # Checks CLAUDE_DANGEROUS_MODE config to determine if unrestricted mode is enabled.
-# When enabled, sets IS_SANDBOX=1 which is required by Claude CLI to accept
-# --dangerously-skip-permissions when running as root (container security context).
-# Without IS_SANDBOX=1, Claude CLI refuses the dangerous flag for safety.
-#
-# NOTE: In run_claude_yolo(), IS_SANDBOX is command-scoped (not exported) to
-# prevent it from leaking into subsequent non-YOLO sessions.
+# When enabled, sets IS_SANDBOX=1 to bypass Claude CLI's root privilege restriction
+# for --dangerously-skip-permissions (required in container environments).
+# This is an undocumented workaround - Claude CLI normally refuses dangerous mode
+# under root for security reasons.
+# NOTE: This function exports IS_SANDBOX globally, affecting all subsequent Claude
+# invocations in the shell session. See run_claude_yolo() for command-scoped alternative.
 get_claude_flags() {
     local flags=""
     if [ "${CLAUDE_DANGEROUS_MODE}" = "true" ]; then
         flags="--dangerously-skip-permissions"
         echo "⚠️  Running in DANGEROUS mode (unrestricted file access)" >&2
-        export IS_SANDBOX=1
+        export IS_SANDBOX=1  # Global export - affects all future Claude commands
     fi
     echo "$flags"
 }
@@ -255,9 +255,10 @@ drop_to_bash() {
     exec bash -l
 }
 
-# YOLO Mode - run Claude with --dangerously-skip-permissions
+# YOLO Mode - unrestricted Claude session with automatic permission approval.
+# Uses command-scoped IS_SANDBOX=1 (not exported) to prevent environment pollution
+# and ensure subsequent non-YOLO sessions don't inherit the dangerous flag bypass.
 run_claude_yolo() {
-    # Pre-flight check: verify Claude binary is available before showing prompts
     if ! command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
         echo "YOLO Mode: Claude binary not found: $CLAUDE_BIN" >&2
         clear
@@ -309,13 +310,11 @@ run_claude_yolo() {
     printf "Enter your choice [1-3] (default: 1): "
     read -r yolo_choice
 
-    # Default to 1 if empty
     if [ -z "$yolo_choice" ]; then
         yolo_choice=1
     fi
 
-    # Validate choice - return to main menu on invalid input to ensure users
-    # get exactly the session type they requested rather than silently defaulting.
+    # Reject invalid input instead of silently defaulting
     if [ "$yolo_choice" != "1" ] && [ "$yolo_choice" != "2" ] && [ "$yolo_choice" != "3" ]; then
         echo "YOLO Mode: Invalid session type choice: '$yolo_choice' (expected 1-3)" >&2
         echo ""
@@ -350,17 +349,27 @@ run_claude_yolo() {
             ;;
     esac
 
-    # Handle Claude exit: codes 1-126 indicate errors, >128 are signal exits (e.g. Ctrl+C)
-    if [ "$yolo_exit_code" -gt 0 ] 2>/dev/null && [ "$yolo_exit_code" -le 126 ]; then
+    # Handle Claude exit: 0=success, 1-128=errors, >128=signal exits (e.g. 130=Ctrl+C)
+    if [ "$yolo_exit_code" -eq 0 ]; then
+        show_return_message
+    elif [ "$yolo_exit_code" -gt 128 ] 2>/dev/null; then
+        # Signal exit (user interrupted with Ctrl+C, etc.)
+        show_return_message
+    else
+        # Error exit (codes 1-128)
         echo "YOLO Mode: Claude exited with error code: $yolo_exit_code" >&2
         echo ""
         echo "❌ Claude exited with an error (exit code: $yolo_exit_code)"
-        echo "   Common causes: missing credentials, low memory, corrupted config"
+        case "$yolo_exit_code" in
+            1)   echo "   Cause: Authentication failure or general error" ;;
+            2)   echo "   Cause: Invalid command-line arguments" ;;
+            126) echo "   Cause: Permission denied (cannot execute)" ;;
+            127) echo "   Cause: Claude binary not found in PATH" ;;
+            *)   echo "   Cause: Unknown error - check Claude logs" ;;
+        esac
         echo ""
         printf "Press Enter to return to menu..." >&2
         read -r
-    else
-        show_return_message
     fi
 }
 
