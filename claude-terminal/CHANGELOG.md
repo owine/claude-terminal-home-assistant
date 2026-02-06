@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.6.1
+
+### 🛠️ Improvement - Enhanced Image Upload User Experience
+- **Clearer paste instructions after image upload** (index.html)
+  - Changed ambiguous "Ready to use!" message to explicit "Copied! Click terminal and press Cmd+V (Mac) or Ctrl+V (Windows) to paste"
+  - Added platform-specific keyboard shortcuts for better clarity
+  - Updated all copy-related status messages to consistently show paste instructions
+- **Visual feedback for paste location** (index.html)
+  - Added blue border pulse animation (3 pulses) to highlight terminal after upload
+  - Terminal highlight also triggers when clicking status to re-copy path
+  - Draws user attention to where they need to paste the image path
+- **Improved status message on click** (index.html)
+  - Changed "click to select" to "click here to copy again" for clarity
+  - Re-copying triggers paste instructions and terminal highlight
+  - Consistent messaging across all copy/paste interactions
+
+**Background:** The auto-paste functionality fails due to browser security (cross-origin iframe restrictions), which is expected and cannot be bypassed. These UX improvements make it crystal clear that manual paste is required and guide users through the correct workflow.
+
+**Use Case:** Users upload an image, path is copied to clipboard, terminal pulses blue, status shows clear instructions with keyboard shortcuts, user clicks terminal and pastes. Previously, users were confused by "Ready to use!" message and didn't realize they needed to manually paste.
+
+### 🐛 Bug Fix - CI Workflow Improvements
+- **Skip claude-review workflow on GitHub Actions updates** (.github/workflows/claude-code-review.yml)
+  - Prevents claude-review from blocking automerge on GHA workflow updates
+  - The code-review plugin consistently errors when analyzing YAML workflows
+  - Allows GitHub Actions dependency updates to auto-merge while still reviewing code changes
+  - Fixes CI failures that were blocking Renovate's automerge feature
+
+### 🔧 Technical - Dependency Management & Updates
+- **Configure Renovate for stable Claude Code channel with automerge** (renovate.json)
+  - Switch Claude Code datasource from 'latest' to 'stable' channel
+  - Add automerge rule for Claude Code patch updates only
+  - Ensures bug fixes auto-merge while features/breaking changes need review
+  - Improves dependency update reliability and reduces maintenance burden
+- **Updated Claude Code CLI to v2.1.33** (Dockerfile)
+  - Patch version update from v2.1.32
+  - Includes bug fixes and stability improvements
+  - Automatic SHA256 integrity verification during build
+- **Updated astral-sh/uv to v0.10.0** (.github/workflows/)
+  - Python package manager used in development workflow
+  - Renovate PR #31
+- **Updated claude-code-action to digest b113f49** (.github/workflows/)
+  - GitHub Action for automated code reviews
+  - Internal improvements and bug fixes
+  - Renovate PR #29
+
 ## 1.6.0
 
 ### ✨ New Feature - YOLO Mode for Unrestricted Sessions
