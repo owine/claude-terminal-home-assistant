@@ -386,7 +386,7 @@
                     const filePath = result.path;
 
                     // Display full path persistently with click-to-copy functionality
-                    setStatus(`📋 ${filePath} (click to select)`, 'success', true);
+                    setStatus(`📋 ${filePath} (click here to copy again)`, 'success', true);
                     console.log('Image uploaded:', filePath);
 
                     // Make status clickable to select text (works in iframes)
@@ -399,10 +399,11 @@
                             navigator.clipboard.writeText(filePath)
                                 .then(() => {
                                     const originalText = status.textContent;
-                                    setStatus('✓ Copied!', 'success', false);
+                                    setStatus('✓ Copied! Now paste in terminal (Cmd+V or Ctrl+V)', 'success', false);
+                                    highlightTerminal();
                                     setTimeout(() => {
                                         setStatus(originalText, 'success', true);
-                                    }, 2000);
+                                    }, 3000);
                                 })
                                 .catch(() => {
                                     selectText();
@@ -439,19 +440,19 @@
                         try {
                             const copied = document.execCommand('copy');
                             if (copied) {
-                                setStatus('✓ Copied! (Cmd+C)', 'success', false);
+                                setStatus('✓ Copied! Now paste in terminal (Cmd+V or Ctrl+V)', 'success', false);
                             } else {
-                                setStatus('✓ Selected! Press Cmd+C to copy', 'success', false);
+                                setStatus('✓ Selected! Press Cmd+C to copy, then paste in terminal', 'success', false);
                             }
                         } catch (err) {
-                            setStatus('✓ Selected! Press Cmd+C to copy', 'success', false);
+                            setStatus('✓ Selected! Press Cmd+C to copy, then paste in terminal', 'success', false);
                         }
 
                         // Clean up and restore message
                         setTimeout(() => {
                             document.body.removeChild(tempDiv);
                             selection.removeAllRanges();
-                            setStatus(`📋 ${result.path} (click to select)`, 'success', true);
+                            setStatus(`📋 ${result.path} (click here to copy again)`, 'success', true);
                         }, 3000);
                     }
                 } else {
@@ -551,6 +552,35 @@
             }
         });
 
+        // Visual highlight to indicate where to paste
+        function highlightTerminal() {
+            const terminalContainer = document.getElementById('terminal-container');
+            const originalBorder = terminalContainer.style.border;
+
+            // Pulse the terminal border to draw attention
+            terminalContainer.style.border = '3px solid #007acc';
+            terminalContainer.style.transition = 'border 0.3s ease';
+
+            // Animate border color
+            let pulseCount = 0;
+            const pulseInterval = setInterval(() => {
+                pulseCount++;
+                if (pulseCount % 2 === 0) {
+                    terminalContainer.style.border = '3px solid #007acc';
+                } else {
+                    terminalContainer.style.border = '3px solid #00a8ff';
+                }
+
+                if (pulseCount >= 6) {
+                    clearInterval(pulseInterval);
+                    // Restore original after animation
+                    setTimeout(() => {
+                        terminalContainer.style.border = originalBorder;
+                    }, 300);
+                }
+            }, 300);
+        }
+
         // Auto-copy path and attempt to paste into terminal
         async function autoCopyAndPaste(filePath) {
             const iframe = document.getElementById('terminal-frame');
@@ -586,12 +616,17 @@
                         // Alternative: Try to send keyboard events
                         sendTextToTerminal(filePath);
 
-                        setStatus(`📋 ${filePath} - Ready to use! (path in clipboard)`, 'success', true);
+                        // Make it clear that manual paste is required
+                        setStatus(`✓ Copied! Click terminal and press Cmd+V (Mac) or Ctrl+V (Windows) to paste`, 'success', true);
+
+                        // Add visual highlight to terminal to indicate where to paste
+                        highlightTerminal();
                     }, 100);
 
                 } catch (err) {
                     console.log('Cannot access iframe for auto-paste:', err);
-                    setStatus(`📋 ${filePath} - Copied! Paste into terminal (Cmd+V)`, 'success', true);
+                    setStatus(`✓ Copied! Click terminal and press Cmd+V (Mac) or Ctrl+V (Windows) to paste`, 'success', true);
+                    highlightTerminal();
                 }
             }
         }
