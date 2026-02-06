@@ -28,7 +28,7 @@ RUN apk add --no-cache \
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
 # renovate: datasource=custom.claude-code
-ARG CLAUDE_VERSION=2.1.33
+ARG CLAUDE_VERSION=2.1.34
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
