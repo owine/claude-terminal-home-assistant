@@ -32,13 +32,11 @@ manual_auth_input() {
         return 1
     fi
 
-    # Save to temp file for Claude to read
-    echo "$auth_code" > /tmp/claude-auth-code
     echo ""
-    echo "✅ Code saved. Starting Claude authentication..."
+    echo "✅ Code received. Starting Claude authentication..."
     sleep 1
 
-    # Try to pipe the code to Claude
+    # Pipe the code directly to Claude (no temp file needed)
     echo "$auth_code" | claude
 }
 
@@ -49,7 +47,10 @@ read_auth_from_file() {
     echo "Looking for authentication code in: $auth_file"
 
     if [ -f "$auth_file" ]; then
+        # Read and immediately remove the file to minimize exposure window
         auth_code=$(cat "$auth_file")
+        rm -f "$auth_file"
+
         if [ -z "$auth_code" ]; then
             echo "❌ File exists but is empty"
             return 1
@@ -61,9 +62,7 @@ read_auth_from_file() {
         # Try to pipe the code to Claude
         echo "$auth_code" | claude
 
-        # Clean up the file after use
-        rm -f "$auth_file"
-        echo "🧹 Cleaned up auth code file"
+        echo "🧹 Auth code file cleaned up"
     else
         echo "❌ File not found: $auth_file"
         echo ""
