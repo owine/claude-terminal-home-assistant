@@ -129,7 +129,10 @@ run_claude_custom() {
     else
         echo "🚀 Running: claude $custom_args $base_flags"
         sleep 1
-        eval "$CLAUDE_BIN $custom_args $base_flags"
+        # shellcheck disable=SC2086
+        # Word splitting on $custom_args and $base_flags is intentional (user-provided flags)
+        # IMPORTANT: Do NOT use eval here — it enables shell metacharacter injection
+        $CLAUDE_BIN $custom_args $base_flags
         show_return_message
     fi
 }
