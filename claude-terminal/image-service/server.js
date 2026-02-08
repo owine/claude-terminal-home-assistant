@@ -26,6 +26,43 @@ const PORT = process.env.IMAGE_SERVICE_PORT || 7680;
 const TTYD_PORT = process.env.TTYD_PORT || 7681;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/data/images';
 
+// Simple in-memory rate limiter (no external dependencies)
+// Uses sliding window to track requests per IP
+function createRateLimiter({ windowMs = 60000, max = 20, message = 'Too many requests, try again later' } = {}) {
+    const hits = new Map();
+
+    // Periodic cleanup to prevent memory leaks from abandoned IPs
+    const cleanup = setInterval(() => {
+        const cutoff = Date.now() - windowMs;
+        for (const [key, timestamps] of hits) {
+            const valid = timestamps.filter(t => t > cutoff);
+            if (valid.length === 0) hits.delete(key);
+            else hits.set(key, valid);
+        }
+    }, windowMs);
+    cleanup.unref(); // Don't prevent process exit
+
+    return (req, res, next) => {
+        const key = req.ip || req.socket?.remoteAddress || 'unknown';
+        const now = Date.now();
+        const cutoff = now - windowMs;
+
+        const timestamps = (hits.get(key) || []).filter(t => t > cutoff);
+
+        if (timestamps.length >= max) {
+            return res.status(429).json({ error: message });
+        }
+
+        timestamps.push(now);
+        hits.set(key, timestamps);
+        next();
+    };
+}
+
+// Rate limiters: generous for general use, stricter for uploads
+const generalLimiter = createRateLimiter({ windowMs: 60000, max: 60 });
+const uploadLimiter = createRateLimiter({ windowMs: 60000, max: 10, message: 'Upload rate limit exceeded, try again in a minute' });
+
 // Ensure upload directory exists
 if (!fs.existsSync(UPLOAD_DIR)) {
     fs.mkdirSync(UPLOAD_DIR, { recursive: true, mode: 0o755 });
@@ -61,24 +98,52 @@ const upload = multer({
     }
 });
 
+// CSRF protection for state-changing requests (POST)
+// Validates Origin/Referer header to block cross-origin attacks from malicious websites
+// Allows: same-origin requests, requests with no origin (curl, non-browser clients)
+app.use((req, res, next) => {
+    if (req.method !== 'POST') return next();
+
+    const origin = req.get('Origin');
+    const referer = req.get('Referer');
+    const host = req.get('Host');
+
+    // Allow requests with no Origin header (same-origin, curl, server-to-server)
+    if (!origin && !referer) return next();
+
+    // Validate origin matches the Host header
+    const source = origin || referer;
+    try {
+        const sourceHost = new URL(source).host;
+        if (host && sourceHost === host) return next();
+    } catch {
+        // Malformed URL in Origin/Referer
+    }
+
+    // Also allow requests coming through HA ingress (X-Ingress-Path header present)
+    if (req.get('X-Ingress-Path')) return next();
+
+    console.warn(`Blocked cross-origin POST from: ${source}`);
+    return res.status(403).json({ error: 'Cross-origin requests are not allowed' });
+});
+
 // API routes MUST come before static files middleware
 // Otherwise static middleware will intercept API requests
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', uploadDir: UPLOAD_DIR });
+app.get('/health', generalLimiter, (req, res) => {
+    res.json({ status: 'ok' });
 });
 
-// Provide ttyd port to frontend
-app.get('/config', (req, res) => {
+// Provide ttyd port to frontend (no longer exposes internal paths)
+app.get('/config', generalLimiter, (req, res) => {
     res.json({
-        ttydPort: TTYD_PORT,
-        uploadDir: UPLOAD_DIR
+        ttydPort: TTYD_PORT
     });
 });
 
-// Image upload endpoint
-app.post('/upload', upload.single('image'), (req, res) => {
+// Image upload endpoint (stricter rate limit)
+app.post('/upload', uploadLimiter, upload.single('image'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No image file provided' });
     }
