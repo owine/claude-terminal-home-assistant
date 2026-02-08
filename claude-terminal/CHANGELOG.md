@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.6.2
+
+### 🐛 Bug Fix - Security Hardening (Critical & High Severity)
+- **Fix command injection via `eval` in session picker** (claude-session-picker.sh)
+  - Replaced `eval "$CLAUDE_BIN $custom_args $base_flags"` with direct execution
+  - Prevents shell metacharacter injection (`;`, `|`, `$()`, `&&`) in custom command input
+  - Word splitting for user-provided flags still works correctly without `eval`
+- **Add rate limiting to image upload service** (server.js)
+  - General API endpoints: 60 requests/minute per IP
+  - Upload endpoint: 10 uploads/minute per IP (stricter)
+  - Uses in-memory sliding-window rate limiter (no new dependencies)
+  - Returns HTTP 429 when rate limit exceeded
+  - Periodic cleanup prevents memory leaks from abandoned IPs
+- **Add CSRF protection on upload endpoint** (server.js)
+  - Validates `Origin`/`Referer` header on POST requests against `Host` header
+  - Blocks cross-origin attacks from malicious websites targeting local HA instances
+  - Allows same-origin, CLI tools (no Origin header), and HA ingress requests
+- **Remove internal path disclosure from API responses** (server.js)
+  - `/health` endpoint no longer exposes `uploadDir` filesystem path
+  - `/config` endpoint no longer exposes `uploadDir` filesystem path
+- **Remove plaintext auth code temp file** (claude-auth-helper.sh)
+  - Removed unnecessary write of auth code to world-readable `/tmp/claude-auth-code`
+  - Auth code is now piped directly to Claude without touching disk
+  - File-based auth reads and deletes credential file immediately to minimize exposure
+
 ## 1.6.1
 
 ### 🛠️ Improvement - Enhanced Image Upload User Experience
