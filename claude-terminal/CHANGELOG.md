@@ -3,14 +3,14 @@
 ## 1.6.3
 
 ### 🐛 Bug Fix - CI Configuration
-- **Fix Claude Code review workflow parameter** (claude-code-review.yml)
-  - Changed incorrect `task` parameter to correct `prompt` parameter for claude-code-action
-  - Resolves workflow execution errors in automated code reviews
+- **Fix auto-release workflow prompt parameter** (auto-release.yml)
+  - Changed incorrect `direct_prompt` input to correct `prompt` input for claude-code-action
+  - Resolves workflow completing without actually running Claude
 
 ### 🔧 Technical - CI & Dependency Updates
-- **Add automated weekly release workflow** (weekly-release.yml)
+- **Add automated weekly release workflow** (auto-release.yml)
   - Automates version bumping, changelog updates, and GitHub release creation
-  - Runs every Monday at 00:00 UTC or manually via workflow dispatch
+  - Runs every Monday at 10:00 UTC or manually via workflow dispatch
   - Analyzes commits since last tag to determine appropriate version bump (major/minor/patch)
 - **Dependency Updates**
   - Updated astral-sh/uv to v0.10.1
