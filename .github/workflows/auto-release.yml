@@ -104,7 +104,7 @@ jobs:
 
       - name: Create release with Claude Code
         id: claude-release
-        uses: anthropics/claude-code-action@b113f49a56229d8276e2bf05743ad6900121239c # v1
+        uses: anthropics/claude-code-action@b433f16b30d54063fd3bab6b12f46f3da00e41b6 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
