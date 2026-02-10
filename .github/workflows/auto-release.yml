@@ -1,0 +1,193 @@
+# Automated Weekly Release Workflow
+#
+# Creates releases automatically by analyzing commits since the last tag.
+# Uses a two-phase approach:
+#   Phase 1 (Bash): Check if there are new commits — fast and free
+#   Phase 2 (Claude Code): Bump version, update changelog, create release
+#
+# Release chain:
+#   auto-release.yml creates GitHub release
+#       ↓ (release: published event)
+#   publish.yml builds + signs Docker images
+#       ↓
+#   ghcr.io/owine/claude-terminal-prowine-{arch}:X.Y.Z
+#
+# Requirements:
+# - CLAUDE_CODE_OAUTH_TOKEN secret configured in repository settings
+# - Active Claude Code subscription
+#
+# See: https://github.com/anthropics/claude-code-action
+
+name: Auto Release
+
+on:
+  schedule:
+    # Monday 10:00 UTC = 4am CST (5am CDT in summer)
+    - cron: '0 10 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  # Phase 1: Check if there are commits to release (fast, free)
+  check:
+    name: Check for changes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      has_changes: ${{ steps.check.outputs.has_changes }}
+      commit_count: ${{ steps.check.outputs.commit_count }}
+      current_version: ${{ steps.check.outputs.current_version }}
+      latest_tag: ${{ steps.check.outputs.latest_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0  # Full history + tags
+
+      - name: Check for changes since last tag
+        id: check
+        run: |
+          # Find the latest version tag
+          LATEST_TAG=$(git tag --sort=-v:refname --list 'v*' | head -n 1)
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No version tags found. Using initial commit as baseline."
+            LATEST_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+
+          # Count commits since last tag, excluding release prep commits
+          COMMIT_COUNT=$(git log "${LATEST_TAG}..HEAD" --oneline \
+            --grep="^chore(release):" --invert-grep | wc -l | tr -d ' ')
+
+          echo "commit_count=${COMMIT_COUNT}" >> "$GITHUB_OUTPUT"
+
+          if [ "$COMMIT_COUNT" -eq 0 ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No new commits since ${LATEST_TAG}. Skipping release."
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Found ${COMMIT_COUNT} commits since ${LATEST_TAG}."
+          fi
+
+          # Read current version from config.yaml
+          CURRENT_VERSION=$(grep '^version:' claude-terminal/config.yaml \
+            | sed 's/version: *"\(.*\)"/\1/')
+          echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Current version: ${CURRENT_VERSION}"
+
+  # Phase 2: Create release using Claude Code (conditional on Phase 1)
+  release:
+    name: Create release
+    needs: check
+    if: needs.check.outputs.has_changes == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write  # Required for Claude Code Action OIDC auth
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0  # Full history for commit analysis
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create release with Claude Code
+        id: claude-release
+        uses: anthropics/claude-code-action@b113f49a56229d8276e2bf05743ad6900121239c # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          direct_prompt: |
+            You are an automated release manager. Your job is to analyze recent commits,
+            bump the version, update the changelog, commit, and create a GitHub release.
+
+            ## Current State
+            - Latest tag: ${{ needs.check.outputs.latest_tag }}
+            - Current version: ${{ needs.check.outputs.current_version }}
+            - Commits since last tag: ${{ needs.check.outputs.commit_count }}
+
+            ## Step 1: Analyze commits
+
+            Run `git log ${{ needs.check.outputs.latest_tag }}..HEAD --oneline` to see all commits.
+
+            Skip any commits matching `chore(release):` — these are previous release prep commits.
+
+            ## Step 2: Determine version bump
+
+            Parse the current version "${{ needs.check.outputs.current_version }}" as MAJOR.MINOR.PATCH.
+
+            Apply these rules:
+            - **PATCH bump** (x.x.X+1): Bug fixes, dependency updates, documentation, refactoring
+            - **MINOR bump** (x.X+1.0): Any commit starting with `feat:` or `feat(...):`
+            - **MAJOR bump** (X+1.0.0): Only if a commit message contains `BREAKING` (case-insensitive)
+
+            Use the highest applicable bump level (major > minor > patch).
+
+            ## Step 3: Update config.yaml
+
+            Edit `claude-terminal/config.yaml` and update the `version:` field to the new version.
+            The format is `version: "X.Y.Z"` (quoted string).
+
+            ## Step 4: Update CHANGELOG.md
+
+            Prepend a new entry at the TOP of `claude-terminal/CHANGELOG.md`, right after the `# Changelog` header.
+
+            Follow these formatting conventions exactly:
+
+            ```
+            ## X.Y.Z
+
+            ### CATEGORY - Short Description
+            - **Bold summary**: Detailed explanation
+              - Sub-bullet for additional details
+            ```
+
+            Category prefixes (use the emoji):
+            - `✨ New Feature` — for feat: commits
+            - `🐛 Bug Fix` — for fix: commits
+            - `🔒 Security` — for security-related changes
+            - `🛠️ Improvement` — for refactor:, perf:, or improvement commits
+            - `📚 Documentation` — for docs: commits
+            - `🔧 Technical` — for chore:, ci:, build:, or dependency updates
+
+            Group related commits under a single category header when it makes sense.
+            Write clear, user-facing descriptions (not just commit message copies).
+            For dependency updates from Renovate, summarize them in a single "Dependency Updates" subsection.
+
+            ## Step 5: Commit and push
+
+            Stage both files and commit with message: `chore(release): prepare vX.Y.Z`
+
+            Push to main: `git push origin main`
+
+            ## Step 6: Create GitHub release
+
+            Run:
+            ```
+            gh release create vX.Y.Z \
+              --target main \
+              --title "vX.Y.Z" \
+              --notes "See [CHANGELOG.md](https://github.com/owine/claude-terminal-home-assistant/blob/main/claude-terminal/CHANGELOG.md#XYZ) for full details."
+            ```
+
+            Replace X.Y.Z with the actual version (and XYZ without dots for the anchor link).
+
+            ## Important Rules
+            - Do NOT use `v` prefix in the changelog version header (use `## 1.7.0` not `## v1.7.0`)
+            - DO use `v` prefix in git tags and release titles (use `v1.7.0`)
+            - Keep changelog entries concise but informative
+            - If the only changes are dependency updates (Renovate), still create a patch release
+            - Always verify the commit and push succeeded before creating the release
+          claude_args: '--allowedTools "Bash(git log:*)" "Bash(git diff:*)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)" "Bash(gh release:*)" "Read" "Edit"'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
