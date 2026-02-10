@@ -107,7 +107,7 @@ jobs:
         uses: anthropics/claude-code-action@b113f49a56229d8276e2bf05743ad6900121239c # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          direct_prompt: |
+          prompt: |
             You are an automated release manager. Your job is to analyze recent commits,
             bump the version, update the changelog, commit, and create a GitHub release.
 
