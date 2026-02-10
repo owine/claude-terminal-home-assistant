@@ -10,8 +10,6 @@ This repository contains Home Assistant add-ons, specifically the **Claude Termi
 - [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) - Original Claude Terminal add-on by Tom Cassady
 - [ESJavadex/claude-code-ha](https://github.com/ESJavadex/claude-code-ha) - Enhanced fork by Javier Santos
 
-**Current Version:** v1.5.6
-
 ## Task Completion
 
 When reviewing PRs, complete the full review cycle before ending - summarize findings, provide actionable feedback, and confirm next steps with the user.
