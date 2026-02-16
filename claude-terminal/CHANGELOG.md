@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.4
+
+### 🔧 Technical - Dependency Updates
+- **Dependency Updates**
+  - Updated anthropics/claude-code-action to latest digest (68cfeea) via 6 incremental updates
+  - Updated astral-sh/uv to v0.10.2
+  - Lock file maintenance for npm dependencies
+
+### 📚 Documentation - Accuracy Fixes
+- **CLAUDE.md maintenance**
+  - Removed stale version reference from documentation
+  - Fixed inaccuracies in v1.6.3 changelog entry
+
 ## 1.6.3
 
 ### 🐛 Bug Fix - CI Configuration
