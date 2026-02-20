@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.0
+
+### 🛠️ Improvement - Harden Dangerous Mode Security
+- **Add ALLOW_YOLO_MODE environment gate**: Dangerous mode now requires explicit opt-in via the `dangerously_skip_permissions` add-on configuration before it appears in the session picker menu
+  - Menu option 9 is hidden entirely unless the gate is enabled
+  - Input validation adjusts dynamically (1-8 vs 1-9) based on gate state
+- **Strengthen warning messaging**: Expanded risk banner with Home Assistant-specific consequences (configuration deletion, credential exposure, automation modification, destructive commands)
+  - Renamed menu entry to "Dangerous Mode (YOLO)" with radiation symbol for emphasis
+  - Added recommendation to use isolated test environments only
+
+### 🔧 Technical - CI Fix for Forked PRs
+- **Skip Claude code review on fork PRs**: Added conditional to prevent OIDC/secrets failures when community contributors open PRs from forks
+
 ## 1.6.4
 
 ### 🔧 Technical - Dependency Updates

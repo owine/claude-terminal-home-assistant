@@ -299,6 +299,7 @@ During design discussions and requirements gathering, create a running summary d
 **Claude Permissions:**
 - `CLAUDE_DANGEROUS_MODE` - Set to "true" when dangerously_skip_permissions is enabled
 - `IS_SANDBOX=1` - Required for --dangerously-skip-permissions when running as root
+- `ALLOW_YOLO_MODE` - Set to "1" when dangerously_skip_permissions is enabled; gates the session picker's Dangerous Mode (YOLO) menu option
 
 ### Important Constraints
 - No sudo privileges available in development environment
