@@ -296,7 +296,7 @@ run_claude_yolo() {
         echo "❌ YOLO mode is disabled by default for safety"
         echo ""
         echo "To enable it explicitly, set: ALLOW_YOLO_MODE=1"
-        echo "(e.g. in add-on configuration/environment)"
+        echo "(e.g. in app configuration/environment)"
         echo ""
         printf "Press Enter to return to menu..." >&2
         read -r

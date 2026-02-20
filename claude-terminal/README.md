@@ -10,7 +10,7 @@ An enhanced, web-based terminal with Claude Code CLI and persistent package mana
 
 ## What is Claude Terminal Prowine?
 
-This add-on provides a web-based terminal interface with Claude Code CLI pre-installed plus persistent package management, allowing you to use Claude's powerful AI capabilities directly from your Home Assistant dashboard. It gives you direct access to Anthropic's Claude AI assistant through a terminal, ideal for:
+This app provides a web-based terminal interface with Claude Code CLI pre-installed plus persistent package management, allowing you to use Claude's powerful AI capabilities directly from your Home Assistant dashboard. It gives you direct access to Anthropic's Claude AI assistant through a terminal, ideal for:
 
 - Writing and editing code
 - Debugging problems
@@ -61,18 +61,18 @@ claude-logout
 
 ## Installation
 
-1. Add this repository to your Home Assistant add-on store:
-   - Go to Settings → Add-ons → Add-on Store
+1. Add this repository to your Home Assistant app store:
+   - Go to Settings → Apps → App Store
    - Click the menu (⋮) and select Repositories
    - Add: `https://github.com/owine/claude-terminal-home-assistant`
-2. Install the Claude Terminal Prowine add-on
-3. Start the add-on
+2. Install the Claude Terminal Prowine app
+3. Start the app
 4. Click "OPEN WEB UI" or the sidebar icon to access
 5. On first use, follow the OAuth prompts to log in to your Anthropic account
 
 ## Configuration
 
-The add-on requires no configuration. All settings are handled automatically:
+The app requires no configuration. All settings are handled automatically:
 
 - **Port**: Web interface runs on port 7681
 - **Authentication**: OAuth with Anthropic (credentials stored securely in `/config/claude-config/`)
@@ -90,8 +90,8 @@ claude-logout        # Clear credentials and re-authenticate
 
 ### Container Issues
 - Credentials are automatically saved and restored between restarts
-- Check add-on logs if the terminal doesn't load
-- Restart the add-on if Claude commands aren't recognized
+- Check app logs if the terminal doesn't load
+- Restart the app if Claude commands aren't recognized
 
 ### Development
 For local development and testing:
@@ -129,7 +129,7 @@ Security features and improvements:
 
 ## Development Environment
 
-This add-on includes a comprehensive development setup using Nix:
+This app includes a comprehensive development setup using Nix:
 
 ```bash
 # Available development commands
@@ -159,14 +159,14 @@ For complete version history and detailed changelog, see [CHANGELOG.md](CHANGELO
 - [Claude Code Documentation](https://docs.anthropic.com/claude/docs/claude-code)
 - [Get an Anthropic API Key](https://console.anthropic.com/)
 - [Claude Code GitHub Repository](https://github.com/anthropics/claude-code)
-- [Home Assistant Add-ons](https://www.home-assistant.io/addons/)
+- [Home Assistant Apps](https://www.home-assistant.io/addons/)
 
 ## Credits
 
-**Original Creator:** Tom Cassady ([@heytcass](https://github.com/heytcass)) - Created the initial Claude Terminal add-on
+**Original Creator:** Tom Cassady ([@heytcass](https://github.com/heytcass)) - Created the initial Claude Terminal app
 **Fork Maintainer:** Javier Santos ([@esjavadex](https://github.com/esjavadex)) - Added persistent package management and enhancements
 
-This add-on was created and enhanced with the assistance of Claude Code itself! The development process, debugging, and documentation were all completed using Claude's AI capabilities - a perfect demonstration of what this add-on can help you accomplish.
+This app was created and enhanced with the assistance of Claude Code itself! The development process, debugging, and documentation were all completed using Claude's AI capabilities - a perfect demonstration of what this app can help you accomplish.
 
 ## License
 

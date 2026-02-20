@@ -18,7 +18,7 @@ echo ""
 SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
 if [ -z "$SUPERVISOR_TOKEN" ]; then
     echo -e "${RED}Error: Supervisor token not found${NC}"
-    echo "This script must be run from within a Home Assistant add-on"
+    echo "This script must be run from within a Home Assistant app"
     exit 1
 fi
 
@@ -45,8 +45,8 @@ api_call() {
     fi
 }
 
-# Example 1: Get add-on info
-echo "1. Getting current add-on information:"
+# Example 1: Get app info
+echo "1. Getting current app information:"
 echo "   Endpoint: /addons/self/info"
 echo ""
 api_call "addons/self/info" | jq '.data | {name, version, state}'
@@ -59,8 +59,8 @@ echo ""
 api_call "core/info" | jq '.data | {version, machine, operating_system}'
 echo ""
 
-# Example 3: List all add-ons
-echo "3. Listing installed add-ons:"
+# Example 3: List all apps
+echo "3. Listing installed apps:"
 echo "   Endpoint: /addons"
 echo ""
 api_call "addons" | jq '.data.addons[] | {name, slug, version, state}'
@@ -95,7 +95,7 @@ echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "Usage in your scripts:"
 echo ""
-echo -e "${YELLOW}# Get add-on configuration:${NC}"
+echo -e "${YELLOW}# Get app configuration:${NC}"
 echo 'CONFIG=$(bashio::config)'
 echo ""
 echo -e "${YELLOW}# Get specific config value:${NC}"
@@ -161,7 +161,7 @@ EOF
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"
-echo -e "${GREEN}✓ API access is now enabled for this add-on!${NC}"
+echo -e "${GREEN}✓ API access is now enabled for this app!${NC}"
 echo ""
 echo "The SUPERVISOR_TOKEN environment variable provides access to:"
 echo "• Supervisor API (/addons, /core, /host, /network, etc.)"

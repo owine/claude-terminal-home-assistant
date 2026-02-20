@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1
+
+### 📚 Documentation - Rename "add-on" to "app"
+- **Align with Home Assistant 2026.2 nomenclature**: Updated all user-facing references from "add-on" to "app" across README, DOCS, CONTRIBUTING, PERSISTENT_PACKAGES, config.yaml, and user-visible script messages
+  - Navigation paths updated: "Settings → Add-ons → Add-on Store" → "Settings → Apps → App Store"
+  - API endpoint paths (`/addons/`) and GitHub repo URLs preserved as-is
+
 ## 1.7.0
 
 ### 🛠️ Improvement - Harden Dangerous Mode Security

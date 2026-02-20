@@ -456,7 +456,7 @@ setup_ha_mcp() {
 
 # Main execution
 main() {
-    bashio::log.info "Initializing Claude Terminal add-on..."
+    bashio::log.info "Initializing Claude Terminal app..."
 
     # Run diagnostics first (especially helpful for VirtualBox issues)
     run_health_check

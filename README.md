@@ -1,6 +1,6 @@
 # Claude Terminal Prowine for Home Assistant
 
-An enhanced Home Assistant add-on that integrates Anthropic's Claude Code CLI with persistent package management and advanced features.
+An enhanced Home Assistant app that integrates Anthropic's Claude Code CLI with persistent package management and advanced features.
 
 ## Recommended Plugins
 
@@ -26,7 +26,7 @@ This project is a fork built upon work from two repositories:
 
 | Repository | Author | Description |
 |------------|--------|-------------|
-| [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) | Tom Cassady ([@heytcass](https://github.com/heytcass)) | **Original** Claude Terminal add-on |
+| [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) | Tom Cassady ([@heytcass](https://github.com/heytcass)) | **Original** Claude Terminal app |
 | [ESJavadex/claude-code-ha](https://github.com/ESJavadex/claude-code-ha) | Javier Santos ([@esjavadex](https://github.com/esjavadex)) | Enhanced fork with persistent packages |
 
 **This fork:** [@owine](https://github.com/owine) - personal use
@@ -45,17 +45,17 @@ This project maintains the same MIT license as the original.
 
 To add this repository to your Home Assistant instance:
 
-1. Go to **Settings** → **Add-ons** → **Add-on Store**
+1. Go to **Settings** → **Apps** → **App Store**
 2. Click the three dots menu in the top right corner
 3. Select **Repositories**
 4. Add the URL: `https://github.com/owine/claude-terminal-home-assistant`
 5. Click **Add**
 
-## Add-ons
+## Apps
 
 ### Claude Terminal Prowine
 
-A web-based terminal interface with Claude Code CLI pre-installed and enhanced package management. This add-on provides a terminal environment directly in your Home Assistant dashboard, allowing you to use Claude's powerful AI capabilities for coding, automation, and configuration tasks.
+A web-based terminal interface with Claude Code CLI pre-installed and enhanced package management. This app provides a terminal environment directly in your Home Assistant dashboard, allowing you to use Claude's powerful AI capabilities for coding, automation, and configuration tasks.
 
 #### Core Features
 - Web terminal access through your Home Assistant UI
@@ -96,18 +96,18 @@ Tools built by the community to enhance Claude Terminal:
 
 ## Support
 
-If you have any questions or issues with this add-on, please create an issue in this repository.
+If you have any questions or issues with this app, please create an issue in this repository.
 
 ## Credits
 
-- **Original Creator:** Tom Cassady ([@heytcass](https://github.com/heytcass)) - Created the initial Claude Terminal add-on
+- **Original Creator:** Tom Cassady ([@heytcass](https://github.com/heytcass)) - Created the initial Claude Terminal app
 - **Enhanced By:** Javier Santos ([@esjavadex](https://github.com/esjavadex)) - Added persistent package management and enhancements
 
 **Integrated Contributions:**
 - Petter Sandholdt ([@petterl](https://github.com/petterl)) - tmux session persistence ([PR #46](https://github.com/heytcass/home-assistant-addons/pull/46))
 - Brian Egge ([@brianegge](https://github.com/brianegge)) - ha-mcp Home Assistant MCP integration ([PR #49](https://github.com/heytcass/home-assistant-addons/pull/49))
 
-This add-on was created and enhanced with the assistance of Claude Code itself!
+This app was created and enhanced with the assistance of Claude Code itself!
 
 ## License
 

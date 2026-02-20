@@ -34,7 +34,7 @@ See [CLAUDE.md](./CLAUDE.md) for comprehensive development documentation.
 Before submitting changes, always test locally:
 
 ```bash
-# Build the add-on (replace {arch} with amd64 or aarch64)
+# Build the app (replace {arch} with amd64 or aarch64)
 docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
   -t local/claude-terminal:test ./claude-terminal
 
@@ -134,14 +134,14 @@ git commit -m "docs: clarify persistent package installation"
 
 ### Shell Scripts
 
-- Use `#!/usr/bin/with-contenv bashio` for add-on scripts
+- Use `#!/usr/bin/with-contenv bashio` for app scripts
 - Include descriptive comments for complex logic
 - Use `bashio::log.*` for logging
 - Handle errors gracefully with proper exit codes
 
 ### Dockerfile
 
-- Follow Home Assistant add-on conventions
+- Follow Home Assistant app conventions
 - Use Alpine base images from `build.yaml`
 - Minimize layers where practical
 - Document complex RUN commands
@@ -166,7 +166,7 @@ git commit -m "docs: clarify persistent package installation"
 
 ```
 claude-terminal/
-├── config.yaml           # Add-on configuration
+├── config.yaml           # App configuration
 ├── Dockerfile            # Container definition
 ├── build.yaml            # Multi-arch build config
 ├── run.sh                # Main startup script
@@ -194,7 +194,7 @@ claude-terminal/
 
 Before submitting a PR, verify:
 
-- [ ] Add-on builds successfully for both amd64 and aarch64
+- [ ] App builds successfully for both amd64 and aarch64
 - [ ] Web interface loads at http://localhost:7681
 - [ ] Claude authentication works
 - [ ] Session picker displays correctly (if applicable)

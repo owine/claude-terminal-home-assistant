@@ -95,11 +95,11 @@ persist-install --list
 
 ## 🔧 Configuration: Auto-Install on Startup
 
-You can configure packages to install automatically every time the add-on starts.
+You can configure packages to install automatically every time the app starts.
 
 ### Via Home Assistant UI
 
-1. Go to **Settings** → **Add-ons** → **Claude Terminal**
+1. Go to **Settings** → **Apps** → **Claude Terminal**
 2. Click **Configuration** tab
 3. Add your packages:
 
@@ -117,7 +117,7 @@ persistent_pip_packages:
   - pyyaml
 ```
 
-4. **Save** and **Restart** the add-on
+4. **Save** and **Restart** the app
 
 ### Via config file (Advanced)
 
@@ -225,7 +225,7 @@ python3 --version
 ls -la /data/packages/bin/python3
 
 # 3. Reboot your Raspberry Pi
-# (or restart the add-on)
+# (or restart the app)
 
 # 4. Verify it still works
 python3 --version  # ✅ Still there!
@@ -280,7 +280,7 @@ ls -la /data/packages/lib/
 # Remove all persistent packages
 rm -rf /data/packages/*
 
-# Restart add-on to rebuild structure
+# Restart app to rebuild structure
 ```
 
 ---
@@ -359,7 +359,7 @@ du -sh /data/packages/*
 
 ## 📖 Further Reading
 
-- [Home Assistant Add-on Documentation](https://developers.home-assistant.io/docs/add-ons/)
+- [Home Assistant App Documentation](https://developers.home-assistant.io/docs/add-ons/)
 - [Alpine Linux Packages](https://pkgs.alpinelinux.org/)
 - [Python Package Index (PyPI)](https://pypi.org/)
 - [Docker Volume Documentation](https://docs.docker.com/storage/volumes/)
@@ -380,7 +380,7 @@ du -sh /data/packages/*
 
 If you encounter issues:
 
-1. Check the add-on logs: **Settings** → **Add-ons** → **Claude Terminal** → **Log**
+1. Check the app logs: **Settings** → **Apps** → **Claude Terminal** → **Log**
 2. Run `persist-install --list` to verify installations
 3. Report issues on GitHub with log output
 4. Include your package list and error messages

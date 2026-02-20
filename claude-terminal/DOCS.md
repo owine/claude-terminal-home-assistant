@@ -4,22 +4,22 @@ An enhanced terminal interface for Anthropic's Claude Code CLI in Home Assistant
 
 ## About
 
-Claude Terminal Prowine is an enhanced fork of the original Claude Terminal add-on, providing a web-based terminal with Claude Code CLI pre-installed plus persistent package management capabilities. Access Claude's powerful AI capabilities directly from your Home Assistant dashboard with the added benefit of installing and persisting custom packages across restarts.
+Claude Terminal Prowine is an enhanced fork of the original Claude Terminal app, providing a web-based terminal with Claude Code CLI pre-installed plus persistent package management capabilities. Access Claude's powerful AI capabilities directly from your Home Assistant dashboard with the added benefit of installing and persisting custom packages across restarts.
 
 ## Installation
 
-1. Add this repository to your Home Assistant add-on store:
-   - Go to Settings → Add-ons → Add-on Store
+1. Add this repository to your Home Assistant app store:
+   - Go to Settings → Apps → App Store
    - Click the menu (⋮) and select Repositories
    - Add: `https://github.com/owine/claude-terminal-home-assistant`
-2. Install the Claude Terminal Prowine add-on
-3. Start the add-on
+2. Install the Claude Terminal Prowine app
+3. Start the app
 4. Click "OPEN WEB UI" to access the terminal
 5. On first use, follow the OAuth prompts to log in to your Anthropic account
 
 ## Configuration
 
-The add-on offers several configuration options:
+The app offers several configuration options:
 
 ### Auto Launch Claude
 - **Default**: `true`
@@ -88,7 +88,7 @@ persistent_pip_packages:
   - requests
 ```
 
-Your OAuth credentials are stored in the `/config/claude-config` directory and will persist across add-on updates and restarts, so you won't need to log in again.
+Your OAuth credentials are stored in the `/config/claude-config` directory and will persist across app updates and restarts, so you won't need to log in again.
 
 ### Options
 
@@ -174,7 +174,7 @@ The terminal starts directly in your `/config` directory, giving you immediate a
 
 ## Home Assistant MCP Integration
 
-This add-on includes the [homeassistant-ai/ha-mcp](https://github.com/homeassistant-ai/ha-mcp) MCP server, enabling Claude to directly interact with your Home Assistant instance using natural language.
+This app includes the [homeassistant-ai/ha-mcp](https://github.com/homeassistant-ai/ha-mcp) MCP server, enabling Claude to directly interact with your Home Assistant instance using natural language.
 
 ### What You Can Do
 
@@ -200,7 +200,7 @@ The integration provides 97+ tools for:
 
 ### Disabling the Integration
 
-If you don't want the Home Assistant MCP integration, you can disable it in the add-on configuration:
+If you don't want the Home Assistant MCP integration, you can disable it in the app configuration:
 
 ```yaml
 enable_ha_mcp: false
@@ -283,7 +283,7 @@ compare /data/images/pasted-123.png and /data/images/pasted-456.png
 - Check browser console for errors (F12)
 - Verify file is an image (JPEG, PNG, GIF, WebP, SVG)
 - Ensure file is under 10MB
-- Check add-on logs
+- Check app logs
 
 **Can't see uploaded images:**
 ```bash
@@ -319,13 +319,13 @@ See [PERSISTENT_PACKAGES.md](PERSISTENT_PACKAGES.md) for complete guide.
 ## Troubleshooting
 
 - If Claude doesn't start automatically, try running `claude -i` manually
-- If you see permission errors, try restarting the add-on
+- If you see permission errors, try restarting the app
 - If you have authentication issues, try logging out and back in
-- Check the add-on logs for any error messages
+- Check the app logs for any error messages
 
 ## Credits
 
 **Original Creator:** Tom Cassady ([@heytcass](https://github.com/heytcass))
 **Fork Maintainer:** Javier Santos ([@esjavadex](https://github.com/esjavadex))
 
-This add-on was created and enhanced with the assistance of Claude Code itself! The development process, debugging, and documentation were all completed using Claude's AI capabilities - a perfect demonstration of what this add-on can help you accomplish.
+This app was created and enhanced with the assistance of Claude Code itself! The development process, debugging, and documentation were all completed using Claude's AI capabilities - a perfect demonstration of what this app can help you accomplish.

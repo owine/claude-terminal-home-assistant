@@ -131,7 +131,7 @@ check_network_connectivity() {
 
 run_diagnostics() {
     bashio::log.info "========================================="
-    bashio::log.info "Claude Terminal Add-on Health Check"
+    bashio::log.info "Claude Terminal App Health Check"
     bashio::log.info "========================================="
 
     local errors=0
