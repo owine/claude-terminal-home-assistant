@@ -50,6 +50,13 @@ init_environment() {
     dangerously_skip_permissions=$(bashio::config 'dangerously_skip_permissions' 'false')
     export CLAUDE_DANGEROUS_MODE="$dangerously_skip_permissions"
 
+    # Wire add-on configuration to session-picker dangerous mode gate
+    if [ "$dangerously_skip_permissions" = "true" ]; then
+        export ALLOW_YOLO_MODE=1
+    else
+        export ALLOW_YOLO_MODE=0
+    fi
+
     # Set IS_SANDBOX=1 to allow --dangerously-skip-permissions when running as root
     if [ "$dangerously_skip_permissions" = "true" ]; then
         export IS_SANDBOX=1
