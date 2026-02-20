@@ -58,7 +58,7 @@ actionlint
 
 ## Configuration Files
 
-- `.hadolint.yaml` - Dockerfile linting rules (ignores DL3018 for HA add-ons)
+- `.hadolint.yaml` - Dockerfile linting rules (ignores DL3018 for HA apps)
 - `.shellcheckrc` - Shell script linting rules (handles bashio shebang)
 - `.yamllint.yml` - YAML formatting rules (120 char lines, 2-space indent)
 
@@ -88,7 +88,7 @@ This warning about pinning apk versions is ignored because Home Assistant base i
 #!/usr/bin/with-contenv bashio
 ```
 
-This shebang is specific to Home Assistant add-ons and is treated as bash by our configuration.
+This shebang is specific to Home Assistant apps and is treated as bash by our configuration.
 
 ### yamllint line-length
 

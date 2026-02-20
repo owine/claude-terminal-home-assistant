@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository contains Home Assistant add-ons, specifically the **Claude Terminal Prowine** add-on which provides a web-based terminal interface with Claude Code CLI pre-installed and persistent package management. The add-on allows Home Assistant users to access Claude AI capabilities directly from their dashboard.
+This repository contains Home Assistant apps, specifically the **Claude Terminal Prowine** app which provides a web-based terminal interface with Claude Code CLI pre-installed and persistent package management. The app allows Home Assistant users to access Claude AI capabilities directly from their dashboard.
 
 **Fork Attribution:** This is a personal fork maintained by [@owine](https://github.com/owine), built upon:
-- [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) - Original Claude Terminal add-on by Tom Cassady
+- [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) - Original Claude Terminal app by Tom Cassady
 - [ESJavadex/claude-code-ha](https://github.com/ESJavadex/claude-code-ha) - Enhanced fork by Javier Santos
 
 ## Task Completion
@@ -28,8 +28,8 @@ direnv allow
 ### Core Development Commands
 
 **Build & Test:**
-- `build-addon` - Build the Claude Terminal Prowine add-on with Podman
-- `run-addon` - Run add-on locally on port 7681 with volume mapping
+- `build-addon` - Build the Claude Terminal Prowine app with Podman
+- `run-addon` - Run app locally on port 7681 with volume mapping
 - `test-endpoint` - Test web endpoint availability (curl localhost:7681)
 
 **Linting:**
@@ -64,8 +64,8 @@ curl -X GET http://localhost:7681/
 
 ## Architecture
 
-### Add-on Structure (claude-terminal/)
-- **config.yaml** - Home Assistant add-on configuration (slug: `claude_terminal_prowine`)
+### App Structure (claude-terminal/)
+- **config.yaml** - Home Assistant app configuration (slug: `claude_terminal_prowine`)
 - **Dockerfile** - Alpine 3.23-based container with Node.js and Claude Code CLI
 - **build.yaml** - Multi-architecture build configuration (amd64, aarch64)
 - **run.sh** - Main startup script with credential management and ttyd terminal
@@ -111,7 +111,7 @@ When Home Assistant releases new base images, Renovate creates a PR to update th
 
 ### Configuration Options (config.yaml)
 
-The add-on exposes these configuration options to users:
+The app exposes these configuration options to users:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -124,7 +124,7 @@ The add-on exposes these configuration options to users:
 
 **API Permissions (config.yaml):**
 - `hassio_api: true` - Access to Supervisor API
-- `hassio_role: manager` - Manager-level access for add-on operations
+- `hassio_role: manager` - Manager-level access for app operations
 - `homeassistant_api: true` - Access to Home Assistant Core API
 - `auth_api: true` - Access to authentication API
 
@@ -142,7 +142,7 @@ The add-on exposes these configuration options to users:
 6. **Package Management**: Persistent package installation via `persist-install` script
 
 ### Credential System
-The add-on implements a sophisticated credential management system:
+The app implements a sophisticated credential management system:
 - **Persistent Storage**: Credentials saved to `/config/claude-config/` (survives restarts)
 - **Multiple Locations**: Handles various Claude credential file locations
 - **Background Service**: Continuous credential monitoring and saving
@@ -150,7 +150,7 @@ The add-on implements a sophisticated credential management system:
 
 ### Container Execution Flow
 
-The main startup script (`run.sh`) orchestrates the add-on initialization:
+The main startup script (`run.sh`) orchestrates the app initialization:
 
 1. **Health Check** (`run_health_check`) - Verify memory, disk, network, Node.js, Claude CLI
 2. **Environment Init** (`init_environment`) - Create `/data` directories, set XDG variables
@@ -272,7 +272,7 @@ For documentation cleanup tasks: 1) List all files to be modified/deleted first,
 During design discussions and requirements gathering, create a running summary document that captures decisions made so far, so progress isn't lost if session ends.
 
 ### File Conventions
-- **Shell Scripts**: Use `#!/usr/bin/with-contenv bashio` for add-on scripts
+- **Shell Scripts**: Use `#!/usr/bin/with-contenv bashio` for app scripts
 - **Indentation**: 2 spaces for YAML, 4 spaces for shell scripts
 - **Error Handling**: Use `bashio::log.error` for error reporting
 - **Permissions**: Credential files must have 600 permissions
@@ -303,7 +303,7 @@ During design discussions and requirements gathering, create a running summary d
 
 ### Important Constraints
 - No sudo privileges available in development environment
-- Add-on targets Home Assistant OS (Alpine Linux 3.23 base)
+- App targets Home Assistant OS (Alpine Linux 3.23 base)
 - Must handle credential persistence across container restarts
 - Requires multi-architecture compatibility (amd64, aarch64)
 - **CRITICAL:** `image-service/package-lock.json` must be committed for deterministic builds
@@ -313,7 +313,7 @@ During design discussions and requirements gathering, create a running summary d
 
 ### CRITICAL: Always Update Version and Changelog
 
-**When making ANY changes to the add-on, you MUST:**
+**When making ANY changes to the app, you MUST:**
 
 1. **Bump the version** in `claude-terminal/config.yaml`
    - Patch version (x.x.X) for bug fixes and small changes
@@ -348,7 +348,7 @@ During design discussions and requirements gathering, create a running summary d
 
 ### Release Process (v1.3.0+)
 
-The add-on uses **pre-built Docker images** published to GitHub Container Registry (ghcr.io) with a **two-stage CI/CD workflow**:
+The app uses **pre-built Docker images** published to GitHub Container Registry (ghcr.io) with a **two-stage CI/CD workflow**:
 
 #### Development Workflow
 
@@ -457,7 +457,7 @@ Prior to v1.3.0, Home Assistant built images locally during installation. This a
 - ✓ Fast installation (~30 seconds download vs ~5 minutes build)
 - ✓ Guaranteed correct dependency versions (built in controlled environment)
 - ✓ Cryptographically signed with cosign for supply chain security
-- ✓ Standard practice for production Home Assistant add-ons
+- ✓ Standard practice for production Home Assistant apps
 - ✓ Test builds validate changes before publication
 
 #### Troubleshooting Releases
@@ -645,7 +645,7 @@ This repository uses several GitHub Actions workflows for CI/CD and development 
 - **Requirements:**
   - `CLAUDE_CODE_OAUTH_TOKEN` secret configured in repository settings
   - Active Claude Code subscription
-- **Note:** Optional workflow - can be disabled without affecting the add-on
+- **Note:** Optional workflow - can be disabled without affecting the app
 
 **Claude Code Comment** (`.github/workflows/claude.yml`)
 - **Purpose:** Respond to @claude mentions in issues and PRs
@@ -662,7 +662,7 @@ This repository uses several GitHub Actions workflows for CI/CD and development 
   - `actions: read` - Read CI results on PRs
 - **Requirements:**
   - `CLAUDE_CODE_OAUTH_TOKEN` secret configured
-- **Note:** Optional workflow - can be disabled without affecting the add-on
+- **Note:** Optional workflow - can be disabled without affecting the app
 
 ### Actions Pinning Strategy
 
@@ -822,7 +822,7 @@ Claude: "You can interact with Home Assistant using the Supervisor API!
 
 ### Auto-Install Configuration
 
-Users can configure packages to auto-install on startup by editing the add-on configuration:
+Users can configure packages to auto-install on startup by editing the app configuration:
 
 ```yaml
 persistent_apk_packages:
@@ -837,10 +837,10 @@ persistent_pip_packages:
 ```
 
 **When users ask about auto-install**, guide them to:
-1. Go to Settings → Add-ons → Claude Terminal
+1. Go to Settings → Apps → Claude Terminal
 2. Click Configuration tab
 3. Add packages to the lists above
-4. Save and restart the add-on
+4. Save and restart the app
 
 ### Troubleshooting
 
@@ -866,7 +866,7 @@ source /etc/profile.d/persistent-packages.sh
 were installed correctly but not in the PATH for ttyd bash sessions. This was
 fixed by creating `/etc/profile.d/persistent-packages.sh` which is automatically
 sourced by all bash sessions. If you installed packages before v1.5.2 and they
-don't work, update to the latest version and restart the add-on.
+don't work, update to the latest version and restart the app.
 
 **Python import errors**:
 ```bash

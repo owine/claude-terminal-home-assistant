@@ -1,10 +1,10 @@
-# ShellCheck configuration for Home Assistant add-ons
+# ShellCheck configuration for Home Assistant apps
 
 # Treat bashio shebang as bash
-# This is the standard shebang for Home Assistant add-on scripts
+# This is the standard shebang for Home Assistant app scripts
 shell=bash
 
-# Disable specific checks that don't apply to HA add-on context
+# Disable specific checks that don't apply to HA app context
 # SC1008: Unrecognized shebang (we use with-contenv bashio)
 # SC1091: Not following sourced files (bashio library is at runtime)
 # SC2086: Double quote to prevent globbing (intentional in some cases)

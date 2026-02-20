@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Claude Code Clipboard Image Monitor for macOS
-Automatically uploads clipboard images to Claude Terminal Pro add-on
+Automatically uploads clipboard images to Claude Terminal Pro app
 
 Usage:
     python3 mac-clipboard-monitor.py <ADDON_URL>

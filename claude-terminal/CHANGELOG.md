@@ -3,9 +3,11 @@
 ## 1.7.1
 
 ### 📚 Documentation - Rename "add-on" to "app"
-- **Align with Home Assistant 2026.2 nomenclature**: Updated all user-facing references from "add-on" to "app" across README, DOCS, CONTRIBUTING, PERSISTENT_PACKAGES, config.yaml, and user-visible script messages
+- **Align with Home Assistant 2026.2 nomenclature**: Updated all references from "add-on" to "app" across user-facing docs, internal docs, code comments, and dev tooling
+  - User-facing: README, DOCS, CONTRIBUTING, PERSISTENT_PACKAGES, config.yaml, script messages
+  - Internal: CLAUDE.md, code comments, linter configs, GitHub workflow comments, test scripts, tools/
   - Navigation paths updated: "Settings → Add-ons → Add-on Store" → "Settings → Apps → App Store"
-  - API endpoint paths (`/addons/`) and GitHub repo URLs preserved as-is
+  - Preserved as-is: API paths (`/addons/`), GitHub repo URLs, dev command names (`build-addon`), `flake.nix`, LICENSE, historical changelog entries
 
 ## 1.7.0
 

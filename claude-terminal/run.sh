@@ -50,7 +50,7 @@ init_environment() {
     dangerously_skip_permissions=$(bashio::config 'dangerously_skip_permissions' 'false')
     export CLAUDE_DANGEROUS_MODE="$dangerously_skip_permissions"
 
-    # Wire add-on configuration to session-picker dangerous mode gate
+    # Wire app configuration to session-picker dangerous mode gate
     if [ "$dangerously_skip_permissions" = "true" ]; then
         export ALLOW_YOLO_MODE=1
     else
@@ -246,7 +246,7 @@ setup_persistent_packages() {
     auto_install_packages
 }
 
-# Auto-install packages from add-on configuration
+# Auto-install packages from app configuration
 auto_install_packages() {
     local apk_packages=$(bashio::config 'persistent_apk_packages' '[]')
     local pip_packages=$(bashio::config 'persistent_pip_packages' '[]')

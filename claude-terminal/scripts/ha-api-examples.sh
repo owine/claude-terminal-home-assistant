@@ -14,7 +14,7 @@ echo "║          Home Assistant API Examples for Claude             ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
-# Get the Supervisor token (automatically available in add-ons)
+# Get the Supervisor token (automatically available in apps)
 SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
 if [ -z "$SUPERVISOR_TOKEN" ]; then
     echo -e "${RED}Error: Supervisor token not found${NC}"

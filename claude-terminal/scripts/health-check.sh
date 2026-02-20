@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 
-# Health check script for Claude Terminal add-on
+# Health check script for Claude Terminal app
 # Validates environment and provides diagnostic information
 
 check_system_resources() {

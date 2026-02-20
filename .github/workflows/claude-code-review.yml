@@ -12,7 +12,7 @@
 # - CLAUDE_CODE_OAUTH_TOKEN secret configured in repository settings
 # - Active Claude Code subscription
 #
-# This is NOT required for the add-on to function. It's a development productivity
+# This is NOT required for the app to function. It's a development productivity
 # tool that can be disabled without affecting the core project.
 #
 # Configuration:

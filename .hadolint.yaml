@@ -1,12 +1,12 @@
 ---
-# Hadolint configuration for Home Assistant add-ons
+# Hadolint configuration for Home Assistant apps
 
 ignored:
   # DL3006: Always tag the version of an image explicitly
   # Home Assistant Builder provides BUILD_FROM via build.yaml
   - DL3006
 
-  # DL3018: Pinning apk versions is not practical for HA add-ons
+  # DL3018: Pinning apk versions is not practical for HA apps
   # The base image manages Alpine package versions
   - DL3018
 

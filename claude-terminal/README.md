@@ -133,8 +133,8 @@ This app includes a comprehensive development setup using Nix:
 
 ```bash
 # Available development commands
-build-addon      # Build the add-on container with Podman
-run-addon        # Run add-on locally on port 7681
+build-addon      # Build the app container with Podman
+run-addon        # Run app locally on port 7681
 lint-dockerfile  # Lint Dockerfile with hadolint
 test-endpoint    # Test web endpoint availability
 ```

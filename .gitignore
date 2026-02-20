@@ -1,4 +1,4 @@
-# Home Assistant Add-on .gitignore
+# Home Assistant App .gitignore
 
 # Node.js
 node_modules/
@@ -39,7 +39,7 @@ Thumbs.db
 
 # Claude Code local configuration
 # NOTE: This ignores .claude/ in the root directory (user's local Claude config)
-# BUT: claude-terminal/.claude/ IS committed (contains add-on Claude commands & skills)
+# BUT: claude-terminal/.claude/ IS committed (contains app Claude commands & skills)
 .claude/
 
 # Git worktrees

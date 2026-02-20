@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test script to verify image service and tmux integration
-# Run this inside the add-on container
+# Run this inside the app container
 
 echo "=== Image Service Integration Test ==="
 echo ""

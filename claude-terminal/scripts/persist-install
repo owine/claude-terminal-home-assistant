@@ -234,10 +234,10 @@ install_ha_cli() {
 
 # Main execution
 main() {
-    # Check if running in the add-on
+    # Check if running in the app
     if [ ! -d "/data" ]; then
         echo "❌ Error: /data directory not found"
-        echo "This script must run inside the Claude Terminal add-on"
+        echo "This script must run inside the Claude Terminal app"
         exit 1
     fi
 

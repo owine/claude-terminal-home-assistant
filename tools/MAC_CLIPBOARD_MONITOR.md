@@ -18,7 +18,7 @@ Automatically upload images from your Mac clipboard to Claude Terminal Prowine r
 pip3 install pillow requests pasteboard
 ```
 
-### 2. Find Your Add-on URL
+### 2. Find Your App URL
 
 **Option A: Via Home Assistant Ingress (recommended)**
 ```bash
@@ -192,7 +192,7 @@ python3 -c "import pasteboard; print(pasteboard.Pasteboard().get_contents())"
 | Method | Pros | Cons |
 |--------|------|------|
 | **Mac Monitor Script** | • Truly automatic (Cmd+C anywhere)<br>• No browser needed<br>• Works with any clipboard source | • Requires Python setup<br>• Must run script<br>• Mac only |
-| **Web Interface Upload** | • No setup required<br>• Works on any OS<br>• Built into add-on | • Manual upload button<br>• Must open browser<br>• Paste detection limited |
+| **Web Interface Upload** | • No setup required<br>• Works on any OS<br>• Built into app | • Manual upload button<br>• Must open browser<br>• Paste detection limited |
 
 ## Security Note
 
