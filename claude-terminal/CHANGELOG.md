@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.2
+
+### 🔧 Technical - Dependency Updates
+- **Dependency Updates**
+  - Updated cli/cli (GitHub CLI) to v2.87.2
+
 ## 1.7.1
 
 ### 📚 Documentation - Rename "add-on" to "app"
