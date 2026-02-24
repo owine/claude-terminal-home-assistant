@@ -17,6 +17,7 @@
   - Updated anthropics/claude-code-action digest to 35a9e02
   - Updated astral-sh/uv to v0.10.5
   - Updated home-assistant/builder action to v2026.02.1
+  - Lock file maintenance for npm dependencies
 
 ## 1.7.2
 
