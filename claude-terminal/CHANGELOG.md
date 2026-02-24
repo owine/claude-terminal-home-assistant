@@ -1,12 +1,13 @@
 # Changelog
 
-## 1.7.4
+## 1.7.5
 
-### 🐛 Bug Fix - Eliminate false warnings for empty package lists
-- **Use jq as sole gatekeeper for package config parsing**: v1.7.3 fixed the startup crash but introduced spurious warnings ("Could not parse persistent_apk_packages config") when no packages were configured. `bashio::config` returns non-JSON for empty lists, so string comparisons against `[]`/`""`/`null` are unreliable.
-  - Replace string-based checks with `jq` array length check (`if type == "array" then length else 0 end`)
-  - Silently skip when config is empty, invalid, or not an array — no warnings for normal operation
-  - Warnings only appear if actual packages fail to install
+### 🐛 Bug Fix - Package auto-install now actually works
+- **Read /data/options.json directly instead of using bashio::config for lists**: `bashio::config` mangles list-type config values through shell variable assignment, making them unparseable as JSON. This caused package auto-install to silently skip even when packages were configured.
+  - Read `/data/options.json` directly with `jq` — bypasses bashio entirely for list configs
+  - Log messages now show package count (e.g., "Auto-installing 2 system package(s)")
+  - Gracefully handles missing options file, missing keys, and invalid JSON
+  - Locally tested with both populated and empty package lists
 
 ## 1.7.3
 

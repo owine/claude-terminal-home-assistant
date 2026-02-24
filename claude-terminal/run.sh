@@ -248,23 +248,25 @@ setup_persistent_packages() {
 
 # Auto-install packages from app configuration
 auto_install_packages() {
-    local apk_packages
-    local pip_packages
+    local options="/data/options.json"
     local apk_count=0
     local pip_count=0
 
-    # Read config values and count entries using jq as the sole gatekeeper.
-    # bashio::config may return non-JSON for empty lists, so we let jq decide.
-    apk_packages=$(bashio::config 'persistent_apk_packages') || apk_packages="[]"
-    pip_packages=$(bashio::config 'persistent_pip_packages') || pip_packages="[]"
-    apk_count=$(echo "$apk_packages" | jq -r 'if type == "array" then length else 0 end' 2>/dev/null) || apk_count=0
-    pip_count=$(echo "$pip_packages" | jq -r 'if type == "array" then length else 0 end' 2>/dev/null) || pip_count=0
+    # Read /data/options.json directly — bashio::config mangles list types
+    # through shell variable assignment, making them unparseable as JSON.
+    if [ ! -f "$options" ]; then
+        bashio::log.debug "No options.json found — skipping package auto-install"
+        return 0
+    fi
+
+    apk_count=$(jq -r '.persistent_apk_packages | if type == "array" then length else 0 end' "$options" 2>/dev/null) || apk_count=0
+    pip_count=$(jq -r '.persistent_pip_packages | if type == "array" then length else 0 end' "$options" 2>/dev/null) || pip_count=0
 
     # Install APK packages if configured
     if [ "$apk_count" -gt 0 ] 2>/dev/null; then
-        bashio::log.info "Auto-installing system packages from config..."
+        bashio::log.info "Auto-installing ${apk_count} system package(s) from config..."
 
-        echo "$apk_packages" | jq -r '.[]' 2>/dev/null | while read -r pkg; do
+        jq -r '.persistent_apk_packages[]' "$options" 2>/dev/null | while read -r pkg; do
             if [ -n "$pkg" ]; then
                 bashio::log.info "  Installing: $pkg"
                 /usr/local/bin/persist-install "$pkg" || bashio::log.warning "Failed to install: $pkg"
@@ -274,10 +276,10 @@ auto_install_packages() {
 
     # Install Python packages if configured
     if [ "$pip_count" -gt 0 ] 2>/dev/null; then
-        bashio::log.info "Auto-installing Python packages from config..."
+        bashio::log.info "Auto-installing ${pip_count} Python package(s) from config..."
 
         local all_packages
-        all_packages=$(echo "$pip_packages" | jq -r '.[]' 2>/dev/null | tr '\n' ' ') || true
+        all_packages=$(jq -r '.persistent_pip_packages[]' "$options" 2>/dev/null | tr '\n' ' ') || true
 
         if [ -n "$all_packages" ]; then
             bashio::log.info "  Installing: $all_packages"
