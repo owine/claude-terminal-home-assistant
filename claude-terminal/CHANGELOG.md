@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.3
+
+### 🐛 Bug Fix - Startup crash from package auto-install config parsing
+- **Fix jq parse error crashing startup script**: The `auto_install_packages()` function piped `bashio::config` output directly to `jq` without validating it was valid JSON. Combined with `set -e` and `set -o pipefail`, a jq parse error (`Invalid numeric literal at line 2, column 0`) would terminate the entire startup script — not just skip the package auto-install step.
+  - Add JSON validation gate before parsing config arrays
+  - Add `|| true` pipeline safety to prevent `set -o pipefail` from propagating jq failures
+  - Add `"null"` guard to config value checks (handles missing keys in options.json)
+  - Remove unused second argument from `bashio::config` calls (Bashio ignores it for list types)
+  - Log a clear warning instead of a cryptic jq error when config is unparseable
+
 ## 1.7.2
 
 ### 🔧 Technical - Dependency Updates
