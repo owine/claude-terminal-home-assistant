@@ -16,7 +16,7 @@
   - Updated cli/cli (GitHub CLI) to v2.87.3
   - Updated anthropics/claude-code-action digest to 35a9e02
   - Updated astral-sh/uv to v0.10.5
-  - Updated home-assistant/builder action to v2026
+  - Updated home-assistant/builder action to v2026.02.1
 
 ## 1.7.2
 
