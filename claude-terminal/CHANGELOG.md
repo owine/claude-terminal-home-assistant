@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.4
+
+### 🐛 Bug Fix - Eliminate false warnings for empty package lists
+- **Use jq as sole gatekeeper for package config parsing**: v1.7.3 fixed the startup crash but introduced spurious warnings ("Could not parse persistent_apk_packages config") when no packages were configured. `bashio::config` returns non-JSON for empty lists, so string comparisons against `[]`/`""`/`null` are unreliable.
+  - Replace string-based checks with `jq` array length check (`if type == "array" then length else 0 end`)
+  - Silently skip when config is empty, invalid, or not an array — no warnings for normal operation
+  - Warnings only appear if actual packages fail to install
+
 ## 1.7.3
 
 ### 🐛 Bug Fix - Startup crash from package auto-install config parsing

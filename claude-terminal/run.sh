@@ -250,43 +250,38 @@ setup_persistent_packages() {
 auto_install_packages() {
     local apk_packages
     local pip_packages
+    local apk_count=0
+    local pip_count=0
 
-    # Read config values — bashio::config ignores the second argument,
-    # so we provide our own fallback on failure
+    # Read config values and count entries using jq as the sole gatekeeper.
+    # bashio::config may return non-JSON for empty lists, so we let jq decide.
     apk_packages=$(bashio::config 'persistent_apk_packages') || apk_packages="[]"
     pip_packages=$(bashio::config 'persistent_pip_packages') || pip_packages="[]"
+    apk_count=$(echo "$apk_packages" | jq -r 'if type == "array" then length else 0 end' 2>/dev/null) || apk_count=0
+    pip_count=$(echo "$pip_packages" | jq -r 'if type == "array" then length else 0 end' 2>/dev/null) || pip_count=0
 
     # Install APK packages if configured
-    if [ "$apk_packages" != "[]" ] && [ "$apk_packages" != "" ] && [ "$apk_packages" != "null" ]; then
-        # Validate JSON before parsing (prevents set -e / pipefail from killing startup)
-        if echo "$apk_packages" | jq -e '.' > /dev/null 2>&1; then
-            bashio::log.info "Auto-installing system packages from config..."
+    if [ "$apk_count" -gt 0 ] 2>/dev/null; then
+        bashio::log.info "Auto-installing system packages from config..."
 
-            echo "$apk_packages" | jq -r '.[]' 2>/dev/null | while read -r pkg; do
-                if [ -n "$pkg" ]; then
-                    bashio::log.info "  Installing: $pkg"
-                    /usr/local/bin/persist-install "$pkg" || bashio::log.warning "Failed to install: $pkg"
-                fi
-            done || true
-        else
-            bashio::log.warning "Could not parse persistent_apk_packages config — skipping auto-install"
-        fi
+        echo "$apk_packages" | jq -r '.[]' 2>/dev/null | while read -r pkg; do
+            if [ -n "$pkg" ]; then
+                bashio::log.info "  Installing: $pkg"
+                /usr/local/bin/persist-install "$pkg" || bashio::log.warning "Failed to install: $pkg"
+            fi
+        done || true
     fi
 
     # Install Python packages if configured
-    if [ "$pip_packages" != "[]" ] && [ "$pip_packages" != "" ] && [ "$pip_packages" != "null" ]; then
-        if echo "$pip_packages" | jq -e '.' > /dev/null 2>&1; then
-            bashio::log.info "Auto-installing Python packages from config..."
+    if [ "$pip_count" -gt 0 ] 2>/dev/null; then
+        bashio::log.info "Auto-installing Python packages from config..."
 
-            local all_packages
-            all_packages=$(echo "$pip_packages" | jq -r '.[]' 2>/dev/null | tr '\n' ' ') || true
+        local all_packages
+        all_packages=$(echo "$pip_packages" | jq -r '.[]' 2>/dev/null | tr '\n' ' ') || true
 
-            if [ -n "$all_packages" ]; then
-                bashio::log.info "  Installing: $all_packages"
-                /usr/local/bin/persist-install --python $all_packages || bashio::log.warning "Failed to install Python packages"
-            fi
-        else
-            bashio::log.warning "Could not parse persistent_pip_packages config — skipping auto-install"
+        if [ -n "$all_packages" ]; then
+            bashio::log.info "  Installing: $all_packages"
+            /usr/local/bin/persist-install --python $all_packages || bashio::log.warning "Failed to install Python packages"
         fi
     fi
 }
