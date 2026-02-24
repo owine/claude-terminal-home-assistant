@@ -10,6 +10,12 @@
   - Remove unused second argument from `bashio::config` calls (Bashio ignores it for list types)
   - Log a clear warning instead of a cryptic jq error when config is unparseable
 
+### 🔧 Technical - Dependency Updates
+- **Dependency Updates**
+  - Updated claude-code to v2.1.44
+  - Updated cli/cli (GitHub CLI) to v2.87.3
+  - Updated anthropics/claude-code-action digest to 35a9e02
+
 ## 1.7.2
 
 ### 🔧 Technical - Dependency Updates
