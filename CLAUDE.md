@@ -415,7 +415,7 @@ The app uses **pre-built Docker images** published to GitHub Container Registry 
 #### CI/CD Workflows
 
 **Test Workflow** (`.github/workflows/test.yml`)
-- **Triggers:** Push to any branch, pull requests
+- **Triggers:** Push to main, pull requests
 - **Purpose:** Validate builds without publishing
 - **Builder flags:** `--test --all`
 - **Caching:** Authenticates with ghcr.io to pull `latest` images as Docker layer cache
@@ -597,8 +597,8 @@ This repository uses several GitHub Actions workflows for CI/CD and development 
 ### CI/CD Workflows
 
 **Test Workflow** (`.github/workflows/test.yml`)
-- **Purpose:** Validate builds on every push and pull request
-- **Triggers:** `push`, `pull_request` (any branch)
+- **Purpose:** Validate builds on push to main and pull requests
+- **Triggers:** `push` (main branch only), `pull_request`
 - **What it does:**
   - Authenticates with ghcr.io (`packages: read`) to enable registry-based layer caching
   - Builds images for both amd64 and aarch64 using Home Assistant Builder

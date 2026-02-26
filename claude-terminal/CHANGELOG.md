@@ -6,6 +6,7 @@
 - **Add registry login to test workflow for layer cache reuse**: The test workflow now authenticates with ghcr.io (`packages: read`) so the HA builder can pull `latest` images as `--cache-from` sources. This reuses unchanged Docker layers (apk packages, npm ci, CLI downloads) for ~30-60% faster builds on PRs that only change scripts or config.
   - Added `docker/login-action` step with SHA-pinned digest
   - Added `permissions.packages: read` for least-privilege access
+  - Restricted `push` trigger to `main` branch only to avoid duplicate runs on PRs
   - Updated CLAUDE.md CI documentation to describe caching behavior
 
 ## 1.7.5
