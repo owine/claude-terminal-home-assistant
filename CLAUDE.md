@@ -415,10 +415,11 @@ The app uses **pre-built Docker images** published to GitHub Container Registry 
 #### CI/CD Workflows
 
 **Test Workflow** (`.github/workflows/test.yml`)
-- **Triggers:** Push to any branch, pull requests
+- **Triggers:** Push to main, pull requests
 - **Purpose:** Validate builds without publishing
 - **Builder flags:** `--test --all`
-- **Duration:** ~2 minutes
+- **Caching:** Authenticates with ghcr.io to pull `latest` images as Docker layer cache
+- **Duration:** ~1-2 minutes (faster when cache layers hit)
 - **Output:** Build validation only (no registry push)
 
 **Publish Workflow** (`.github/workflows/publish.yml`)
@@ -596,14 +597,16 @@ This repository uses several GitHub Actions workflows for CI/CD and development 
 ### CI/CD Workflows
 
 **Test Workflow** (`.github/workflows/test.yml`)
-- **Purpose:** Validate builds on every push and pull request
-- **Triggers:** `push`, `pull_request` (any branch)
+- **Purpose:** Validate builds on push to main and pull requests
+- **Triggers:** `push` (main branch only), `pull_request`
 - **What it does:**
+  - Authenticates with ghcr.io (`packages: read`) to enable registry-based layer caching
   - Builds images for both amd64 and aarch64 using Home Assistant Builder
   - Uses `--test` flag (validates build without publishing to registry)
+  - The builder pulls `{image}:latest` as `--cache-from` source, reusing unchanged layers (apk, npm ci, etc.)
   - Fast feedback on PR build compatibility
-- **Duration:** ~2 minutes
-- **Builder version:** 2025.11.0
+- **Duration:** ~1-2 minutes (with cache hits on unchanged layers)
+- **Builder version:** 2026.02.1
 
 **Lint Workflow** (`.github/workflows/lint.yml`)
 - **Purpose:** Enforce code quality standards
