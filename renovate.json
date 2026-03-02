@@ -4,6 +4,7 @@
     "config:best-practices",
     ":semanticCommits"
   ],
+  "timezone": "America/Chicago",
   "labels": [
     "dependencies"
   ],
