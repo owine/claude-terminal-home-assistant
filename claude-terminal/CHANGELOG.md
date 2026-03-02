@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.7
+
+### 🔧 Technical - Dependency Updates
+- **Update claude-code to v2.1.50**: Keep Claude Code CLI dependency current
+- **Update anthropics/claude-code-action**: Two digest bumps for the Claude Code GitHub Actions integration
+- **Update astral-sh/uv to v0.10.7**: Keep uv Python package manager current
+- **Lock file maintenance**: Refresh npm/pip lock files for reproducible builds
+- **Set Renovate timezone to America/Chicago**: Align automated dependency update scheduling to local timezone
+
 ## 1.7.6
 
 ### 🛠️ Improvement - Docker layer caching for CI test builds
