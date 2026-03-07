@@ -27,18 +27,13 @@
 
         #header {
             background: #2d2d2d;
-            padding: 8px 16px;
+            padding: 8px 12px;
             border-bottom: 1px solid #3d3d3d;
             display: flex;
             align-items: center;
-            justify-content: space-between;
+            gap: 6px;
+            flex-wrap: wrap;
             flex-shrink: 0;
-        }
-
-        #header-title {
-            font-size: 14px;
-            font-weight: 500;
-            color: #ccc;
         }
 
         .header-btn {
@@ -267,23 +262,104 @@
         #voice-status.listening {
             color: #d9534f;
         }
+
+        /* Terminal Control Buttons */
+        .ctrl-btn {
+            background: #3d3d3d;
+            color: #ccc;
+            border: 1px solid #555;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            font-family: 'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+            min-width: 32px;
+            text-align: center;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+            flex-shrink: 0;
+        }
+
+        .ctrl-btn:hover {
+            background: #4d4d4d;
+            border-color: #666;
+        }
+
+        .ctrl-btn:active {
+            background: #007acc;
+            border-color: #007acc;
+            color: white;
+        }
+
+        #paste-input {
+            background: #1e1e1e;
+            color: #ccc;
+            border: 1px solid #555;
+            border-radius: 3px;
+            padding: 4px 8px;
+            font-size: 12px;
+            font-family: 'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+            flex: 1;
+            min-width: 80px;
+        }
+
+        #paste-input::placeholder {
+            color: #666;
+        }
+
+        #paste-input:focus {
+            outline: none;
+            border-color: #007acc;
+        }
+
+        #send-btn {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 4px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+
+        #send-btn:hover {
+            background: #005a9e;
+        }
+
+        #send-btn:active {
+            background: #004578;
+        }
     </style>
 </head>
 <body>
     <div id="container">
         <div id="header">
-            <div id="header-title">Claude Terminal Pro - Voice & image support</div>
-            <div style="display: flex; align-items: center; gap: 12px;">
-                <span id="status"></span>
-                <button id="voice-btn" class="header-btn">
-                    <span>🎤</span>
-                    <span>Voice Input</span>
-                </button>
-                <button id="upload-btn" class="header-btn">
-                    <span>📎</span>
-                    <span>Upload Image</span>
-                </button>
-            </div>
+            <!-- Terminal control buttons -->
+            <button class="ctrl-btn" data-input="\x03" title="Ctrl+C (Interrupt)">^C</button>
+            <button class="ctrl-btn" data-input="\x04" title="Ctrl+D (EOF)">^D</button>
+            <button class="ctrl-btn" data-input="\x1a" title="Ctrl+Z (Suspend)">^Z</button>
+            <button class="ctrl-btn" data-input="\x09" title="Tab (Autocomplete)">Tab</button>
+            <button class="ctrl-btn" data-input="\x1b" title="Escape">Esc</button>
+            <button class="ctrl-btn" data-input="\x1b[D" title="Left Arrow">&larr;</button>
+            <button class="ctrl-btn" data-input="\x1b[A" title="Up Arrow">&uarr;</button>
+            <button class="ctrl-btn" data-input="\x1b[B" title="Down Arrow">&darr;</button>
+            <button class="ctrl-btn" data-input="\x1b[C" title="Right Arrow">&rarr;</button>
+
+            <!-- Paste input bar -->
+            <input type="text" id="paste-input" placeholder="Type or paste here..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send">
+            <button id="send-btn" title="Send to terminal">&#9166;</button>
+
+            <!-- Status and existing buttons -->
+            <span id="term-indicator" style="width: 8px; height: 8px; border-radius: 50%; background: #f48771; flex-shrink: 0;" title="Terminal loading..."></span>
+            <span id="status"></span>
+            <button id="voice-btn" class="header-btn" title="Voice Input">
+                <span>&#127908;</span>
+            </button>
+            <button id="upload-btn" class="header-btn" title="Upload Image">
+                <span>&#128206;</span>
+            </button>
         </div>
         <div id="terminal-container">
             <iframe id="terminal-frame" src="about:blank"></iframe>
@@ -302,7 +378,8 @@
             <div id="voice-transcript" contenteditable="true"></div>
             <div class="modal-buttons">
                 <button id="voice-record-btn" class="modal-btn modal-btn-danger">Start Recording</button>
-                <button id="voice-copy-btn" class="modal-btn modal-btn-primary" style="display: none;">Copy Text</button>
+                <button id="voice-send-btn" class="modal-btn modal-btn-primary" style="display: none;">Send to Terminal</button>
+                <button id="voice-copy-btn" class="modal-btn modal-btn-secondary" style="display: none;">Copy Text</button>
                 <button id="voice-close-btn" class="modal-btn modal-btn-secondary">Close</button>
             </div>
         </div>
@@ -333,7 +410,110 @@
             const iframe = document.getElementById('terminal-frame');
             // Use relative path for Home Assistant ingress compatibility
             iframe.src = 'terminal/';
+
+            // Poll for xterm.js term instance to be ready in the iframe
+            iframe.addEventListener('load', () => {
+                const checkTerm = setInterval(() => {
+                    try {
+                        if (iframe.contentWindow?.term) {
+                            clearInterval(checkTerm);
+                            const indicator = document.getElementById('term-indicator');
+                            indicator.style.background = '#4ec9b0';
+                            indicator.title = 'Terminal ready';
+                            console.log('Terminal term instance ready');
+                        }
+                    } catch (e) {
+                        // iframe not accessible yet
+                    }
+                }, 500);
+                // Stop polling after 30s
+                setTimeout(() => clearInterval(checkTerm), 30000);
+            });
         }
+
+        // ========================================
+        // Terminal Input via iframe term API
+        // ========================================
+
+        // Send raw input to the terminal via the iframe's xterm.js instance.
+        // Uses triggerDataEvent(data, false) to bypass bracket paste mode,
+        // so control characters like \x03 (Ctrl+C) are sent raw.
+        function sendInput(data) {
+            const iframe = document.getElementById('terminal-frame');
+            try {
+                const term = iframe.contentWindow?.term;
+                if (!term) {
+                    setStatus('Terminal loading...', 'error');
+                    return false;
+                }
+                term._core.coreService.triggerDataEvent(data, false);
+                return true;
+            } catch (e) {
+                console.error('sendInput failed:', e);
+                setStatus('Cannot send to terminal', 'error');
+                return false;
+            }
+        }
+
+        // Auto-inject text into terminal, with clipboard fallback
+        function injectIntoTerminal(text) {
+            if (sendInput(text)) {
+                setStatus('Sent to terminal: ' + text, 'success');
+                return true;
+            }
+            return false;
+        }
+
+        // ========================================
+        // Control Buttons
+        // ========================================
+
+        const INPUT_MAP = {
+            '\\x03': '\x03',  // Ctrl+C
+            '\\x04': '\x04',  // Ctrl+D
+            '\\x1a': '\x1a',  // Ctrl+Z
+            '\\x09': '\x09',  // Tab
+            '\\x1b': '\x1b',  // Escape
+            '\\x1b[A': '\x1b[A',  // Up
+            '\\x1b[B': '\x1b[B',  // Down
+            '\\x1b[C': '\x1b[C',  // Right
+            '\\x1b[D': '\x1b[D',  // Left
+        };
+
+        document.querySelectorAll('.ctrl-btn').forEach(btn => {
+            btn.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                const rawInput = btn.getAttribute('data-input');
+                const input = INPUT_MAP[rawInput];
+                if (input) {
+                    sendInput(input);
+                }
+            });
+        });
+
+        // Paste input bar
+        const pasteInput = document.getElementById('paste-input');
+        const sendBtn = document.getElementById('send-btn');
+
+        function sendPasteInput() {
+            const text = pasteInput.value;
+            if (text) {
+                sendInput(text);
+                pasteInput.value = '';
+            }
+        }
+
+        sendBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            sendPasteInput();
+        });
+
+        pasteInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendPasteInput();
+            }
+        });
 
         const status = document.getElementById('status');
         const uploadBtn = document.getElementById('upload-btn');
@@ -384,76 +564,16 @@
 
                 if (result.success) {
                     const filePath = result.path;
-
-                    // Display full path persistently with click-to-copy functionality
-                    setStatus(`📋 ${filePath} (click here to copy again)`, 'success', true);
                     console.log('Image uploaded:', filePath);
 
-                    // Make status clickable to select text (works in iframes)
-                    status.style.cursor = 'pointer';
-                    status.style.userSelect = 'text';
-
-                    status.onclick = () => {
-                        // Try modern clipboard API first
-                        if (navigator.clipboard && navigator.clipboard.writeText) {
-                            navigator.clipboard.writeText(filePath)
-                                .then(() => {
-                                    const originalText = status.textContent;
-                                    setStatus('✓ Copied! Now paste in terminal (Cmd+V or Ctrl+V)', 'success', false);
-                                    highlightTerminal();
-                                    setTimeout(() => {
-                                        setStatus(originalText, 'success', true);
-                                    }, 3000);
-                                })
-                                .catch(() => {
-                                    selectText();
-                                });
+                    // Try injecting path directly into terminal, fall back to clipboard
+                    if (!injectIntoTerminal(filePath)) {
+                        const copied = await copyToClipboard(filePath);
+                        if (copied) {
+                            setStatus('Copied path: ' + filePath + ' — paste in terminal', 'success');
                         } else {
-                            // Fallback: select the text so user can copy with Cmd+C
-                            selectText();
+                            setStatus('Path: ' + filePath, 'success', true);
                         }
-                    };
-
-                    // Auto-copy to clipboard and try to paste into terminal
-                    autoCopyAndPaste(filePath);
-
-                    // Helper to select text (works in all contexts)
-                    function selectText() {
-                        const range = document.createRange();
-                        const selection = window.getSelection();
-
-                        // Clear any existing selection
-                        selection.removeAllRanges();
-
-                        // Create a temporary text node with just the path
-                        const tempDiv = document.createElement('div');
-                        tempDiv.style.position = 'absolute';
-                        tempDiv.style.left = '-9999px';
-                        tempDiv.textContent = result.path;
-                        document.body.appendChild(tempDiv);
-
-                        // Select the path text
-                        range.selectNodeContents(tempDiv);
-                        selection.addRange(range);
-
-                        // Try execCommand as fallback for copying
-                        try {
-                            const copied = document.execCommand('copy');
-                            if (copied) {
-                                setStatus('✓ Copied! Now paste in terminal (Cmd+V or Ctrl+V)', 'success', false);
-                            } else {
-                                setStatus('✓ Selected! Press Cmd+C to copy, then paste in terminal', 'success', false);
-                            }
-                        } catch (err) {
-                            setStatus('✓ Selected! Press Cmd+C to copy, then paste in terminal', 'success', false);
-                        }
-
-                        // Clean up and restore message
-                        setTimeout(() => {
-                            document.body.removeChild(tempDiv);
-                            selection.removeAllRanges();
-                            setStatus(`📋 ${result.path} (click here to copy again)`, 'success', true);
-                        }, 3000);
                     }
                 } else {
                     setStatus(result.error || 'Upload failed', 'error');
@@ -552,85 +672,6 @@
             }
         });
 
-        // Visual highlight to indicate where to paste
-        function highlightTerminal() {
-            const terminalContainer = document.getElementById('terminal-container');
-            const originalBorder = terminalContainer.style.border;
-
-            // Pulse the terminal border to draw attention
-            terminalContainer.style.border = '3px solid #007acc';
-            terminalContainer.style.transition = 'border 0.3s ease';
-
-            // Animate border color
-            let pulseCount = 0;
-            const pulseInterval = setInterval(() => {
-                pulseCount++;
-                if (pulseCount % 2 === 0) {
-                    terminalContainer.style.border = '3px solid #007acc';
-                } else {
-                    terminalContainer.style.border = '3px solid #00a8ff';
-                }
-
-                if (pulseCount >= 6) {
-                    clearInterval(pulseInterval);
-                    // Restore original after animation
-                    setTimeout(() => {
-                        terminalContainer.style.border = originalBorder;
-                    }, 300);
-                }
-            }, 300);
-        }
-
-        // Auto-copy path and attempt to paste into terminal
-        async function autoCopyAndPaste(filePath) {
-            const iframe = document.getElementById('terminal-frame');
-
-            // Step 1: Copy to clipboard
-            const copied = await copyToClipboard(filePath);
-
-            if (copied) {
-                // Step 2: Focus the terminal iframe
-                try {
-                    iframe.contentWindow.focus();
-                    iframe.focus();
-
-                    // Step 3: Try to send the text directly
-                    // Note: This might not work due to iframe security, but we'll try
-                    setTimeout(() => {
-                        // Try to trigger a paste event in the iframe
-                        const pasteEvent = new ClipboardEvent('paste', {
-                            clipboardData: new DataTransfer(),
-                            bubbles: true,
-                            cancelable: true
-                        });
-
-                        // Try to add the text to the clipboard data
-                        try {
-                            pasteEvent.clipboardData.setData('text/plain', filePath);
-                        } catch (e) {
-                            console.log('Cannot set clipboard data in event:', e);
-                        }
-
-                        iframe.contentWindow.document.dispatchEvent(pasteEvent);
-
-                        // Alternative: Try to send keyboard events
-                        sendTextToTerminal(filePath);
-
-                        // Make it clear that manual paste is required
-                        setStatus(`✓ Copied! Click terminal and press Cmd+V (Mac) or Ctrl+V (Windows) to paste`, 'success', true);
-
-                        // Add visual highlight to terminal to indicate where to paste
-                        highlightTerminal();
-                    }, 100);
-
-                } catch (err) {
-                    console.log('Cannot access iframe for auto-paste:', err);
-                    setStatus(`✓ Copied! Click terminal and press Cmd+V (Mac) or Ctrl+V (Windows) to paste`, 'success', true);
-                    highlightTerminal();
-                }
-            }
-        }
-
         // Helper to copy text to clipboard
         async function copyToClipboard(text) {
             if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -665,45 +706,6 @@
             }
         }
 
-        // Try to send text to terminal by simulating keyboard input
-        function sendTextToTerminal(text) {
-            const iframe = document.getElementById('terminal-frame');
-
-            // Try to send each character as a keyboard event
-            // This might not work due to iframe restrictions, but worth trying
-            try {
-                const iframeDoc = iframe.contentWindow.document;
-                const terminal = iframeDoc.querySelector('.xterm-helper-textarea') ||
-                               iframeDoc.querySelector('textarea') ||
-                               iframeDoc.body;
-
-                if (terminal) {
-                    // Try to insert text
-                    if (terminal.value !== undefined) {
-                        terminal.value = text;
-                        terminal.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-
-                    // Try to send keyboard events for each character
-                    for (const char of text) {
-                        const keyEvent = new KeyboardEvent('keypress', {
-                            key: char,
-                            char: char,
-                            keyCode: char.charCodeAt(0),
-                            bubbles: true
-                        });
-                        terminal.dispatchEvent(keyEvent);
-                    }
-
-                    console.log('Attempted to send text to terminal');
-                }
-            } catch (err) {
-                console.log('Cannot send keyboard events to iframe:', err);
-                // This is expected due to cross-origin restrictions
-                // The clipboard copy is the fallback
-            }
-        }
-
         // Prevent default drag behavior on iframe
         window.addEventListener('load', () => {
             const iframe = document.getElementById('terminal-frame');
@@ -719,6 +721,7 @@
         const voiceModal = document.getElementById('voice-modal');
         const voiceRecordBtn = document.getElementById('voice-record-btn');
         const voiceCopyBtn = document.getElementById('voice-copy-btn');
+        const voiceSendBtn = document.getElementById('voice-send-btn');
         const voiceCloseBtn = document.getElementById('voice-close-btn');
         const voiceTranscript = document.getElementById('voice-transcript');
         const voiceStatus = document.getElementById('voice-status');
@@ -748,6 +751,7 @@
             voiceTranscript.textContent = '';
             voiceStatus.textContent = '';
             voiceCopyBtn.style.display = 'none';
+            voiceSendBtn.style.display = 'none';
         });
 
         // Close voice modal
@@ -867,12 +871,28 @@
             voiceTranscript.classList.remove('listening');
 
             if (voiceTranscript.textContent.trim()) {
+                voiceSendBtn.style.display = 'inline-block';
                 voiceCopyBtn.style.display = 'inline-block';
-                voiceStatus.textContent = '✓ Transcript ready! Edit if needed, then copy.';
+                voiceStatus.textContent = 'Transcript ready! Edit if needed, then send or copy.';
             }
 
             console.log('Speech recognition stopped');
         }
+
+        // Send transcript to terminal
+        voiceSendBtn.addEventListener('click', () => {
+            const text = voiceTranscript.textContent.trim();
+            if (!text) {
+                voiceStatus.textContent = 'No text to send';
+                return;
+            }
+            if (sendInput(text)) {
+                voiceStatus.textContent = 'Sent to terminal!';
+                voiceStatus.className = 'success';
+            } else {
+                voiceStatus.textContent = 'Terminal not ready. Use Copy Text instead.';
+            }
+        });
 
         // Copy transcript to clipboard
         voiceCopyBtn.addEventListener('click', async () => {
@@ -932,9 +952,9 @@
                 voiceModal.classList.remove('active');
             }
 
-            // Enter to copy (if text exists and not recording)
+            // Enter to send to terminal (if text exists and not recording)
             if (e.key === 'Enter' && !isRecording && voiceTranscript.textContent.trim()) {
-                voiceCopyBtn.click();
+                voiceSendBtn.click();
             }
 
             // Space to start/stop recording (if not editing transcript)
