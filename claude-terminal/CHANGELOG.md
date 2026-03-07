@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.8
+
+### 🐛 Bug Fix - Fix ha-mcp failing on Home Assistant OS (musl/Alpine Linux)
+- **Pre-install ha-mcp at build time with locked dependencies**: The `ha-mcp` MCP server failed to start on Home Assistant OS because `uv`'s default `first-index` resolution strategy found `pydantic` on the HA musllinux wheel index (which lacks v2.12.5) and refused to fall through to PyPI.
+  - Root cause: HA base image sets `UV_EXTRA_INDEX_URL` for the musllinux wheel index. When `uv` found `pydantic` there (wrong version), its `first-index` strategy blocked checking PyPI
+  - Added `claude-terminal/ha-mcp/pyproject.toml` with pinned `ha-mcp==6.7.2` and `index-strategy = "unsafe-best-match"`
+  - Added `claude-terminal/ha-mcp/uv.lock` pinning all 75 transitive dependencies with exact versions and SHA256 hashes
+  - Dockerfile now runs `uv sync --locked` at build time, eliminating runtime dependency resolution entirely
+  - `setup-ha-mcp.sh` now references the pre-installed binary (`/opt/ha-mcp/.venv/bin/ha-mcp`) instead of `uvx ha-mcp@latest`
+  - Container startup is faster (no Python 3.14 download + 71 package resolution on every fresh start)
+  - Renovate will automatically track ha-mcp and all transitive dependency updates via the `uv` manager
+  - Pre-configured `ENABLE_SKILLS=true` and `ENABLE_SKILLS_AS_TOOLS=true` env vars for upcoming bundled HA best-practice skills (no-op until next ha-mcp stable release ships the feature)
+
 ## 1.7.7
 
 ### 🔧 Technical - Dependency Updates

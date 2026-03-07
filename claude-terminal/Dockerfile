@@ -203,6 +203,15 @@ RUN set -eux; \
     # Verify installation
     gh --version
 
+# Pre-install ha-mcp (Home Assistant MCP Server) from locked dependencies
+# Uses uv.lock for deterministic builds with pinned transitive dependencies
+# The index-strategy in pyproject.toml allows uv to find packages across both
+# the HA musllinux wheel index (UV_EXTRA_INDEX_URL) and PyPI
+COPY ha-mcp/pyproject.toml ha-mcp/uv.lock /opt/ha-mcp/
+RUN cd /opt/ha-mcp \
+    && uv sync --locked --no-dev --no-editable \
+    && echo "ha-mcp installed at /opt/ha-mcp/.venv/bin/ha-mcp"
+
 # Create directory for Claude configuration and set working directory
 RUN mkdir -p /config/claude-config
 WORKDIR /config

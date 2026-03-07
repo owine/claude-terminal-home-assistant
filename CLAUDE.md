@@ -70,6 +70,9 @@ curl -X GET http://localhost:7681/
 - **build.yaml** - Multi-architecture build configuration (amd64, aarch64)
 - **run.sh** - Main startup script with credential management and ttyd terminal
 - **scripts/** - Modular credential management scripts
+- **ha-mcp/** - Home Assistant MCP server locked dependencies
+  - **pyproject.toml** - Pins ha-mcp version, configures `index-strategy = "unsafe-best-match"`
+  - **uv.lock** - **CRITICAL:** Locks all 75 transitive dependencies with exact versions and SHA256 hashes
 - **image-service/** - Express.js server for image uploads and terminal proxy
   - **server.js** - Main service (port 7680)
   - **package.json** - Node.js dependencies (express 5.x, multer 2.x, http-proxy-middleware 3.x)
@@ -140,6 +143,7 @@ The app exposes these configuration options to users:
 4. **Service Integration**: Home Assistant ingress support with panel icon
 5. **Multi-Architecture**: Supports amd64, aarch64 platforms
 6. **Package Management**: Persistent package installation via `persist-install` script
+7. **Home Assistant MCP**: Pre-installed [ha-mcp](https://github.com/homeassistant-ai/ha-mcp) server with locked dependencies for deterministic builds
 
 ### Credential System
 The app implements a sophisticated credential management system:
@@ -162,7 +166,7 @@ The main startup script (`run.sh`) orchestrates the app initialization:
 3. **Install Tools** (`install_tools`) - Install ttyd, jq, curl, tmux via apk
 4. **Session Picker** (`setup_session_picker`) - Copy script to `/usr/local/bin/claude-session-picker`
 5. **Persistent Packages** (`setup_persistent_packages`) - Install persist-install command, auto-install configured packages
-6. **HA MCP** (`setup_ha_mcp`) - Configure Home Assistant MCP server integration (if enabled)
+6. **HA MCP** (`setup_ha_mcp`) - Register pre-installed ha-mcp binary with Claude Code (if enabled)
 7. **Image Service** (`start_image_service`) - Start Express.js on port 7680 with WebSocket proxy
 8. **tmux Session** (`setup_tmux_session`) - Create detached tmux session BEFORE ttyd starts
 9. **Web Terminal** - Launch ttyd on port 7681, attach to existing tmux session
@@ -306,8 +310,9 @@ During design discussions and requirements gathering, create a running summary d
 - App targets Home Assistant OS (Alpine Linux 3.23 base)
 - Must handle credential persistence across container restarts
 - Requires multi-architecture compatibility (amd64, aarch64)
-- **CRITICAL:** `image-service/package-lock.json` must be committed for deterministic builds
-- Docker builds require `--no-cache` when npm dependencies change
+- **CRITICAL:** `image-service/package-lock.json` must be committed for deterministic npm builds
+- **CRITICAL:** `ha-mcp/uv.lock` must be committed for deterministic ha-mcp builds
+- Docker builds require `--no-cache` when npm or Python dependencies change
 
 ## Release Management
 
@@ -578,6 +583,40 @@ package-lock.json
 # Exception: image-service lockfile needed for Docker builds
 !claude-terminal/image-service/package-lock.json
 ```
+
+### CRITICAL: ha-mcp/uv.lock Requirement
+
+The **ha-mcp** directory contains a `pyproject.toml` and `uv.lock` that pin the Home Assistant MCP server and all 75 transitive dependencies for deterministic builds.
+
+**Why uv.lock is critical:**
+- The HA base image sets `UV_EXTRA_INDEX_URL` pointing to a musllinux wheel index
+- `uv`'s default `first-index` strategy can find packages on the wrong index (e.g., pydantic on musllinux but wrong version) and refuse to check PyPI
+- `pyproject.toml` sets `index-strategy = "unsafe-best-match"` to resolve across both indexes
+- `uv.lock` pins exact versions with SHA256 hashes for all dependencies
+- The Dockerfile runs `uv sync --locked` at build time — no runtime dependency resolution
+
+**When Updating ha-mcp Dependencies**
+
+**If you modify `ha-mcp/pyproject.toml`:**
+
+1. **Regenerate the lockfile** (must be done inside the HA base image or equivalent musl environment):
+   ```bash
+   docker run --rm --entrypoint bash \
+     -v $(pwd)/claude-terminal/ha-mcp:/opt/ha-mcp \
+     ghcr.io/home-assistant/aarch64-base:3.23 -c \
+     'apk add --no-cache curl > /dev/null 2>&1 && \
+      curl -fsSL https://astral.sh/uv/install.sh | sh > /dev/null 2>&1 && \
+      export PATH="$HOME/.local/bin:$PATH" && \
+      cd /opt/ha-mcp && uv lock'
+   ```
+
+2. **Commit the lockfile:**
+   ```bash
+   git add claude-terminal/ha-mcp/uv.lock
+   git commit -m "chore: update ha-mcp dependencies"
+   ```
+
+**NOTE:** Renovate automatically tracks `pyproject.toml` + `uv.lock` via its built-in `uv` manager. Manual updates are rarely needed.
 
 ### Dependency Update Automation
 

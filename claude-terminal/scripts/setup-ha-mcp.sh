@@ -5,6 +5,9 @@
 
 set -e
 
+# ha-mcp is pre-installed at build time via uv sync --locked
+HA_MCP_BIN="/opt/ha-mcp/.venv/bin/ha-mcp"
+
 # Check if ha-mcp setup should be enabled
 configure_ha_mcp_server() {
     local enable_ha_mcp
@@ -24,9 +27,10 @@ configure_ha_mcp_server() {
         return 0
     fi
 
-    # Check if uv/uvx is available
-    if ! command -v uvx &> /dev/null; then
-        bashio::log.warning "uvx not found - ha-mcp setup skipped"
+    # Verify pre-installed ha-mcp binary exists
+    if [ ! -x "$HA_MCP_BIN" ]; then
+        bashio::log.warning "ha-mcp binary not found at ${HA_MCP_BIN} - setup skipped"
+        bashio::log.warning "This may indicate a build issue. Try reinstalling the add-on."
         return 0
     fi
 
@@ -37,21 +41,25 @@ configure_ha_mcp_server() {
     # Remove existing ha-mcp configuration if present (to ensure clean state)
     claude mcp remove home-assistant 2>/dev/null || true
 
-    # Add ha-mcp as MCP server
-    # Using stdio transport with uvx to run ha-mcp
+    # Add ha-mcp as MCP server using pre-installed binary
     # Environment variables:
     #   HOMEASSISTANT_URL: Internal Supervisor API endpoint
     #   HOMEASSISTANT_TOKEN: Supervisor token for authentication
+    # ENABLE_SKILLS: Serve bundled HA best-practice skills as MCP resources (skill:// URIs)
+    # ENABLE_SKILLS_AS_TOOLS: Also expose skills as tools for broader client compatibility
+    # These are no-ops on ha-mcp <6.8 (pydantic_settings extra="allow" silently ignores them)
     if claude mcp add home-assistant \
         --env "HOMEASSISTANT_URL=http://supervisor/core" \
         --env "HOMEASSISTANT_TOKEN=${SUPERVISOR_TOKEN}" \
-        -- uvx ha-mcp@latest; then
+        --env "ENABLE_SKILLS=true" \
+        --env "ENABLE_SKILLS_AS_TOOLS=true" \
+        -- "$HA_MCP_BIN"; then
         bashio::log.info "ha-mcp configured successfully!"
         bashio::log.info "Claude Code now has access to Home Assistant via MCP"
         bashio::log.info "Available tools: entity control, automations, scripts, history, and more"
     else
         bashio::log.warning "Failed to configure ha-mcp - continuing without MCP integration"
-        bashio::log.warning "You can manually run: claude mcp add home-assistant --env HOMEASSISTANT_URL=http://supervisor/core --env HOMEASSISTANT_TOKEN=\$SUPERVISOR_TOKEN -- uvx ha-mcp@latest"
+        bashio::log.warning "You can manually run: claude mcp add home-assistant --env HOMEASSISTANT_URL=http://supervisor/core --env HOMEASSISTANT_TOKEN=\$SUPERVISOR_TOKEN -- ${HA_MCP_BIN}"
     fi
 }
 
