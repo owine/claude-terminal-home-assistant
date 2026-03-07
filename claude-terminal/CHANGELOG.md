@@ -1,38 +1,14 @@
 # Changelog
 
-## 1.8.3
+## 1.7.9
 
-### 🐛 Bug Fix - Handle ttyd binary WebSocket frames and subprotocol
-- **Root cause**: ttyd sends ALL messages as **binary** WebSocket frames (`LWS_WRITE_BINARY`), but the auth handshake code checked `typeof event.data === 'string'` which is always false for binary frames (they arrive as `ArrayBuffer`/`Blob`). The auth handshake never fired, so ttyd stayed in `STATE_INIT` and dropped all input.
-- **Second issue**: ttyd registers a `"tty"` WebSocket subprotocol. Connecting without it may prevent routing to ttyd's terminal handler.
-- **Fix**: Connect with `new WebSocket(url, ['tty'])`, set `binaryType = 'arraybuffer'`, and trigger auth handshake on any first message regardless of data type.
+### 🔧 Technical - Code Quality & Dependency Updates
+- **Resolve shellcheck warnings across shell scripts**: Fixed 18 shellcheck warnings (SC2155, SC2124) across claude-session-picker.sh, health-check.sh, install-ha-cli.sh, and persistent-packages.sh
+- **Lock file maintenance**: Updated @types/node 25.3.3 → 25.3.5, refreshed uv.lock for ha-mcp dependencies
 
-## 1.8.2
-
-### 🐛 Bug Fix - Complete ttyd WebSocket authentication handshake
-- **Root cause**: ttyd's WebSocket protocol requires clients to send a JSON auth message (`{AuthToken, columns, rows}`) before accepting input. Without this handshake, the client stays in `STATE_INIT` and all `'0'`-prefixed input messages are silently dropped. The control WebSocket connected successfully (green indicator) but never completed this handshake, so every button tap and paste input was discarded by ttyd.
-- **Fix**: The control WebSocket now responds to ttyd's first server message with the required auth JSON. Uses oversized terminal dimensions (9999×9999) so tmux's "smallest client wins" sizing keeps the iframe's real dimensions.
-
-## 1.8.1
-
-### 🐛 Bug Fix - Mobile control buttons not responding to taps
-- **Fix touch event handling**: Replaced `touchstart`/`mousedown`/`click` event listeners with unified `pointerdown` handler. The previous `touchstart` with `preventDefault()` broke the synthetic click event chain on iOS/mobile browsers, causing buttons and paste input to silently fail.
-- **WebSocket connection indicator**: Added a green/red dot in the header bar showing real-time WebSocket connection status, so users can see at a glance whether terminal input is active.
-- **Diagnostic logging**: Added console.log messages for WebSocket connect/disconnect and input sends to aid debugging on mobile devices.
-
-### 🔧 Technical - Dependency updates
-- Updated `@types/node` 25.3.3 → 25.3.5
-- Refreshed `uv.lock` for ha-mcp dependencies
-
-## 1.8.0
-
-### New Feature - Mobile Terminal Controls
-- **Control buttons**: Added ^C, ^D, ^Z, Tab, Esc, and arrow key buttons to the header bar for mobile/touch devices that lack physical keyboards
-- **Paste input bar**: Text input field in the header for typing or pasting text directly into the terminal, with mobile-optimized `enterkeyhint="send"`
-- **Parallel WebSocket**: Outer page connects to ttyd via its own WebSocket for reliable input injection (both connections share the same tmux session), with visibility-aware reconnection to save mobile battery
-- **Auto-inject image paths**: Uploaded image file paths are now sent directly to the terminal instead of relying on clipboard copy/paste
-- **Voice Send to Terminal**: Voice transcripts can be sent directly to the terminal via a new "Send to Terminal" button in the voice modal
-- **Responsive layout**: Header uses flex-wrap to adapt from single row (desktop) to multi-row (mobile)
+### Reverted - Mobile Terminal Controls (moved to feature branch)
+- Mobile terminal controls (v1.8.0-1.8.3) reverted from main due to ttyd WebSocket protocol incompatibilities requiring further development
+- All work preserved on `feature/mobile-terminal-controls` branch
 
 ## 1.7.8
 
