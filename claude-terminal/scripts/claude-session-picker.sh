@@ -86,7 +86,8 @@ show_return_message() {
 
 # Run Claude and return to picker when done (no exec)
 run_claude_new() {
-    local flags=$(get_claude_flags)
+    local flags
+    flags=$(get_claude_flags)
     echo "🚀 Starting new Claude session..."
     sleep 1
     if [ -n "$flags" ]; then
@@ -98,7 +99,8 @@ run_claude_new() {
 }
 
 run_claude_continue() {
-    local flags=$(get_claude_flags)
+    local flags
+    flags=$(get_claude_flags)
     echo "⏩ Continuing most recent conversation..."
     sleep 1
     if [ -n "$flags" ]; then
@@ -110,7 +112,8 @@ run_claude_continue() {
 }
 
 run_claude_resume() {
-    local flags=$(get_claude_flags)
+    local flags
+    flags=$(get_claude_flags)
     echo "📋 Opening conversation list for selection..."
     sleep 1
     if [ -n "$flags" ]; then
@@ -122,7 +125,8 @@ run_claude_resume() {
 }
 
 run_claude_custom() {
-    local base_flags=$(get_claude_flags)
+    local base_flags
+    base_flags=$(get_claude_flags)
     echo ""
     echo "Enter your Claude command (e.g., 'claude --help' or 'claude -p \"hello\"'):"
     echo "Available flags: -c (continue), -r (resume), -p (print), --model,"

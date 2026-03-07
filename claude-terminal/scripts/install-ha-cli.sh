@@ -11,7 +11,8 @@ BASE_URL="https://github.com/home-assistant/cli/releases/download/${HA_VERSION}"
 
 # Detect architecture
 detect_arch() {
-    local machine=$(uname -m)
+    local machine
+    machine=$(uname -m)
 
     case "$machine" in
         x86_64)
@@ -38,7 +39,8 @@ detect_arch() {
 
 # Install ha CLI binary
 install_ha_cli() {
-    local arch=$(detect_arch)
+    local arch
+    arch=$(detect_arch)
     local download_url="${BASE_URL}/ha_${arch}"
     local target_path="${PERSIST_BIN}/ha"
 

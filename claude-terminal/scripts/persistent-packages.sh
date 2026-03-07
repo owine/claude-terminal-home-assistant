@@ -50,7 +50,7 @@ setup_environment() {
 
 # Install APK package to persistent storage (via bind mount trick)
 persist_apk_install() {
-    local packages="$@"
+    local packages="$*"
 
     if [ -z "$packages" ]; then
         bashio::log.error "No packages specified"
@@ -65,7 +65,8 @@ persist_apk_install() {
     # Copy installed binaries to persistent storage
     for pkg in $packages; do
         # Find which files were installed by this package
-        local pkg_files=$(apk info -L "$pkg" 2>/dev/null || echo "")
+        local pkg_files
+        pkg_files=$(apk info -L "$pkg" 2>/dev/null || echo "")
 
         if [ -n "$pkg_files" ]; then
             echo "$pkg_files" | while read -r file; do
@@ -92,7 +93,7 @@ persist_apk_install() {
 
 # Install Python package to persistent virtual environment
 persist_pip_install() {
-    local packages="$@"
+    local packages="$*"
 
     if [ -z "$packages" ]; then
         bashio::log.error "No packages specified"
@@ -111,13 +112,16 @@ persist_pip_install() {
 
 # Auto-install packages from configuration
 auto_install_packages() {
-    local apk_packages=$(bashio::config 'persistent_apk_packages' '[]')
-    local pip_packages=$(bashio::config 'persistent_pip_packages' '[]')
+    local apk_packages
+    apk_packages=$(bashio::config 'persistent_apk_packages' '[]')
+    local pip_packages
+    pip_packages=$(bashio::config 'persistent_pip_packages' '[]')
 
     # Parse and install APK packages
     if [ "$apk_packages" != "[]" ] && [ "$apk_packages" != "" ]; then
         bashio::log.info "Auto-installing APK packages from config..."
-        local pkg_list=$(echo "$apk_packages" | jq -r '.[]' | tr '\n' ' ')
+        local pkg_list
+        pkg_list=$(echo "$apk_packages" | jq -r '.[]' | tr '\n' ' ')
         if [ -n "$pkg_list" ]; then
             persist_apk_install $pkg_list
         fi
@@ -126,7 +130,8 @@ auto_install_packages() {
     # Parse and install Python packages
     if [ "$pip_packages" != "[]" ] && [ "$pip_packages" != "" ]; then
         bashio::log.info "Auto-installing Python packages from config..."
-        local pkg_list=$(echo "$pip_packages" | jq -r '.[]' | tr '\n' ' ')
+        local pkg_list
+        pkg_list=$(echo "$pip_packages" | jq -r '.[]' | tr '\n' ' ')
         if [ -n "$pkg_list" ]; then
             persist_pip_install $pkg_list
         fi
