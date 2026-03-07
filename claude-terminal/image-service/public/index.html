@@ -437,18 +437,19 @@
             };
 
             controlWs.onmessage = (event) => {
-                // ttyd protocol: first char is message type
-                // '0' = output (ignore, iframe handles display)
-                // '1' = set window title (ignore)
-                // '2' = set preferences (ignore)
-                // We must read messages to keep the WebSocket alive,
-                // but don't need to process them
+                // ttyd WebSocket protocol requires an auth handshake before accepting input:
+                //   1. Server sends preferences (type '2')
+                //   2. Client MUST respond with JSON: {AuthToken, columns, rows}
+                //   3. Only then does ttyd accept '0'-prefixed input (STATE_READY)
+                // Without step 2, ttyd stays in STATE_INIT and silently drops all input.
                 if (typeof event.data === 'string' && event.data.length > 0) {
                     const msgType = event.data[0];
-                    // Log first message type for diagnostics
-                    if (!controlWs._firstMsg) {
-                        console.log('Control WebSocket first message type:', msgType);
-                        controlWs._firstMsg = true;
+                    if (!controlWs._authenticated) {
+                        // Complete ttyd handshake — use large size so tmux uses iframe's real size
+                        const authMsg = JSON.stringify({AuthToken: '', columns: 9999, rows: 9999});
+                        controlWs.send(authMsg);
+                        controlWs._authenticated = true;
+                        console.log('Control WebSocket: completed ttyd auth handshake');
                     }
                 }
             };
@@ -476,10 +477,13 @@
         }
 
         function sendInput(data) {
-            if (controlWs && controlWs.readyState === WebSocket.OPEN) {
+            if (controlWs && controlWs.readyState === WebSocket.OPEN && controlWs._authenticated) {
                 // ttyd protocol: '0' prefix = client input
                 controlWs.send('0' + data);
                 console.log('Sent input:', JSON.stringify(data));
+            } else if (controlWs && controlWs.readyState === WebSocket.OPEN) {
+                console.warn('Control WebSocket connected but auth handshake not complete');
+                setStatus('Terminal connecting...', 'error');
             } else {
                 console.warn('Control WebSocket not open, state:', controlWs?.readyState);
                 setStatus('Terminal not connected', 'error');

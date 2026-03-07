@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.2
+
+### 🐛 Bug Fix - Complete ttyd WebSocket authentication handshake
+- **Root cause**: ttyd's WebSocket protocol requires clients to send a JSON auth message (`{AuthToken, columns, rows}`) before accepting input. Without this handshake, the client stays in `STATE_INIT` and all `'0'`-prefixed input messages are silently dropped. The control WebSocket connected successfully (green indicator) but never completed this handshake, so every button tap and paste input was discarded by ttyd.
+- **Fix**: The control WebSocket now responds to ttyd's first server message with the required auth JSON. Uses oversized terminal dimensions (9999×9999) so tmux's "smallest client wins" sizing keeps the iframe's real dimensions.
+
 ## 1.8.1
 
 ### 🐛 Bug Fix - Mobile control buttons not responding to taps
