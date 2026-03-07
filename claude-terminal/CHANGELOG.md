@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.8.1
+
+### 🐛 Bug Fix - Mobile control buttons not responding to taps
+- **Fix touch event handling**: Replaced `touchstart`/`mousedown`/`click` event listeners with unified `pointerdown` handler. The previous `touchstart` with `preventDefault()` broke the synthetic click event chain on iOS/mobile browsers, causing buttons and paste input to silently fail.
+- **WebSocket connection indicator**: Added a green/red dot in the header bar showing real-time WebSocket connection status, so users can see at a glance whether terminal input is active.
+- **Diagnostic logging**: Added console.log messages for WebSocket connect/disconnect and input sends to aid debugging on mobile devices.
+
+### 🔧 Technical - Dependency updates
+- Updated `@types/node` 25.3.3 → 25.3.5
+- Refreshed `uv.lock` for ha-mcp dependencies
+
 ## 1.8.0
 
 ### New Feature - Mobile Terminal Controls
