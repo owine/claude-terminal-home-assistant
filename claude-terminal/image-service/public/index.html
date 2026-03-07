@@ -428,7 +428,8 @@
             const wsUrl = `${protocol}//${location.host}${basePath}terminal/ws`;
 
             console.log('Control WebSocket connecting to:', wsUrl);
-            controlWs = new WebSocket(wsUrl);
+            controlWs = new WebSocket(wsUrl, ['tty']);
+            controlWs.binaryType = 'arraybuffer';
 
             controlWs.onopen = () => {
                 console.log('Control WebSocket connected');
@@ -437,20 +438,18 @@
             };
 
             controlWs.onmessage = (event) => {
-                // ttyd WebSocket protocol requires an auth handshake before accepting input:
-                //   1. Server sends preferences (type '2')
+                // ttyd sends ALL messages as BINARY frames (LWS_WRITE_BINARY).
+                // Protocol requires auth handshake before accepting input:
+                //   1. Server sends preferences (binary frame, first byte = 0x32 = '2')
                 //   2. Client MUST respond with JSON: {AuthToken, columns, rows}
                 //   3. Only then does ttyd accept '0'-prefixed input (STATE_READY)
-                // Without step 2, ttyd stays in STATE_INIT and silently drops all input.
-                if (typeof event.data === 'string' && event.data.length > 0) {
-                    const msgType = event.data[0];
-                    if (!controlWs._authenticated) {
-                        // Complete ttyd handshake — use large size so tmux uses iframe's real size
-                        const authMsg = JSON.stringify({AuthToken: '', columns: 9999, rows: 9999});
-                        controlWs.send(authMsg);
-                        controlWs._authenticated = true;
-                        console.log('Control WebSocket: completed ttyd auth handshake');
-                    }
+                if (!controlWs._authenticated) {
+                    // Complete ttyd handshake on first message from server
+                    const authMsg = JSON.stringify({AuthToken: '', columns: 9999, rows: 9999});
+                    controlWs.send(authMsg);
+                    controlWs._authenticated = true;
+                    updateWsIndicator(true);
+                    console.log('Control WebSocket: completed ttyd auth handshake');
                 }
             };
 

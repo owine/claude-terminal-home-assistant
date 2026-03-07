@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.3
+
+### 🐛 Bug Fix - Handle ttyd binary WebSocket frames and subprotocol
+- **Root cause**: ttyd sends ALL messages as **binary** WebSocket frames (`LWS_WRITE_BINARY`), but the auth handshake code checked `typeof event.data === 'string'` which is always false for binary frames (they arrive as `ArrayBuffer`/`Blob`). The auth handshake never fired, so ttyd stayed in `STATE_INIT` and dropped all input.
+- **Second issue**: ttyd registers a `"tty"` WebSocket subprotocol. Connecting without it may prevent routing to ttyd's terminal handler.
+- **Fix**: Connect with `new WebSocket(url, ['tty'])`, set `binaryType = 'arraybuffer'`, and trigger auth handshake on any first message regardless of data type.
+
 ## 1.8.2
 
 ### 🐛 Bug Fix - Complete ttyd WebSocket authentication handshake
