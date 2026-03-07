@@ -351,7 +351,8 @@
             <input type="text" id="paste-input" enterkeyhint="send" placeholder="Type or paste here..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
             <button id="send-btn" title="Send to terminal">&#9166;</button>
 
-            <!-- Existing buttons -->
+            <!-- Connection indicator and status -->
+            <span id="ws-indicator" style="width: 8px; height: 8px; border-radius: 50%; background: #f48771; flex-shrink: 0;" title="Terminal input disconnected"></span>
             <span id="status"></span>
             <button id="voice-btn" class="header-btn" title="Voice Input">
                 <span>&#127908;</span>
@@ -426,19 +427,35 @@
             const basePath = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
             const wsUrl = `${protocol}//${location.host}${basePath}terminal/ws`;
 
+            console.log('Control WebSocket connecting to:', wsUrl);
             controlWs = new WebSocket(wsUrl);
 
             controlWs.onopen = () => {
                 console.log('Control WebSocket connected');
                 wsReconnectDelay = 1000;
+                updateWsIndicator(true);
             };
 
-            controlWs.onmessage = () => {
-                // Ignore output from this connection; iframe handles display
+            controlWs.onmessage = (event) => {
+                // ttyd protocol: first char is message type
+                // '0' = output (ignore, iframe handles display)
+                // '1' = set window title (ignore)
+                // '2' = set preferences (ignore)
+                // We must read messages to keep the WebSocket alive,
+                // but don't need to process them
+                if (typeof event.data === 'string' && event.data.length > 0) {
+                    const msgType = event.data[0];
+                    // Log first message type for diagnostics
+                    if (!controlWs._firstMsg) {
+                        console.log('Control WebSocket first message type:', msgType);
+                        controlWs._firstMsg = true;
+                    }
+                }
             };
 
-            controlWs.onclose = () => {
-                console.log('Control WebSocket closed, reconnecting...');
+            controlWs.onclose = (event) => {
+                console.log('Control WebSocket closed, code:', event.code, 'reason:', event.reason);
+                updateWsIndicator(false);
                 wsReconnectTimer = setTimeout(connectControlWebSocket, wsReconnectDelay);
                 wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_MAX_RECONNECT_DELAY);
             };
@@ -449,11 +466,22 @@
             };
         }
 
+        // Visual indicator for WebSocket connection state
+        function updateWsIndicator(connected) {
+            const indicator = document.getElementById('ws-indicator');
+            if (indicator) {
+                indicator.style.background = connected ? '#4ec9b0' : '#f48771';
+                indicator.title = connected ? 'Terminal input connected' : 'Terminal input disconnected';
+            }
+        }
+
         function sendInput(data) {
             if (controlWs && controlWs.readyState === WebSocket.OPEN) {
                 // ttyd protocol: '0' prefix = client input
                 controlWs.send('0' + data);
+                console.log('Sent input:', JSON.stringify(data));
             } else {
+                console.warn('Control WebSocket not open, state:', controlWs?.readyState);
                 setStatus('Terminal not connected', 'error');
             }
         }
@@ -702,7 +730,10 @@
         };
 
         document.querySelectorAll('.ctrl-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            // Use pointerdown for immediate response on both touch and mouse
+            // This avoids the touchstart→click chain issue where preventDefault
+            // on touchstart kills the synthetic click event on mobile
+            btn.addEventListener('pointerdown', (e) => {
                 e.preventDefault();
                 const rawInput = btn.getAttribute('data-input');
                 const input = INPUT_MAP[rawInput];
@@ -710,10 +741,6 @@
                     sendInput(input);
                 }
             });
-
-            // Prevent buttons from stealing focus from terminal
-            btn.addEventListener('mousedown', (e) => e.preventDefault());
-            btn.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
         });
 
         // Paste input bar
@@ -728,7 +755,7 @@
             }
         }
 
-        sendBtn.addEventListener('click', (e) => {
+        sendBtn.addEventListener('pointerdown', (e) => {
             e.preventDefault();
             sendPasteInput();
         });
