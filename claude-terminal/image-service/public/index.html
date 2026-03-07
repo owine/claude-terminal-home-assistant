@@ -338,14 +338,13 @@
         <div id="header">
             <!-- Terminal control buttons -->
             <button class="ctrl-btn" data-input="\x03" title="Ctrl+C (Interrupt)">^C</button>
-            <button class="ctrl-btn" data-input="\x04" title="Ctrl+D (EOF)">^D</button>
-            <button class="ctrl-btn" data-input="\x1a" title="Ctrl+Z (Suspend)">^Z</button>
             <button class="ctrl-btn" data-input="\x09" title="Tab (Autocomplete)">Tab</button>
             <button class="ctrl-btn" data-input="\x1b" title="Escape">Esc</button>
             <button class="ctrl-btn" data-input="\x1b[D" title="Left Arrow">&larr;</button>
             <button class="ctrl-btn" data-input="\x1b[A" title="Up Arrow">&uarr;</button>
             <button class="ctrl-btn" data-input="\x1b[B" title="Down Arrow">&darr;</button>
             <button class="ctrl-btn" data-input="\x1b[C" title="Right Arrow">&rarr;</button>
+            <button class="ctrl-btn" data-input="\r" title="Enter / Return">Enter</button>
 
             <!-- Paste input bar -->
             <input type="text" id="paste-input" placeholder="Type or paste here..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send">
@@ -470,14 +469,13 @@
 
         const INPUT_MAP = {
             '\\x03': '\x03',  // Ctrl+C
-            '\\x04': '\x04',  // Ctrl+D
-            '\\x1a': '\x1a',  // Ctrl+Z
             '\\x09': '\x09',  // Tab
             '\\x1b': '\x1b',  // Escape
             '\\x1b[A': '\x1b[A',  // Up
             '\\x1b[B': '\x1b[B',  // Down
             '\\x1b[C': '\x1b[C',  // Right
             '\\x1b[D': '\x1b[D',  // Left
+            '\\r': '\r',          // Enter
         };
 
         document.querySelectorAll('.ctrl-btn').forEach(btn => {
