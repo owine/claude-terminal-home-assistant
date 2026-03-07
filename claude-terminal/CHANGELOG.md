@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.0
+
+### New Feature - Mobile Terminal Controls
+- **Control buttons**: Added ^C, ^D, ^Z, Tab, Esc, and arrow key buttons to the header bar for mobile/touch devices that lack physical keyboards
+- **Paste input bar**: Text input field in the header for typing or pasting text directly into the terminal, with mobile-optimized `enterkeyhint="send"`
+- **Parallel WebSocket**: Outer page connects to ttyd via its own WebSocket for reliable input injection (both connections share the same tmux session), with visibility-aware reconnection to save mobile battery
+- **Auto-inject image paths**: Uploaded image file paths are now sent directly to the terminal instead of relying on clipboard copy/paste
+- **Voice Send to Terminal**: Voice transcripts can be sent directly to the terminal via a new "Send to Terminal" button in the voice modal
+- **Responsive layout**: Header uses flex-wrap to adapt from single row (desktop) to multi-row (mobile)
+
 ## 1.7.8
 
 ### 🐛 Bug Fix - Fix ha-mcp failing on Home Assistant OS (musl/Alpine Linux)
