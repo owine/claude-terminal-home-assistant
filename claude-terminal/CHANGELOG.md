@@ -2,8 +2,8 @@
 
 ## 1.8.0
 
-### New Feature - Mobile Terminal Controls
-- **Control buttons**: Added ^C, ^D, ^Z, Tab, Esc, and arrow key buttons to the header bar for mobile/touch devices that lack physical keyboards
+### ✨ New Feature - Mobile Terminal Controls
+- **Control buttons**: Added ^C, Tab, Esc, arrow keys, and Enter buttons to the header bar for mobile/touch devices that lack physical keyboards
 - **Paste input bar**: Text input field in the header for typing or pasting text directly into the terminal, with mobile-optimized `enterkeyhint="send"`
 - **Direct iframe terminal access**: Uses ttyd's xterm.js `term` instance via same-origin iframe access for reliable input injection — no parallel WebSocket needed
 - **Auto-inject image paths**: Uploaded image file paths are now sent directly to the terminal instead of relying on clipboard copy/paste
