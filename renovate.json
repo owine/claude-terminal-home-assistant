@@ -76,6 +76,12 @@
       "automergeType": "pr"
     }
   ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "automergeType": "pr",
+    "automergeStrategy": "squash"
+  },
   "vulnerabilityAlerts": {
     "enabled": true,
     "labels": [
