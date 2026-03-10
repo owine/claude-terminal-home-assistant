@@ -115,7 +115,7 @@ echo "For advanced Home Assistant integration (entities, automations):"
 echo ""
 echo "1. Use the WebSocket API for real-time entity access"
 echo "2. Install 'websocat' or use Node.js WebSocket libraries"
-echo "3. Connect to: ws://supervisor/core/websocket"
+echo "3. Connect to: wss://supervisor/core/websocket"
 echo ""
 echo "Example WebSocket authentication flow:"
 echo '{'
