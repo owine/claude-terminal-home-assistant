@@ -148,7 +148,8 @@ install_python_packages() {
 }
 
 install_ha_cli() {
-    local HA_VERSION="4.42.0"
+    # renovate: datasource=github-releases depName=home-assistant/cli
+    local HA_VERSION="4.46.0"
     local BASE_URL="https://github.com/home-assistant/cli/releases/download/${HA_VERSION}"
 
     # Detect architecture

@@ -112,6 +112,16 @@
       ]
     },
     {
+      "description": "Update version pins in shell scripts with renovate comments",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^claude-terminal/scripts//"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+(?:local )?\\w+=\\\"(?<currentValue>[^\\\"]+)\\\""
+      ]
+    },
+    {
       "description": "Update build_from base images in build.yaml",
       "customType": "regex",
       "managerFilePatterns": [
