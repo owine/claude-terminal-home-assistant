@@ -10,6 +10,11 @@
   - Runs as post-build gate in publish workflow
   - Scans Alpine base image and all installed packages
 
+### 🐛 Bug Fix - Security Hardening
+- **Path traversal prevention**: Validate uploaded image file paths stay within the upload directory, rejecting directory escape attempts
+- **SHA-pin HA Builder action**: Pin `home-assistant/builder` to commit SHA for supply chain security, matching all other GitHub Actions
+- **WebSocket example**: Use `wss://` protocol in API examples documentation
+
 ## 1.8.0
 
 ### ✨ New Feature - Mobile Terminal Controls
