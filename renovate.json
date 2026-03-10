@@ -15,16 +15,6 @@
   ],
   "packageRules": [
     {
-      "description": "Disable digest pinning for Home Assistant Builder (incompatible with SHA-based images)",
-      "matchManagers": [
-        "github-actions"
-      ],
-      "matchPackageNames": [
-        "home-assistant/builder"
-      ],
-      "pinDigests": false
-    },
-    {
       "description": "Home Assistant base images - disable digest pinning in build.yaml",
       "matchDatasources": [
         "docker"
