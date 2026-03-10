@@ -1,0 +1,5 @@
+# Trivy vulnerability ignore list
+# Review periodically — remove entries when upstream fixes are available
+
+# docker/cli: Windows-only privilege escalation — not exploitable in Alpine Linux containers
+CVE-2025-15558

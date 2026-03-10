@@ -7,6 +7,7 @@ severity:
   - HIGH
 
 exit-code: 1
+ignore-unfixed: true
 
 # Scan types for filesystem scanning
 # (image scans override scanners via workflow args)
