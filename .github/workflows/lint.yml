@@ -50,6 +50,7 @@ jobs:
           yamllint -c .yamllint.yml \
             claude-terminal/config.yaml \
             claude-terminal/build.yaml \
+            .trivy.yaml \
             .github/workflows/
 
   actionlint:

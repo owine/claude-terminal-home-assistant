@@ -1,0 +1,24 @@
+---
+# Trivy security scanner configuration
+# Used by both filesystem and image scans in CI/CD
+
+severity:
+  - CRITICAL
+  - HIGH
+
+exit-code: 1
+
+# Scan types for filesystem scanning
+# (image scans override scanners via workflow args)
+scanners:
+  - vuln
+  - secret
+  - misconfig
+
+# Skip paths that don't contain scannable code
+skip-dirs:
+  - docs
+  - .git
+
+skip-files:
+  - "*.md"
