@@ -3,6 +3,9 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
+# Upgrade base image packages to pick up security patches (e.g., zlib CVE-2026-22184)
+RUN apk upgrade --no-cache
+
 # Install packages in a single layer to minimize image size
 # Node.js and npm kept for image-service dependency
 RUN apk add --no-cache \
