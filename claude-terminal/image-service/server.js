@@ -148,7 +148,11 @@ app.post('/upload', uploadLimiter, upload.single('image'), (req, res) => {
         return res.status(400).json({ error: 'No image file provided' });
     }
 
-    const filePath = path.join(UPLOAD_DIR, req.file.filename);
+    const filePath = path.resolve(UPLOAD_DIR, req.file.filename);
+    if (!filePath.startsWith(path.resolve(UPLOAD_DIR) + path.sep) && filePath !== path.resolve(UPLOAD_DIR)) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({ error: 'Invalid filename' });
+    }
     console.log(`Image uploaded: ${filePath} (${(req.file.size / 1024).toFixed(2)} KB)`);
 
     res.json({
