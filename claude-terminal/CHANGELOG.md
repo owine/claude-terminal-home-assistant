@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.2
+
+### 🐛 Bug Fix - Alpine CVE Patch
+- **Patch Alpine base image packages**: Added `apk upgrade --no-cache` to Dockerfile to pick up security patches (zlib CVE-2026-22184) without waiting for base image releases
+- **Trivy ignore-unfixed**: Only block CI on CVEs that have available fixes, avoiding false failures from upstream issues with no patch
+- **Trivy ignore Windows-only CVE**: Suppress CVE-2025-15558 (docker/cli Windows privilege escalation) which is not exploitable in Alpine Linux containers
+
 ## 1.8.1
 
 ### 🔧 Technical - Security Scanning CI/CD
