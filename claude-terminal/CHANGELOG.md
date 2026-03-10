@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.1
+
+### 🔧 Technical - Security Scanning CI/CD
+- **Trivy filesystem scanning**: Scans for CVEs in dependencies, leaked secrets, and Dockerfile misconfigurations on every PR and push
+  - Blocks on CRITICAL and HIGH severity findings
+  - Weekly scheduled scan (Mondays) catches newly disclosed CVEs
+- **Trivy image scanning**: Scans published container images for OS-level vulnerabilities before release announcement
+  - Runs as post-build gate in publish workflow
+  - Scans Alpine base image and all installed packages
+
 ## 1.8.0
 
 ### ✨ New Feature - Mobile Terminal Controls
