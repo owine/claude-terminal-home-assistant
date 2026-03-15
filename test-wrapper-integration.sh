@@ -1,18 +1,18 @@
 #!/bin/bash
-# Test script to verify image service and tmux integration
+# Test script to verify wrapper service and tmux integration
 # Run this inside the app container
 
-echo "=== Image Service Integration Test ==="
+echo "=== Wrapper Service Integration Test ==="
 echo ""
 
-# Test 1: Check if image service is running
-echo "1. Checking image service (port 7680)..."
+# Test 1: Check if wrapper service is running
+echo "1. Checking wrapper service (port 7680)..."
 if curl -s http://localhost:7680/health | jq '.status' | grep -q "ok"; then
-    echo "   ✓ Image service is running"
+    echo "   ✓ Wrapper service is running"
     UPLOAD_DIR=$(curl -s http://localhost:7680/config | jq -r '.uploadDir')
     echo "   Upload directory: $UPLOAD_DIR"
 else
-    echo "   ✗ Image service not responding"
+    echo "   ✗ Wrapper service not responding"
 fi
 echo ""
 
@@ -20,7 +20,7 @@ echo ""
 echo "2. Checking upload directory access..."
 if [ -d "/data/images" ]; then
     echo "   ✓ Directory exists: /data/images"
-    ls -la /data/images | head -5
+    find /data/images -maxdepth 1 -ls 2>/dev/null | head -5
 
     # Try to create a test file
     if touch /data/images/test-access-$$.txt 2>/dev/null; then
@@ -44,6 +44,7 @@ if tmux has-session -t claude 2>/dev/null; then
     echo "   tmux working directory: $TMUX_HOME"
 
     # Check if persistent packages PATH is loaded
+    # shellcheck disable=SC2016
     TMUX_PATH=$(tmux send-keys -t claude 'echo $PATH' Enter 2>/dev/null; sleep 0.5; tmux capture-pane -p -t claude | tail -1)
     if echo "$TMUX_PATH" | grep -q "/data/packages/bin"; then
         echo "   ✓ Persistent packages in PATH"
@@ -64,9 +65,9 @@ else
 fi
 
 if curl -s http://localhost:7680/terminal/ | grep -q "ttyd"; then
-    echo "   ✓ Image service proxy is working"
+    echo "   ✓ Wrapper service proxy is working"
 else
-    echo "   ✗ Image service proxy failed"
+    echo "   ✗ Wrapper service proxy failed"
 fi
 echo ""
 
@@ -74,7 +75,7 @@ echo ""
 echo "5. Environment variables:"
 echo "   HOME: $HOME"
 echo "   ANTHROPIC_CONFIG_DIR: $ANTHROPIC_CONFIG_DIR"
-echo "   PATH includes /data/packages: $(echo $PATH | grep -q '/data/packages' && echo 'yes' || echo 'no')"
+echo "   PATH includes /data/packages: $(echo "$PATH" | grep -q '/data/packages' && echo 'yes' || echo 'no')"
 echo ""
 
 echo "=== Test Complete ==="
