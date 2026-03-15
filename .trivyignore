@@ -3,3 +3,14 @@
 
 # docker/cli: Windows-only privilege escalation — not exploitable in Alpine Linux containers
 CVE-2025-15558
+
+# Go stdlib CVEs in pre-compiled binaries (Claude CLI, gh CLI, ha CLI)
+# We download upstream binaries compiled with Go 1.23.x — cannot fix until upstream recompiles
+# Review: check if upstream releases include Go 1.24+ builds
+CVE-2025-68121
+CVE-2025-22869
+CVE-2025-47907
+CVE-2025-58183
+CVE-2025-61726
+CVE-2025-61728
+CVE-2025-61729
