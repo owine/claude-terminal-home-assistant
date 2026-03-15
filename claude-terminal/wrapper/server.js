@@ -23,7 +23,7 @@ const { execFile } = require('child_process');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
-const PORT = process.env.IMAGE_SERVICE_PORT || 7680;
+const PORT = process.env.WRAPPER_PORT || 7680;
 const TTYD_PORT = process.env.TTYD_PORT || 7681;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/data/images';
 

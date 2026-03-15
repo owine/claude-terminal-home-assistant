@@ -138,7 +138,7 @@ The app exposes these configuration options to users:
 
 ### Key Components
 1. **Web Terminal**: Uses ttyd (v1.7.7) to provide browser-based terminal access
-2. **Image Service**: Express.js server handling image uploads and WebSocket proxying to ttyd
+2. **Wrapper Service**: Express.js server handling UI, terminal proxy, image uploads, and mouse mode toggle
 3. **Credential Management**: Persistent authentication storage in `/data/.config/claude/`
 4. **Service Integration**: Home Assistant ingress support with panel icon
 5. **Multi-Architecture**: Supports amd64, aarch64 platforms
@@ -167,7 +167,7 @@ The main startup script (`run.sh`) orchestrates the app initialization:
 4. **Session Picker** (`setup_session_picker`) - Copy script to `/usr/local/bin/claude-session-picker`
 5. **Persistent Packages** (`setup_persistent_packages`) - Install persist-install command, auto-install configured packages
 6. **HA MCP** (`setup_ha_mcp`) - Register pre-installed ha-mcp binary with Claude Code (if enabled)
-7. **Image Service** (`start_image_service`) - Start Express.js on port 7680 with WebSocket proxy
+7. **Wrapper Service** (`start_wrapper_service`) - Start Express.js on port 7680 with WebSocket proxy
 8. **tmux Session** (`setup_tmux_session`) - Create detached tmux session BEFORE ttyd starts
 9. **Web Terminal** - Launch ttyd on port 7681, attach to existing tmux session
 
@@ -175,7 +175,7 @@ The main startup script (`run.sh`) orchestrates the app initialization:
 - `init_environment()` - Core environment setup with XDG variables
 - `migrate_legacy_auth_files()` - One-time migration from old credential locations
 - `get_claude_launch_command()` - Determine startup command based on configuration
-- `start_image_service()` - Launch Node.js image upload server
+- `start_wrapper_service()` - Launch Node.js wrapper service (UI, proxy, uploads, mouse toggle)
 - `setup_tmux_session()` - Create/attach tmux session (avoids nesting errors per ttyd#1396)
 
 ## Development Notes
@@ -287,7 +287,7 @@ During design discussions and requirements gathering, create a running summary d
 - `ANTHROPIC_CONFIG_DIR=/data/.config/claude` - Claude Code configuration directory
 - `HOME=/data/home` - User home directory (persistent across restarts)
 - `SUPERVISOR_TOKEN` - Auto-populated token for Home Assistant Supervisor API
-- `IMAGE_SERVICE_PORT=7680` - Image upload service port
+- `WRAPPER_PORT=7680` - Wrapper service port
 - `TTYD_PORT=7681` - ttyd terminal port
 - `UPLOAD_DIR=/data/images` - Directory for uploaded images
 
@@ -491,16 +491,17 @@ Prior to v1.3.0, Home Assistant built images locally during installation. This a
 - Ensure `build.yaml` image field matches published location
 - Try manual pull: `docker pull ghcr.io/owine/claude-terminal-prowine-amd64:latest`
 
-## Image Service & Dependency Management
+## Wrapper Service & Dependency Management
 
-### Image Service Architecture (server.js)
+### Wrapper Service Architecture (server.js)
 
-The image service (`claude-terminal/wrapper/server.js`) is a Node.js Express server that provides:
+The wrapper service (`claude-terminal/wrapper/server.js`) is a Node.js Express server that provides:
 
 **Core Functions:**
 1. **Image Uploads** - Handle paste/drag-drop image uploads from browser
 2. **Terminal Proxy** - WebSocket proxy to ttyd for Home Assistant ingress compatibility
 3. **Static File Serving** - Serve the HTML interface with embedded terminal
+4. **Mouse Mode Toggle** - Runtime tmux mouse mode switching via `/mouse-mode` API
 
 **Endpoints:**
 - `GET /health` - Health check, returns `{ status: 'ok', uploadDir: '/data/images' }`

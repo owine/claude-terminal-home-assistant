@@ -343,7 +343,7 @@ start_wrapper_service() {
     chmod 755 "${upload_dir}"
 
     # Export environment variables for the wrapper service
-    export IMAGE_SERVICE_PORT="${wrapper_port}"
+    export WRAPPER_PORT="${wrapper_port}"
     export TTYD_PORT="${ttyd_port}"
     export UPLOAD_DIR="${upload_dir}"
 

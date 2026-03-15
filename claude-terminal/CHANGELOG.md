@@ -1,20 +1,34 @@
 # Changelog
 
-## 1.9.0
+## 2.0.0
 
 ### ✨ New Feature - Mouse Mode Toggle
 - **Runtime mouse mode toggle**: Added a toggle button in the header bar to switch between scroll mode and text selection mode without restarting the container
   - **Select mode** (default): Normal browser text selection works — highlight and copy as usual
   - **Scroll mode**: Mouse wheel scrolls through terminal history (50k line buffer)
   - Click the mouse button in the header to switch instantly
-- **Server-side toggle API**: New `/mouse-mode` endpoints in the image service execute `tmux set -g mouse` directly, so toggling doesn't disrupt the running terminal session
+- **Server-side toggle API**: New `/mouse-mode` endpoints in the wrapper service execute `tmux set -g mouse` directly, so toggling doesn't disrupt the running terminal session
 - **Keyboard shortcut**: Added `Prefix + m` (Ctrl+B, m) tmux key binding as an alternative to the UI button
 - **Startup default preserved**: The `tmux_mouse_mode` config option still controls which mode is active on container start
 
-### 🛠️ Improvement - Rename image-service to wrapper
-- **Renamed `image-service/` directory to `wrapper/`**: The service has outgrown its original name — it now handles the UI, terminal proxy, image uploads, and mouse mode toggle
+### 🔧 Technical - Rename image-service to wrapper
+- **Renamed `image-service/` directory to `wrapper/`**: The service now handles UI, terminal proxy, image uploads, and mouse mode toggle — not just images
+  - Renamed `IMAGE_SERVICE_PORT` env var to `WRAPPER_PORT`
   - Updated Dockerfile, run.sh, .gitignore, package.json, and all documentation references
   - No user-facing changes — the service works identically
+
+### 🛠️ Improvement - Health Check Reorder
+- **Moved health check after environment init**: The Claude CLI check no longer reports a false failure on startup because PATH is now configured before the check runs
+
+### 🐛 Bug Fix - Shellcheck Cleanup
+- **Fixed all shellcheck warnings**: Resolved warnings across run.sh, claude-auth-helper.sh, claude-session-picker.sh, ha-api-examples.sh, and persistent-packages.sh
+
+### 🔧 Technical - Dependency Updates
+- **ha-mcp v6.7.2 → v7.0.0**: Major upgrade with new tools (`ha_check_update_notes`), persistent notifications in `ha_get_overview`, bundled HA skills as MCP resources, and SSRF/XSS security fix in OAuth
+- **pyjwt 2.11.0 → 2.12.1**: Fix CVE-2026-32597 (RFC 7515 `crit` header validation)
+- **Pin aquasecurity/trivy-action**: SHA256 digest pinning for supply chain security
+- **Update GitHub Actions digests**: claude-code-action, uv, cli/cli, actions/download-artifact
+- **uv 0.10.9 → 0.10.10**: Patch update for Python package manager
 
 ## 1.8.2
 

@@ -114,7 +114,7 @@ test-endpoint
 - **Container Runtime**: Compatible with Docker/Podman
 - **Web Terminal**: ttyd (v1.7.7) for browser-based access
 - **Session Persistence**: tmux for terminal session management
-- **Image Service**: Express.js server for image uploads and WebSocket proxying
+- **Wrapper Service**: Express.js server for UI, terminal proxy, image uploads, and mouse mode toggle
 - **Networking**: Ingress support with Home Assistant reverse proxy
 
 ## Security
