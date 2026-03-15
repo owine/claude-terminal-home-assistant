@@ -47,7 +47,6 @@ configure_ha_mcp_server() {
     #   HOMEASSISTANT_TOKEN: Supervisor token for authentication
     # ENABLE_SKILLS: Serve bundled HA best-practice skills as MCP resources (skill:// URIs)
     # ENABLE_SKILLS_AS_TOOLS: Also expose skills as tools for broader client compatibility
-    # These are no-ops on ha-mcp <6.8 (pydantic_settings extra="allow" silently ignores them)
     if claude mcp add home-assistant \
         --env "HOMEASSISTANT_URL=http://supervisor/core" \
         --env "HOMEASSISTANT_TOKEN=${SUPERVISOR_TOKEN}" \
