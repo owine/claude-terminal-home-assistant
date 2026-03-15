@@ -73,7 +73,7 @@ curl -X GET http://localhost:7681/
 - **ha-mcp/** - Home Assistant MCP server locked dependencies
   - **pyproject.toml** - Pins ha-mcp version, configures `index-strategy = "unsafe-best-match"`
   - **uv.lock** - **CRITICAL:** Locks all 75 transitive dependencies with exact versions and SHA256 hashes
-- **image-service/** - Express.js server for image uploads and terminal proxy
+- **wrapper/** - Express.js server for image uploads and terminal proxy
   - **server.js** - Main service (port 7680)
   - **package.json** - Node.js dependencies (express 5.x, multer 2.x, http-proxy-middleware 3.x)
   - **package-lock.json** - **CRITICAL:** Ensures deterministic builds with exact dependency versions
@@ -310,7 +310,7 @@ During design discussions and requirements gathering, create a running summary d
 - App targets Home Assistant OS (Alpine Linux 3.23 base)
 - Must handle credential persistence across container restarts
 - Requires multi-architecture compatibility (amd64, aarch64)
-- **CRITICAL:** `image-service/package-lock.json` must be committed for deterministic npm builds
+- **CRITICAL:** `wrapper/package-lock.json` must be committed for deterministic npm builds
 - **CRITICAL:** `ha-mcp/uv.lock` must be committed for deterministic ha-mcp builds
 - Docker builds require `--no-cache` when npm or Python dependencies change
 
@@ -495,7 +495,7 @@ Prior to v1.3.0, Home Assistant built images locally during installation. This a
 
 ### Image Service Architecture (server.js)
 
-The image service (`claude-terminal/image-service/server.js`) is a Node.js Express server that provides:
+The image service (`claude-terminal/wrapper/server.js`) is a Node.js Express server that provides:
 
 **Core Functions:**
 1. **Image Uploads** - Handle paste/drag-drop image uploads from browser
@@ -534,7 +534,7 @@ This order is important because Express matches routes in order. Static middlewa
 
 ### CRITICAL: package-lock.json Requirement
 
-The **image-service** directory contains a Node.js Express server that handles image uploads and WebSocket proxying. This service has specific npm dependencies that MUST be locked for deterministic builds.
+The **wrapper** directory contains a Node.js Express server that handles image uploads and WebSocket proxying. This service has specific npm dependencies that MUST be locked for deterministic builds.
 
 **Why package-lock.json is critical:**
 - Without it, `npm install` in Docker builds can install different versions than expected
@@ -552,11 +552,11 @@ The **image-service** directory contains a Node.js Express server that handles i
 
 ### When Updating Dependencies
 
-**If you modify `image-service/package.json`:**
+**If you modify `wrapper/package.json`:**
 
 1. **Regenerate the lockfile:**
    ```bash
-   cd claude-terminal/image-service
+   cd claude-terminal/wrapper
    npm install
    ```
 
@@ -580,8 +580,8 @@ The **image-service** directory contains a Node.js Express server that handles i
 # Blanket ignore for lockfiles
 package-lock.json
 
-# Exception: image-service lockfile needed for Docker builds
-!claude-terminal/image-service/package-lock.json
+# Exception: wrapper lockfile needed for Docker builds
+!claude-terminal/wrapper/package-lock.json
 ```
 
 ### CRITICAL: ha-mcp/uv.lock Requirement

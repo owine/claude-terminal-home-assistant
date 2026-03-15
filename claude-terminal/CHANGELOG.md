@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.0
+
+### ✨ New Feature - Mouse Mode Toggle
+- **Runtime mouse mode toggle**: Added a toggle button in the header bar to switch between scroll mode and text selection mode without restarting the container
+  - **Select mode** (default): Normal browser text selection works — highlight and copy as usual
+  - **Scroll mode**: Mouse wheel scrolls through terminal history (50k line buffer)
+  - Click the mouse button in the header to switch instantly
+- **Server-side toggle API**: New `/mouse-mode` endpoints in the image service execute `tmux set -g mouse` directly, so toggling doesn't disrupt the running terminal session
+- **Keyboard shortcut**: Added `Prefix + m` (Ctrl+B, m) tmux key binding as an alternative to the UI button
+- **Startup default preserved**: The `tmux_mouse_mode` config option still controls which mode is active on container start
+
+### 🛠️ Improvement - Rename image-service to wrapper
+- **Renamed `image-service/` directory to `wrapper/`**: The service has outgrown its original name — it now handles the UI, terminal proxy, image uploads, and mouse mode toggle
+  - Updated Dockerfile, run.sh, .gitignore, package.json, and all documentation references
+  - No user-facing changes — the service works identically
+
 ## 1.8.2
 
 ### 🐛 Bug Fix - Alpine CVE Patch

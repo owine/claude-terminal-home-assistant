@@ -97,8 +97,7 @@ main() {
 
         case "$choice" in
             1)
-                manual_auth_input
-                if [ $? -eq 0 ]; then
+                if manual_auth_input; then
                     exit 0
                 fi
                 echo ""
@@ -106,8 +105,7 @@ main() {
                 read -r
                 ;;
             2)
-                read_auth_from_file
-                if [ $? -eq 0 ]; then
+                if read_auth_from_file; then
                     exit 0
                 fi
                 echo ""

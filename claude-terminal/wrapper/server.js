@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * Claude Terminal Pro - Image Upload Service
+ * Claude Terminal Pro - Wrapper Service
  *
- * Lightweight Express server that handles image uploads from browser paste/drag-drop.
+ * Express server that wraps ttyd with a custom UI and additional features.
  * Designed for resource-constrained environments (Raspberry Pi).
  *
  * Features:
- * - Serves custom HTML interface with embedded ttyd terminal
- * - Handles image uploads via POST /upload
- * - Saves images to /data/images (persistent storage)
- * - Returns file paths for use with Claude CLI
+ * - Serves HTML interface with embedded ttyd terminal
+ * - WebSocket proxy for Home Assistant ingress compatibility
+ * - Image uploads via POST /upload (paste/drag-drop)
+ * - Runtime tmux mouse mode toggle via /mouse-mode
  * - ARM-compatible (no native dependencies)
  */
 
@@ -19,6 +19,7 @@ const http = require('http');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
@@ -163,6 +164,36 @@ app.post('/upload', uploadLimiter, upload.single('image'), (req, res) => {
     });
 });
 
+// Mouse mode toggle - allows switching between scroll and select modes
+// Uses tmux commands directly so the terminal session is not disrupted
+app.get('/mouse-mode', generalLimiter, (req, res) => {
+    execFile('tmux', ['show', '-gv', 'mouse'], (err, stdout) => {
+        if (err) {
+            return res.json({ enabled: false, error: 'tmux not available' });
+        }
+        res.json({ enabled: stdout.trim() === 'on' });
+    });
+});
+
+app.post('/mouse-mode', generalLimiter, (req, res) => {
+    // Get current state, then toggle
+    execFile('tmux', ['show', '-gv', 'mouse'], (err, stdout) => {
+        if (err) {
+            return res.status(500).json({ error: 'tmux not available' });
+        }
+        const currentlyOn = stdout.trim() === 'on';
+        const newState = currentlyOn ? 'off' : 'on';
+
+        execFile('tmux', ['set', '-g', 'mouse', newState], (err2) => {
+            if (err2) {
+                return res.status(500).json({ error: 'Failed to toggle mouse mode' });
+            }
+            console.log(`Mouse mode toggled: ${newState}`);
+            res.json({ enabled: newState === 'on' });
+        });
+    });
+});
+
 // Proxy endpoint for ttyd terminal
 // This allows ttyd to work through Home Assistant ingress
 // Handles both HTTP and WebSocket connections
@@ -226,7 +257,7 @@ const server = http.createServer(app);
 server.on('upgrade', terminalProxy.upgrade);
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Claude Terminal Image Service running on port ${PORT}`);
+    console.log(`Claude Terminal Wrapper Service running on port ${PORT}`);
     console.log(`Upload directory: ${UPLOAD_DIR}`);
     console.log(`ttyd terminal on port: ${TTYD_PORT}`);
     console.log(`Terminal proxy available at /terminal/`);

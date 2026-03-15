@@ -283,6 +283,8 @@ auto_install_packages() {
 
         if [ -n "$all_packages" ]; then
             bashio::log.info "  Installing: $all_packages"
+            # Intentional word splitting: each package is a separate argument
+            # shellcheck disable=SC2086
             /usr/local/bin/persist-install --python $all_packages || bashio::log.warning "Failed to install Python packages"
         fi
     fi
@@ -326,22 +328,22 @@ get_claude_launch_command() {
 }
 
 
-# Start image upload service
-start_image_service() {
-    local image_port=7680
+# Start wrapper service (UI, terminal proxy, image uploads, mouse toggle)
+start_wrapper_service() {
+    local wrapper_port=7680
     local ttyd_port=7681
     local upload_dir="/data/images"
-    local service_dir="/opt/image-service"
+    local service_dir="/opt/wrapper"
     local server_file="${service_dir}/server.js"
 
-    bashio::log.info "Starting image upload service on port ${image_port}..."
+    bashio::log.info "Starting wrapper service on port ${wrapper_port}..."
 
     # Create upload directory if it doesn't exist
     mkdir -p "${upload_dir}"
     chmod 755 "${upload_dir}"
 
-    # Export environment variables for the image service
-    export IMAGE_SERVICE_PORT="${image_port}"
+    # Export environment variables for the wrapper service
+    export IMAGE_SERVICE_PORT="${wrapper_port}"
     export TTYD_PORT="${ttyd_port}"
     export UPLOAD_DIR="${upload_dir}"
 
@@ -356,28 +358,32 @@ start_image_service() {
     if [ ! -d "${service_dir}/node_modules" ]; then
         bashio::log.error "node_modules not found in ${service_dir}"
         bashio::log.info "Attempting to install dependencies..."
-        cd "${service_dir}" && npm install || bashio::log.error "npm install failed"
-        cd - > /dev/null
+        if cd "${service_dir}" && npm install; then
+            cd - > /dev/null
+        else
+            bashio::log.error "npm install failed"
+            cd - > /dev/null 2>&1
+        fi
     fi
 
     # Start with better error logging (run from current directory with absolute path)
     bashio::log.info "Starting Node.js service from ${server_file}..."
     node "${server_file}" 2>&1 | while IFS= read -r line; do
-        bashio::log.info "[Image Service] $line"
+        bashio::log.info "[Wrapper] $line"
     done &
 
     # Store the PID for potential cleanup
-    local image_service_pid=$!
-    bashio::log.info "Image service started (PID: ${image_service_pid})"
+    local wrapper_pid=$!
+    bashio::log.info "Wrapper service started (PID: ${wrapper_pid})"
 
     # Give it a moment to start
     sleep 3
 
     # Check if it's running
-    if kill -0 "${image_service_pid}" 2>/dev/null; then
-        bashio::log.info "Image service is running successfully"
+    if kill -0 "${wrapper_pid}" 2>/dev/null; then
+        bashio::log.info "Wrapper service is running successfully"
     else
-        bashio::log.error "Image service failed to start! Check logs above for errors"
+        bashio::log.error "Wrapper service failed to start! Check logs above for errors"
         return 1
     fi
 }
@@ -425,8 +431,8 @@ start_web_terminal() {
     auto_launch_claude=$(bashio::config 'auto_launch_claude' 'true')
     bashio::log.info "Auto-launch Claude: ${auto_launch_claude}"
 
-    # Start the image upload service first
-    start_image_service
+    # Start the wrapper service first (UI, proxy, uploads)
+    start_wrapper_service
 
     # Create the tmux session BEFORE ttyd starts (key insight from ttyd#1396)
     # This avoids the "nested session" error because tmux session exists independently
@@ -468,11 +474,11 @@ setup_ha_mcp() {
 main() {
     bashio::log.info "Initializing Claude Terminal app..."
 
-    # Run diagnostics first (especially helpful for VirtualBox issues)
-    run_health_check
-
     init_environment
     install_tools
+
+    # Run diagnostics after environment is initialized (Claude binary needs PATH setup)
+    run_health_check
     setup_session_picker
     setup_persistent_packages
     setup_ha_mcp

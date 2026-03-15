@@ -292,6 +292,12 @@
             color: white;
         }
 
+        .ctrl-btn.mouse-active {
+            background: #007acc;
+            border-color: #007acc;
+            color: white;
+        }
+
         #paste-input {
             background: #1e1e1e;
             color: #ccc;
@@ -345,6 +351,7 @@
             <button class="ctrl-btn" data-input="\x1b[B" title="Down Arrow">&darr;</button>
             <button class="ctrl-btn" data-input="\x1b[C" title="Right Arrow">&rarr;</button>
             <button class="ctrl-btn" data-input="\r" title="Enter / Return">Enter</button>
+            <button class="ctrl-btn" id="mouse-toggle" title="Toggle mouse mode: OFF = select text, ON = scroll history">&#x1f5b1; Select</button>
 
             <!-- Paste input bar -->
             <input type="text" id="paste-input" placeholder="Type or paste here..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send">
@@ -488,6 +495,52 @@
                 }
             });
         });
+
+        // ========================================
+        // Mouse Mode Toggle
+        // ========================================
+
+        const mouseToggle = document.getElementById('mouse-toggle');
+        let mouseMode = false; // Start assuming off, will sync on load
+
+        async function syncMouseMode() {
+            try {
+                const res = await fetch('mouse-mode');
+                const data = await res.json();
+                mouseMode = data.enabled;
+                updateMouseButton();
+            } catch (e) {
+                console.log('Could not sync mouse mode:', e);
+            }
+        }
+
+        function updateMouseButton() {
+            if (mouseMode) {
+                mouseToggle.textContent = '\u{1F5B1} Scroll';
+                mouseToggle.title = 'Mouse mode: ON (scroll history) — click to switch to text selection';
+                mouseToggle.classList.add('mouse-active');
+            } else {
+                mouseToggle.textContent = '\u{1F5B1} Select';
+                mouseToggle.title = 'Mouse mode: OFF (select text) — click to switch to scroll history';
+                mouseToggle.classList.remove('mouse-active');
+            }
+        }
+
+        mouseToggle.addEventListener('pointerdown', async (e) => {
+            e.preventDefault();
+            try {
+                const res = await fetch('mouse-mode', { method: 'POST' });
+                const data = await res.json();
+                mouseMode = data.enabled;
+                updateMouseButton();
+                setStatus(mouseMode ? 'Mouse: scroll mode (select text disabled)' : 'Mouse: select mode (scroll with Ctrl+B, [)', 'success');
+            } catch (err) {
+                setStatus('Failed to toggle mouse mode', 'error');
+            }
+        });
+
+        // Sync initial state after terminal loads
+        syncMouseMode();
 
         // Paste input bar
         const pasteInput = document.getElementById('paste-input');

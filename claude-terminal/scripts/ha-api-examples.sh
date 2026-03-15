@@ -15,7 +15,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # Get the Supervisor token (automatically available in apps)
-SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
+SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
 if [ -z "$SUPERVISOR_TOKEN" ]; then
     echo -e "${RED}Error: Supervisor token not found${NC}"
     echo "This script must be run from within a Home Assistant app"
@@ -96,12 +96,15 @@ echo "════════════════════════�
 echo "Usage in your scripts:"
 echo ""
 echo -e "${YELLOW}# Get app configuration:${NC}"
+# shellcheck disable=SC2016
 echo 'CONFIG=$(bashio::config)'
 echo ""
 echo -e "${YELLOW}# Get specific config value:${NC}"
+# shellcheck disable=SC2016
 echo 'AUTO_LAUNCH=$(bashio::config "auto_launch_claude")'
 echo ""
 echo -e "${YELLOW}# Call Supervisor API:${NC}"
+# shellcheck disable=SC2016
 echo 'curl -H "Authorization: Bearer $SUPERVISOR_TOKEN" http://supervisor/core/info'
 echo ""
 echo -e "${YELLOW}# Use bashio for logging:${NC}"

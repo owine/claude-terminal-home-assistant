@@ -174,7 +174,7 @@ claude-terminal/
 │   ├── health-check.sh
 │   ├── claude-session-picker.sh
 │   └── ...
-└── image-service/        # Express.js image upload service
+└── wrapper/              # Express.js web wrapper (UI, proxy, uploads, mouse toggle)
     ├── server.js
     ├── package.json
     └── package-lock.json # CRITICAL: Must be committed

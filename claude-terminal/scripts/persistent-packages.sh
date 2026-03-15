@@ -60,6 +60,7 @@ persist_apk_install() {
     bashio::log.info "Installing APK packages to persistent storage: $packages"
 
     # Install to system first (needed for dependencies)
+    # shellcheck disable=SC2086
     apk add --no-cache $packages
 
     # Copy installed binaries to persistent storage
@@ -105,6 +106,7 @@ persist_pip_install() {
     # Activate venv and install
     source "$PERSIST_PYTHON/venv/bin/activate"
     pip install --upgrade pip
+    # shellcheck disable=SC2086
     pip install $packages
 
     bashio::log.info "Python packages installed successfully"
@@ -123,6 +125,7 @@ auto_install_packages() {
         local pkg_list
         pkg_list=$(echo "$apk_packages" | jq -r '.[]' | tr '\n' ' ')
         if [ -n "$pkg_list" ]; then
+            # shellcheck disable=SC2086
             persist_apk_install $pkg_list
         fi
     fi
@@ -133,6 +136,7 @@ auto_install_packages() {
         local pkg_list
         pkg_list=$(echo "$pip_packages" | jq -r '.[]' | tr '\n' ' ')
         if [ -n "$pkg_list" ]; then
+            # shellcheck disable=SC2086
             persist_pip_install $pkg_list
         fi
     fi

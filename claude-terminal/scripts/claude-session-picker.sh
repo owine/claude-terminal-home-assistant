@@ -90,11 +90,8 @@ run_claude_new() {
     flags=$(get_claude_flags)
     echo "🚀 Starting new Claude session..."
     sleep 1
-    if [ -n "$flags" ]; then
-        $CLAUDE_BIN $flags
-    else
-        $CLAUDE_BIN
-    fi
+    # shellcheck disable=SC2086
+    $CLAUDE_BIN $flags
     show_return_message
 }
 
@@ -103,11 +100,8 @@ run_claude_continue() {
     flags=$(get_claude_flags)
     echo "⏩ Continuing most recent conversation..."
     sleep 1
-    if [ -n "$flags" ]; then
-        $CLAUDE_BIN -c $flags
-    else
-        $CLAUDE_BIN -c
-    fi
+    # shellcheck disable=SC2086
+    $CLAUDE_BIN -c $flags
     show_return_message
 }
 
@@ -116,11 +110,8 @@ run_claude_resume() {
     flags=$(get_claude_flags)
     echo "📋 Opening conversation list for selection..."
     sleep 1
-    if [ -n "$flags" ]; then
-        $CLAUDE_BIN -r $flags
-    else
-        $CLAUDE_BIN -r
-    fi
+    # shellcheck disable=SC2086
+    $CLAUDE_BIN -r $flags
     show_return_message
 }
 

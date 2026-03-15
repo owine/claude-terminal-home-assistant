@@ -1,12 +1,12 @@
 {
-  "name": "claude-terminal-image-service",
+  "name": "claude-terminal-wrapper",
   "version": "1.0.0",
-  "description": "Lightweight image upload service for Claude Terminal Pro",
+  "description": "Web wrapper service for Claude Terminal Pro (UI, terminal proxy, image uploads)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": ["claude", "terminal", "image", "upload"],
+  "keywords": ["claude", "terminal", "wrapper", "proxy"],
   "author": "Javier Santos",
   "license": "MIT",
   "dependencies": {

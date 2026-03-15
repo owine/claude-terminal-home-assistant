@@ -7,7 +7,7 @@ FROM ${BUILD_FROM}
 RUN apk upgrade --no-cache
 
 # Install packages in a single layer to minimize image size
-# Node.js and npm kept for image-service dependency
+# Node.js and npm kept for wrapper service dependency
 RUN apk add --no-cache \
     nodejs \
     npm \
@@ -219,15 +219,15 @@ RUN cd /opt/ha-mcp \
 RUN mkdir -p /config/claude-config
 WORKDIR /config
 
-# Copy and install image service
+# Copy and install wrapper service (UI, terminal proxy, image uploads, mouse toggle)
 # Images built in GitHub Actions with controlled environment
-COPY image-service/package*.json /opt/image-service/
-RUN cd /opt/image-service \
+COPY wrapper/package*.json /opt/wrapper/
+RUN cd /opt/wrapper \
     && npm ci --production --ignore-scripts \
     && npm cache clean --force
 
-COPY image-service/ /opt/image-service/
-RUN chmod +x /opt/image-service/server.js
+COPY wrapper/ /opt/wrapper/
+RUN chmod +x /opt/wrapper/server.js
 
 # Copy startup script and modular scripts
 COPY run.sh /run.sh
