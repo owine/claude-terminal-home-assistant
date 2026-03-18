@@ -3,48 +3,48 @@ name: Lint
 on:
   push:
     branches: [main]
+    paths:
+      - 'claude-terminal/**'
+      - '.github/workflows/**'
+      - '.hadolint.yaml'
+      - '.shellcheckrc'
+      - '.yamllint.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'claude-terminal/**'
+      - '.github/workflows/**'
+      - '.hadolint.yaml'
+      - '.shellcheckrc'
+      - '.yamllint.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  hadolint:
-    name: Dockerfile
+  lint:
+    name: Lint all
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Run hadolint
+      - name: Hadolint
         uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
         with:
           dockerfile: claude-terminal/Dockerfile
           config: .hadolint.yaml
           failure-threshold: error
 
-  shellcheck:
-    name: Shell Scripts
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      # Use pre-installed shellcheck on GitHub Actions runners
-      - name: Run shellcheck
+      - name: ShellCheck
         run: |
           shellcheck --version
           shellcheck --external-sources --severity=error \
             claude-terminal/run.sh \
             claude-terminal/scripts/*.sh
 
-  yamllint:
-    name: YAML Files
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      # Use pre-installed yamllint on GitHub Actions runners
-      - name: Run yamllint
+      - name: yamllint
         run: |
           yamllint --version
           yamllint -c .yamllint.yml \
@@ -53,12 +53,5 @@ jobs:
             .trivy.yaml \
             .github/workflows/
 
-  actionlint:
-    name: GitHub Actions
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Run actionlint
+      - name: actionlint
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
