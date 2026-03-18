@@ -16,7 +16,7 @@
 # tool that can be disabled without affecting the core project.
 #
 # Configuration:
-# - allowed_bots: 'renovate' - Also reviews Renovate dependency PRs
+# - Skips Renovate bot PRs to conserve CI minutes (dependency bumps are auto-merged)
 # - Can be customized to filter by PR author or file paths
 #
 # See: https://github.com/anthropics/claude-code-action
@@ -38,8 +38,10 @@ on:
 
 jobs:
   claude-review:
-    # Skip forked PRs where secrets/OIDC may be unavailable.
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    # Skip forked PRs and Renovate bot PRs (auto-merged, no review needed)
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'renovate[bot]'
 
     # Optional: Filter by PR author
     # if: |
@@ -68,6 +70,6 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          allowed_bots: 'renovate'  # Allow Renovate bot to trigger code reviews
+          # Renovate bot PRs are skipped at the job level to conserve CI minutes
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
