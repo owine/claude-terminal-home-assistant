@@ -111,8 +111,7 @@
         #terminal-container {
             flex: 1;
             position: relative;
-            overflow: auto;
-            -webkit-overflow-scrolling: touch;
+            overflow: hidden;
         }
 
         #terminal-frame {
@@ -777,6 +776,53 @@
             iframe.addEventListener('dragover', (e) => e.preventDefault());
             iframe.addEventListener('drop', (e) => e.preventDefault());
         });
+
+        // ========================================
+        // iOS Touch-to-Scroll for Terminal
+        // ========================================
+        // iOS doesn't deliver wheel events to iframes in PWA standalone mode.
+        // Capture touch events on the terminal container, convert to synthetic
+        // wheel events, and dispatch them on xterm.js's viewport inside the iframe.
+
+        (function() {
+            const termContainer = document.getElementById('terminal-container');
+            let lastTouchY = 0;
+            let isSwiping = false;
+            const SWIPE_THRESHOLD = 5; // pixels before we consider it a scroll
+
+            termContainer.addEventListener('touchstart', (e) => {
+                lastTouchY = e.touches[0].clientY;
+                isSwiping = false;
+            }, { passive: true });
+
+            termContainer.addEventListener('touchmove', (e) => {
+                const currentY = e.touches[0].clientY;
+                const deltaY = lastTouchY - currentY;
+
+                if (Math.abs(deltaY) < SWIPE_THRESHOLD) return;
+
+                isSwiping = true;
+                lastTouchY = currentY;
+
+                const iframe = document.getElementById('terminal-frame');
+                try {
+                    // Find xterm.js viewport element inside the iframe
+                    const xtermViewport = iframe.contentDocument?.querySelector('.xterm-viewport');
+                    if (xtermViewport) {
+                        const wheelEvent = new WheelEvent('wheel', {
+                            deltaY: deltaY * 3, // amplify for natural scroll feel
+                            deltaMode: 0,
+                            bubbles: true,
+                            cancelable: true
+                        });
+                        xtermViewport.dispatchEvent(wheelEvent);
+                        e.preventDefault(); // prevent rubber-band bounce
+                    }
+                } catch (err) {
+                    // Cross-origin iframe — can't access content
+                }
+            }, { passive: false });
+        })();
 
         // ========================================
         // Voice Input with Web Speech API

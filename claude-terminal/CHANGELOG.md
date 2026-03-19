@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.2
+
+### 🐛 Bug Fix - iOS Terminal Scroll (Touch-to-Wheel Forwarding)
+- **Fix terminal output scrolling on iOS**: Previous CSS-only fix caused rubber-band bounce instead of scrolling terminal output
+  - Added JavaScript touch-to-scroll handler that captures touch events on the terminal container
+  - Converts touch swipe gestures into synthetic `WheelEvent`s dispatched on xterm.js's viewport inside the iframe
+  - Reverted `overflow: auto` on terminal container back to `overflow: hidden` to prevent rubber-band effect
+  - Works with both tmux mouse mode on (scrolls history) and off (scrolls xterm.js buffer)
+
 ## 2.1.1
 
 ### 🐛 Bug Fix - iOS Terminal Scrolling in PWA Mode
