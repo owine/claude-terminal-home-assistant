@@ -1,9 +1,12 @@
 const CACHE_NAME = 'claude-ha-v1';
+const OFFLINE_URL = './offline.html';
 const SHELL_ASSETS = [
     './',
-    './offline.html',
+    OFFLINE_URL,
+    './manifest.json',
     './icon-192.png',
-    './icon-512.png'
+    './icon-512.png',
+    './icon-maskable-512.png'
 ];
 
 // Install: cache the app shell
@@ -46,7 +49,7 @@ self.addEventListener('fetch', (event) => {
 
                         // For navigation requests, serve offline page
                         if (event.request.mode === 'navigate') {
-                            return caches.match('./offline.html');
+                            return caches.match(OFFLINE_URL);
                         }
 
                         // Non-navigation, non-cached: fail naturally
