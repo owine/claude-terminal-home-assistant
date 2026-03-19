@@ -15,3 +15,7 @@ CVE-2025-61726
 CVE-2025-61728
 CVE-2025-61729
 CVE-2024-45337
+
+# google.golang.org/grpc: authorization bypass via missing leading slash
+# In pre-compiled upstream binaries (gh CLI) — cannot fix until upstream recompiles with grpc >= 1.79.3
+CVE-2026-33186
