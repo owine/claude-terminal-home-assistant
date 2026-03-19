@@ -62,6 +62,7 @@ A web-based terminal interface with Claude Code CLI pre-installed and enhanced p
 - Pre-installed Claude Code CLI that launches automatically
 - Direct access to your Home Assistant config directory
 - No configuration needed (uses OAuth)
+- **Install as App (PWA)**: Add to your iOS/Android home screen for quick access
 - Access to Claude's complete capabilities including:
   - Code generation and explanation
   - Debugging assistance

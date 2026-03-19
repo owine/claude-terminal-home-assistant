@@ -160,6 +160,7 @@ The terminal starts directly in your `/config` directory, giving you immediate a
 
 ### Core Features
 - **Web Terminal**: Access a full terminal environment via your browser
+- **Install as App (PWA)**: Add to your phone's home screen for instant access without browser chrome
 - **Session Picker**: Interactive menu for starting, continuing, or resuming Claude sessions
 - **Menu Alias**: Type `menu` from bash to return to session picker
 - **Auto-Launching**: Claude starts automatically when you open the terminal (configurable)
@@ -205,6 +206,42 @@ If you don't want the Home Assistant MCP integration, you can disable it in the 
 ```yaml
 enable_ha_mcp: false
 ```
+
+### Install as App (PWA)
+
+Claude Terminal can be installed as a Progressive Web App on your phone or tablet for quick access without opening a browser.
+
+#### How to Install
+
+**iOS (Safari):**
+1. Open Claude Terminal in Safari
+2. Tap the Share button (square with arrow)
+3. Scroll down and tap "Add to Home Screen"
+4. Tap "Add"
+
+**Android (Chrome):**
+1. Open Claude Terminal in Chrome
+2. Tap the menu (⋮) in the top right
+3. Tap "Add to Home screen" or "Install app"
+4. Tap "Install"
+
+**Desktop (Chrome/Edge):**
+1. Open Claude Terminal in Chrome or Edge
+2. Click the install icon in the address bar (or menu → "Install Claude Terminal Prowine")
+3. Click "Install"
+
+#### Access Methods
+
+The PWA works with any of these access methods:
+- **Direct port**: `http://your-ha-ip:7680`
+- **HA external URL**: Through Home Assistant's sidebar (via Nabu Casa or reverse proxy)
+- **Custom reverse proxy**: e.g., `https://claude.yourdomain.com`
+
+**Tip:** For the most reliable PWA experience, install via a stable URL (direct IP or reverse proxy) rather than HA ingress. Ingress tokens can rotate, which may require re-adding the app.
+
+#### Offline Support
+
+When your network is unavailable, the app shows a branded offline page with a retry button instead of a browser error. The terminal requires a live connection to function, so reconnect and tap "Retry Connection" to resume.
 
 ### Enhanced Features
 

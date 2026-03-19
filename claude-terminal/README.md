@@ -26,6 +26,7 @@ This app provides a web-based terminal interface with Claude Code CLI pre-instal
 - **No Configuration Needed**: Uses OAuth authentication for easy setup
 - **Direct Config Access**: Terminal starts in your `/config` directory for immediate access to all Home Assistant files
 - **Home Assistant Integration**: Access directly from your dashboard
+- **Install as App (PWA)**: Add to your phone's home screen for quick access without browser chrome
 - **Panel Icon**: Quick access from the sidebar with the code-braces-box icon
 - **Multi-Architecture Support**: Works on amd64 and aarch64 platforms
 - **Secure Credential Management**: Persistent authentication with safe credential storage
@@ -150,7 +151,7 @@ For detailed usage instructions, see the [documentation](DOCS.md).
 
 ## Version History
 
-**Current Version:** v1.5.6
+**Current Version:** v2.1.0
 
 For complete version history and detailed changelog, see [CHANGELOG.md](CHANGELOG.md).
 

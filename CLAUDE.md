@@ -78,6 +78,11 @@ curl -X GET http://localhost:7681/
   - **package.json** - Node.js dependencies (express 5.x, multer 2.x, http-proxy-middleware 3.x)
   - **package-lock.json** - **CRITICAL:** Ensures deterministic builds with exact dependency versions
   - **public/** - HTML interface with embedded ttyd terminal
+    - **manifest.json** - PWA web app manifest (app name, icons, display mode)
+    - **sw.js** - Service worker (network-first caching, offline fallback)
+    - **offline.html** - Offline fallback page shown when network is unavailable
+    - **icon-192.png / icon-512.png** - PWA icons (Claude `{ }` with HA badge)
+    - **icon-maskable-512.png** - Maskable icon variant for Android adaptive icons
 
 ### Build Configuration (build.yaml)
 
@@ -144,6 +149,7 @@ The app exposes these configuration options to users:
 5. **Multi-Architecture**: Supports amd64, aarch64 platforms
 6. **Package Management**: Persistent package installation via `persist-install` script
 7. **Home Assistant MCP**: Pre-installed [ha-mcp](https://github.com/homeassistant-ai/ha-mcp) server with locked dependencies for deterministic builds
+8. **Progressive Web App**: Installable to iOS/Android home screens with offline fallback, works across direct port, HA ingress, and reverse proxy access paths
 
 ### Credential System
 The app implements a sophisticated credential management system:
@@ -532,6 +538,24 @@ The `pathRewrite` is critical - http-proxy-middleware v3 strips mount points for
 4. Error handler - Multer and general error handling
 
 This order is important because Express matches routes in order. Static middleware before API routes would intercept API requests.
+
+### Progressive Web App (PWA)
+
+The wrapper's `public/` directory includes PWA assets that enable "Add to Home Screen" on iOS and Android:
+
+- **`manifest.json`** — Web app manifest with `"start_url": "."` and `"scope": "."` (relative URLs)
+- **`sw.js`** — Service worker using network-first strategy with offline fallback
+- **`offline.html`** — Shown when network is unavailable (respects OS light/dark preference)
+- **Icon assets** — `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`
+
+**Key design decisions:**
+- All URLs are relative, so PWA works across direct port access, HA ingress, and reverse proxies
+- Network-first strategy ensures users always get fresh content (terminal needs live connection)
+- `skipWaiting()` + `clients.claim()` means service worker updates take effect immediately
+- `manifest.json` includes `"id": "claude-terminal-prowine"` for stable PWA identity across URLs
+- Cache version (`CACHE_NAME` in `sw.js`) must be manually bumped when cached assets change
+
+**Known limitation:** PWA installed via HA ingress may need re-adding if the ingress token rotates. Recommend installing via a stable URL (direct IP or reverse proxy).
 
 ### CRITICAL: package-lock.json Requirement
 
