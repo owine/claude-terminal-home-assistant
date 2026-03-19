@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.1
+
+### 🐛 Bug Fix - iOS Terminal Scrolling in PWA Mode
+- **Fix touch scrolling on iOS**: Terminal was unresponsive to swipe/scroll gestures when running as a PWA on iOS
+  - Added `touch-action: manipulation` to prevent iOS from capturing touch events for double-tap-zoom
+  - Added `overscroll-behavior: none` to prevent viewport bounce from swallowing touch events
+  - Enabled `-webkit-overflow-scrolling: touch` on the terminal container for momentum scrolling
+  - Set `touch-action: auto` on the terminal iframe so it handles its own touch events
+  - Disabled pinch-to-zoom via viewport meta to prevent conflicts with terminal touch handling
+
 ## 2.1.0
 
 ### ✨ New Feature - Progressive Web App (PWA) Support
