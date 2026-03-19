@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.0
+
+### ✨ New Feature - Progressive Web App (PWA) Support
+- **Install to home screen**: Users can now install Claude Terminal as a standalone app on iOS and Android devices
+  - App appears with a Claude `{ }` icon featuring a Home Assistant badge
+  - Launches in standalone mode (no browser chrome) for a native app experience
+  - Works across all access methods: direct port, HA ingress, and reverse proxies
+- **Offline fallback**: When network is unavailable, a branded offline page is shown with a retry button instead of a browser error
+- **OS theme integration**: Status bar and theme color adapt to the device's light/dark mode preference
+- **iOS support**: Includes Apple-specific meta tags for standalone mode and status bar styling on iOS < 16.4
+- **Known limitation**: PWA installed via HA ingress may need re-adding if the ingress token rotates. For the most reliable experience, install via a stable URL (direct IP or reverse proxy)
+
 ## 2.0.0
 
 ### ✨ New Feature - Mouse Mode Toggle
