@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="icon-192.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -120,6 +120,25 @@
             border: none;
             background: #1e1e1e;
             touch-action: auto;
+        }
+
+        /* Touch scroll overlay — captures touch events on iOS where
+           iframes don't forward them. Only shown on touch devices. */
+        #touch-scroll-overlay {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            touch-action: none;
+        }
+
+        @media (pointer: coarse) {
+            #touch-scroll-overlay {
+                display: block;
+            }
         }
 
         #drop-zone {
@@ -382,6 +401,7 @@
         </div>
         <div id="terminal-container">
             <iframe id="terminal-frame" src="about:blank"></iframe>
+            <div id="touch-scroll-overlay"></div>
             <div id="drop-zone">
                 <div id="drop-zone-text">Drop image here to upload</div>
             </div>
@@ -780,48 +800,115 @@
         // ========================================
         // iOS Touch-to-Scroll for Terminal
         // ========================================
-        // iOS doesn't deliver wheel events to iframes in PWA standalone mode.
-        // Capture touch events on the terminal container, convert to synthetic
-        // wheel events, and dispatch them on xterm.js's viewport inside the iframe.
+        // iOS doesn't deliver touch events to iframes in PWA standalone mode.
+        // A transparent overlay (#touch-scroll-overlay) sits on top of the iframe
+        // on touch devices. It captures vertical swipes and converts them to
+        // scroll commands sent to xterm.js. Taps pass through to the iframe
+        // so the terminal remains interactive.
 
         (function() {
-            const termContainer = document.getElementById('terminal-container');
-            let lastTouchY = 0;
-            let isSwiping = false;
-            const SWIPE_THRESHOLD = 5; // pixels before we consider it a scroll
+            const overlay = document.getElementById('touch-scroll-overlay');
+            if (!overlay) return;
 
-            termContainer.addEventListener('touchstart', (e) => {
-                lastTouchY = e.touches[0].clientY;
+            let startY = 0;
+            let startX = 0;
+            let lastY = 0;
+            let isSwiping = false;
+            let touchStartTime = 0;
+            const SWIPE_THRESHOLD = 10;
+            const LINE_HEIGHT = 20; // pixels per scroll line
+
+            overlay.addEventListener('touchstart', (e) => {
+                startY = lastY = e.touches[0].clientY;
+                startX = e.touches[0].clientX;
                 isSwiping = false;
+                touchStartTime = Date.now();
             }, { passive: true });
 
-            termContainer.addEventListener('touchmove', (e) => {
+            overlay.addEventListener('touchmove', (e) => {
                 const currentY = e.touches[0].clientY;
-                const deltaY = lastTouchY - currentY;
+                const currentX = e.touches[0].clientX;
+                const deltaY = lastY - currentY;
+                const totalDeltaX = Math.abs(currentX - startX);
+                const totalDeltaY = Math.abs(currentY - startY);
 
-                if (Math.abs(deltaY) < SWIPE_THRESHOLD) return;
+                // Only handle vertical swipes (not horizontal)
+                if (!isSwiping && totalDeltaY > SWIPE_THRESHOLD && totalDeltaY > totalDeltaX) {
+                    isSwiping = true;
+                }
 
-                isSwiping = true;
-                lastTouchY = currentY;
+                if (!isSwiping) return;
+
+                e.preventDefault();
+                lastY = currentY;
+
+                // Calculate lines to scroll
+                const lines = Math.round(deltaY / LINE_HEIGHT);
+                if (lines === 0) return;
 
                 const iframe = document.getElementById('terminal-frame');
                 try {
-                    // Find xterm.js viewport element inside the iframe
+                    const term = iframe.contentWindow?.term;
+                    if (!term) return;
+
+                    // Method 1: Dispatch wheel event on xterm viewport
+                    // This triggers xterm.js's native wheel handler which sends
+                    // mouse wheel escape sequences to tmux when mouse mode is on
                     const xtermViewport = iframe.contentDocument?.querySelector('.xterm-viewport');
                     if (xtermViewport) {
                         const wheelEvent = new WheelEvent('wheel', {
-                            deltaY: deltaY * 3, // amplify for natural scroll feel
+                            deltaY: lines * LINE_HEIGHT,
                             deltaMode: 0,
                             bubbles: true,
                             cancelable: true
                         });
                         xtermViewport.dispatchEvent(wheelEvent);
-                        e.preventDefault(); // prevent rubber-band bounce
                     }
+
+                    // Method 2: Also scroll xterm.js buffer directly as fallback
+                    // This handles the case where mouse mode is off in tmux
+                    term.scrollLines(lines);
                 } catch (err) {
-                    // Cross-origin iframe — can't access content
+                    // Cross-origin or term not ready
                 }
             }, { passive: false });
+
+            overlay.addEventListener('touchend', (e) => {
+                if (isSwiping) return; // Was a scroll, not a tap
+
+                const elapsed = Date.now() - touchStartTime;
+                if (elapsed > 300) return; // Long press, not a tap
+
+                // Single tap — pass through to iframe for terminal interaction
+                // Briefly disable overlay so the click reaches the iframe
+                overlay.style.pointerEvents = 'none';
+
+                const touch = e.changedTouches[0];
+                const iframe = document.getElementById('terminal-frame');
+
+                // Focus iframe so keyboard events go to terminal
+                iframe.focus();
+
+                // Dispatch a click at the tap position into the iframe
+                try {
+                    const rect = iframe.getBoundingClientRect();
+                    const x = touch.clientX - rect.left;
+                    const y = touch.clientY - rect.top;
+                    const clickEvent = new MouseEvent('click', {
+                        clientX: x,
+                        clientY: y,
+                        bubbles: true
+                    });
+                    iframe.contentDocument?.elementFromPoint(x, y)?.dispatchEvent(clickEvent);
+                } catch (err) {
+                    // Cross-origin
+                }
+
+                // Re-enable overlay after a brief delay
+                setTimeout(() => {
+                    overlay.style.pointerEvents = 'auto';
+                }, 200);
+            });
         })();
 
         // ========================================

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.3
+
+### 🐛 Bug Fix - iOS Touch Scrolling via Overlay
+- **Fix terminal scrolling on iOS**: Touch events don't reach iframes on iOS, so previous JS handler on the container never fired
+  - Added transparent touch overlay (`#touch-scroll-overlay`) positioned above the terminal iframe
+  - Overlay only appears on touch devices via `@media (pointer: coarse)`
+  - Vertical swipes are converted to both `WheelEvent` dispatches (for tmux mouse mode) and `scrollLines()` calls (for xterm.js buffer)
+  - Single taps pass through to the iframe for normal terminal interaction
+  - Horizontal swipes are ignored (not captured)
+- **Viewport meta update**: Added `interactive-widget=resizes-content` for better iOS virtual keyboard behavior
+
 ## 2.1.2
 
 ### 🐛 Bug Fix - iOS Terminal Scroll (Touch-to-Wheel Forwarding)
