@@ -1,6 +1,6 @@
 # Home Assistant base image (provided by Home Assistant Builder via build.yaml)
 # For local testing, pass --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23@sha256:66c25c86966053605a57b6342c203e1db387297c26032133e66d227825fa6c19
 # renovate: ignore - base image version managed via build.yaml
 FROM ${BUILD_FROM}
 
