@@ -9,7 +9,7 @@ build_from:
 
 # Pre-built images location (what users pull)
 # Built via GitHub Actions, then pushed to ghcr.io
-image: "ghcr.io/owine/claude-terminal-prowine-{arch}"
+image: "ghcr.io/owine/{arch}-claude-terminal-prowine"
 
 labels:
   org.opencontainers.image.title: "Claude Terminal Prowine"
