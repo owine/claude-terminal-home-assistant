@@ -1,7 +1,7 @@
 # Home Assistant base image (provided by Home Assistant Builder via build.yaml)
 # For local testing, pass --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23
-ARG BUILD_FROM
-# renovate: ignore - base image tracked via build.yaml custom regex manager
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23
+# renovate: ignore - base image version managed via build.yaml
 FROM ${BUILD_FROM}
 
 # Upgrade base image packages to pick up security patches (e.g., zlib CVE-2026-22184)
