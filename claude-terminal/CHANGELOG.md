@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.0
+
+### 🔧 Technical - Migrate to New HA Builder Composable Actions
+- **Replace deprecated `home-assistant/builder` action**: Migrate from monolithic builder (v2026.02.1) to composable actions (v2026.03.2)
+  - `prepare-multi-arch-matrix` — generates build matrix with native runner selection
+  - `build-image` — per-architecture builds with Docker Buildx, cosign signing, and caching
+  - `publish-multi-arch-manifest` — combines per-arch images into unified multi-arch manifest
+- **Native ARM builds**: aarch64 now builds on `ubuntu-24.04-arm` runners instead of QEMU emulation
+- **Multi-arch manifest**: New `ghcr.io/owine/claude-terminal-prowine` manifest image alongside per-arch images
+- **Image naming convention change**: Images now use arch-prefix format (`{arch}-claude-terminal-prowine`) matching HA ecosystem convention
+- **SHA-pinned composable actions**: All builder sub-actions pinned to `62a1597b` (v2026.03.2)
+
 ## 2.1.4
 
 ### 🔧 Technical - Dependency Updates
