@@ -95,7 +95,7 @@ build_from:
   amd64: ghcr.io/home-assistant/amd64-base:3.23
 
 # Pre-built images location (what users pull)
-image: "ghcr.io/owine/claude-terminal-prowine-{arch}"
+image: "ghcr.io/owine/{arch}-claude-terminal-prowine"
 
 # OCI container labels
 labels:
@@ -359,7 +359,7 @@ During design discussions and requirements gathering, create a running summary d
 
 ### Release Process (v1.3.0+)
 
-The app uses **pre-built Docker images** published to GitHub Container Registry (ghcr.io) with a **two-stage CI/CD workflow**:
+The app uses **pre-built Docker images** published to GitHub Container Registry (ghcr.io) with a **multi-job CI/CD workflow**:
 
 #### Development Workflow
 
@@ -375,8 +375,8 @@ The app uses **pre-built Docker images** published to GitHub Container Registry 
 
 5. **Test workflow runs automatically**
    - Triggered by push to main or pull requests
-   - Builds all architectures (amd64, aarch64) using `--test` flag
-   - Validates build succeeds without publishing images
+   - 2-job structure: init job (matrix setup) → per-arch validate-only builds on native runners (amd64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`, no QEMU)
+   - Builds validate successfully without publishing images to the registry
    - See `.github/workflows/test.yml`
 
 #### Publishing a Release
@@ -407,10 +407,10 @@ The app uses **pre-built Docker images** published to GitHub Container Registry 
 
 2. **Publish workflow runs automatically**
    - Triggered by GitHub release publication
-   - Builds all architectures with Home Assistant Builder
-   - **Signs images with cosign** for cryptographic verification
-   - Publishes to `ghcr.io/owine/claude-terminal-prowine-{arch}`
-   - Tags images with version (e.g., `1.3.1`) and `latest`
+   - 4-job structure: init → parallel per-arch builds on native runners (amd64 + aarch64, no QEMU) → multi-arch manifest → image scan
+   - **Signs per-arch images and the multi-arch manifest with cosign** for cryptographic verification
+   - Publishes per-arch images to `ghcr.io/owine/{arch}-claude-terminal-prowine` and a combined manifest to `ghcr.io/owine/claude-terminal-prowine`
+   - Tags images with version (e.g., `2.2.0`) and `latest`
    - See `.github/workflows/publish.yml`
 
 3. **Verify publication**
@@ -419,7 +419,7 @@ The app uses **pre-built Docker images** published to GitHub Container Registry 
    gh run list --workflow=publish.yml --limit 3
 
    # Verify images published
-   gh api /user/packages/container/claude-terminal-prowine-amd64/versions \
+   gh api /user/packages/container/amd64-claude-terminal-prowine/versions \
      --jq '.[0] | {tags: .metadata.container.tags, created: .created_at}'
    ```
 
@@ -428,26 +428,29 @@ The app uses **pre-built Docker images** published to GitHub Container Registry 
 **Test Workflow** (`.github/workflows/test.yml`)
 - **Triggers:** Push to main, pull requests
 - **Purpose:** Validate builds without publishing
-- **Builder flags:** `--test --all`
-- **Caching:** Authenticates with ghcr.io to pull `latest` images as Docker layer cache
-- **Duration:** ~1-2 minutes (faster when cache layers hit)
+- **Structure:** 2-job pipeline — init job (matrix setup) → per-arch builds on native runners (`ubuntu-24.04` for amd64, `ubuntu-24.04-arm` for aarch64, no QEMU)
+- **Caching:** GHA cache + authenticates with ghcr.io to pull `latest` images as registry layer cache; reuses unchanged layers (apk, npm ci, etc.)
+- **Duration:** ~1-2 minutes (with cache hits on unchanged layers)
 - **Output:** Build validation only (no registry push)
 
 **Publish Workflow** (`.github/workflows/publish.yml`)
 - **Triggers:** GitHub release published
 - **Purpose:** Build and publish signed production images
-- **Builder flags:** `--all --cosign`
+- **Structure:** 4-job pipeline — init → parallel per-arch builds on native runners → multi-arch manifest → image scan
+- **Actions:** Uses composable `home-assistant/builder/actions/{init,build,manifest}` actions (SHA-pinned)
 - **Duration:** ~2-3 minutes
-- **Output:** Multi-arch images at ghcr.io with cosign signatures
+- **Output:** Per-arch images at `ghcr.io/owine/{arch}-claude-terminal-prowine` and a combined manifest at `ghcr.io/owine/claude-terminal-prowine`; cosign signatures on per-arch images and manifest
 - **Permissions:** Requires `id-token: write` for cosign
 
 #### Image Locations
 
 **Published images:**
-- `ghcr.io/owine/claude-terminal-prowine-amd64:latest`
-- `ghcr.io/owine/claude-terminal-prowine-amd64:1.3.1`
-- `ghcr.io/owine/claude-terminal-prowine-aarch64:latest`
-- `ghcr.io/owine/claude-terminal-prowine-aarch64:1.3.1`
+- `ghcr.io/owine/amd64-claude-terminal-prowine:latest`
+- `ghcr.io/owine/amd64-claude-terminal-prowine:2.2.0`
+- `ghcr.io/owine/aarch64-claude-terminal-prowine:latest`
+- `ghcr.io/owine/aarch64-claude-terminal-prowine:2.2.0`
+- `ghcr.io/owine/claude-terminal-prowine:latest` (multi-arch manifest)
+- `ghcr.io/owine/claude-terminal-prowine:2.2.0` (multi-arch manifest)
 
 **Image configuration:**
 - Defined in `claude-terminal/build.yaml`
@@ -492,10 +495,10 @@ Prior to v1.3.0, Home Assistant built images locally during installation. This a
 - Allow a few minutes for registry propagation
 
 **Home Assistant can't pull images:**
-- Verify images exist: `gh api /user/packages/container/claude-terminal-prowine-amd64/versions`
+- Verify images exist: `gh api /user/packages/container/amd64-claude-terminal-prowine/versions`
 - Check package is public (not private)
 - Ensure `build.yaml` image field matches published location
-- Try manual pull: `docker pull ghcr.io/owine/claude-terminal-prowine-amd64:latest`
+- Try manual pull: `docker pull ghcr.io/owine/amd64-claude-terminal-prowine:latest`
 
 ## Wrapper Service & Dependency Management
 
@@ -664,13 +667,14 @@ This repository uses several GitHub Actions workflows for CI/CD and development 
 - **Purpose:** Validate builds on push to main and pull requests
 - **Triggers:** `push` (main branch only), `pull_request`
 - **What it does:**
+  - 2-job structure: init job (matrix setup) → per-arch validate-only builds
+  - Runs amd64 on `ubuntu-24.04` and aarch64 on `ubuntu-24.04-arm` (no QEMU)
+  - Uses composable `home-assistant/builder/actions/{init,build}` actions (SHA-pinned)
   - Authenticates with ghcr.io (`packages: read`) to enable registry-based layer caching
-  - Builds images for both amd64 and aarch64 using Home Assistant Builder
-  - Uses `--test` flag (validates build without publishing to registry)
-  - The builder pulls `{image}:latest` as `--cache-from` source, reusing unchanged layers (apk, npm ci, etc.)
+  - GHA cache + registry `latest` image used as `--cache-from`; reuses unchanged layers (apk, npm ci, etc.)
+  - Builds validate without pushing to the registry (`push: false`, `load: true`)
   - Fast feedback on PR build compatibility
 - **Duration:** ~1-2 minutes (with cache hits on unchanged layers)
-- **Builder version:** 2026.02.1
 
 **Lint Workflow** (`.github/workflows/lint.yml`)
 - **Purpose:** Enforce code quality standards
@@ -687,10 +691,12 @@ This repository uses several GitHub Actions workflows for CI/CD and development 
 - **Purpose:** Build and publish signed production images
 - **Triggers:** GitHub release published
 - **What it does:**
-  - Logs into GitHub Container Registry (ghcr.io)
-  - Builds images for amd64 and aarch64
-  - Signs images with cosign (`--cosign` flag)
-  - Publishes to `ghcr.io/owine/claude-terminal-prowine-{arch}`
+  - 4-job structure: init → parallel per-arch builds on native runners → multi-arch manifest → image scan
+  - Uses composable `home-assistant/builder/actions/{init,build,manifest}` actions (SHA-pinned)
+  - Runs amd64 on `ubuntu-24.04` and aarch64 on `ubuntu-24.04-arm` (no QEMU)
+  - Publishes per-arch images to `ghcr.io/owine/{arch}-claude-terminal-prowine`
+  - Creates a combined multi-arch manifest at `ghcr.io/owine/claude-terminal-prowine`
+  - Signs per-arch images and the multi-arch manifest with cosign (keyless OIDC)
 - **Permissions required:**
   - `contents: read` - Read repository
   - `packages: write` - Push to Container Registry
@@ -740,7 +746,7 @@ uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
 This prevents supply chain attacks where a tag could be moved to malicious code. Renovate automatically updates these digests when new versions are released.
 
-**Exception:** `home-assistant/builder` uses version tags (e.g., `@2025.11.0`) because it's a first-party tool and digest pinning is not supported by Renovate for this action.
+`home-assistant/builder` composable actions are SHA-pinned like all other actions (e.g., `@62a1597b...`).
 
 **DO NOT** commit changes without updating both the version and changelog!
 
