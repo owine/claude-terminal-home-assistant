@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.4
+
+### 🔧 Technical - Dependency Updates
+- **Update all non-major dependencies**: Bumped npm and other non-major dependencies to latest versions for security and compatibility improvements
+
 ## 2.1.3
 
 ### 🐛 Bug Fix - iOS Touch Scrolling via Overlay
