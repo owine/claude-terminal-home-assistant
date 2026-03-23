@@ -4,42 +4,20 @@ on:
   release:
     types: [published]
 
+env:
+  ARCHITECTURES: '["amd64", "aarch64"]'
+  IMAGE_NAME: claude-terminal-prowine
+
+permissions:
+  contents: read
+
 jobs:
-  build:
-    name: Build and publish
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-      id-token: write  # Required for cosign
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and publish
-        uses: home-assistant/builder@62a1597b84b3461abad9816d9cd92862a2b542c3 # 2026.03.2
-        with:
-          args: |
-            --amd64 \
-            --aarch64 \
-            --cosign \
-            --target ./claude-terminal \
-            --image "claude-terminal-prowine-{arch}" \
-            --docker-hub ghcr.io/${{ github.repository_owner }}
-
-  image-scan:
-    name: Scan published image
-    needs: [build]
-    runs-on: ubuntu-24.04
-    permissions:
-      packages: read  # Pull image from ghcr.io
+  init:
+    name: Initialize build
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -50,10 +28,85 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: echo "version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Get build matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@62a1597b84b3461abad9816d9cd92862a2b542c3 # 2026.03.2
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.IMAGE_NAME }}
+
+  build:
+    name: Build ${{ matrix.arch }} image
+    needs: init
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.init.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Get build_from
+        id: info
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          BUILD_FROM=$(grep "^  ${ARCH}:" claude-terminal/build.yaml | awk '{print $2}' | tr -d '"')
+          echo "build_from=$BUILD_FROM" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        uses: home-assistant/builder/actions/build-image@62a1597b84b3461abad9816d9cd92862a2b542c3 # 2026.03.2
+        with:
+          arch: ${{ matrix.arch }}
+          build-args: |
+            BUILD_FROM=${{ steps.info.outputs.build_from }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./claude-terminal
+          cosign: "true"
+          image: ${{ matrix.image }}
+          image-tags: |
+            ${{ needs.init.outputs.version }}
+            latest
+          push: "true"
+          version: ${{ needs.init.outputs.version }}
+
+  manifest:
+    name: Publish multi-arch manifest
+    needs: [init, build]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+    steps:
+      - name: Publish multi-arch manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@62a1597b84b3461abad9816d9cd92862a2b542c3 # 2026.03.2
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tags: |
+            ${{ needs.init.outputs.version }}
+            latest
+
+  image-scan:
+    name: Scan published image
+    needs: [init, manifest]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
       - name: Run Trivy image scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
         with:
-          image-ref: "ghcr.io/${{ github.repository_owner }}/claude-terminal-prowine-amd64:${{ steps.version.outputs.version }}"
+          image-ref: "ghcr.io/${{ github.repository_owner }}/amd64-claude-terminal-prowine:${{ needs.init.outputs.version }}"
           scan-type: image
           severity: CRITICAL,HIGH
           exit-code: "1"
