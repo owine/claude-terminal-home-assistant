@@ -285,7 +285,7 @@ wheels = [
 
 [[package]]
 name = "fastmcp"
-version = "3.1.0"
+version = "3.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "authlib" },
@@ -310,9 +310,9 @@ dependencies = [
     { name = "watchfiles" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0a/70/862026c4589441f86ad3108f05bfb2f781c6b322ad60a982f40b303b47d7/fastmcp-3.1.0.tar.gz", hash = "sha256:e25264794c734b9977502a51466961eeecff92a0c2f3b49c40c070993628d6d0", size = 17347083, upload-time = "2026-03-03T02:43:11.283Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/83/c95d3bf717698a693eccb43e137a32939d2549876e884e246028bff6ecce/fastmcp-3.1.1.tar.gz", hash = "sha256:db184b5391a31199323766a3abf3a8bfbb8010479f77eca84c0e554f18655c48", size = 17347644, upload-time = "2026-03-14T19:12:20.235Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/07/516f5b20d88932e5a466c2216b628e5358a71b3a9f522215607c3281de05/fastmcp-3.1.0-py3-none-any.whl", hash = "sha256:b1f73b56fd3b0cb2bd9e2a144fc650d5cc31587ed129d996db7710e464ae8010", size = 633749, upload-time = "2026-03-03T02:43:09.06Z" },
+    { url = "https://files.pythonhosted.org/packages/70/ea/570122de7e24f72138d006f799768e14cc1ccf7fcb22b7750b2bd276c711/fastmcp-3.1.1-py3-none-any.whl", hash = "sha256:8132ba069d89f14566b3266919d6d72e2ec23dd45d8944622dca407e9beda7eb", size = 633754, upload-time = "2026-03-14T19:12:22.736Z" },
 ]
 
 [[package]]
@@ -326,7 +326,7 @@ wheels = [
 
 [[package]]
 name = "ha-mcp"
-version = "7.0.0"
+version = "7.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
@@ -338,9 +338,9 @@ dependencies = [
     { name = "truststore" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/16/ce9237b1145ddba9c2960af3837dd4e71f08fb84837fd7688be8075a6ea9/ha_mcp-7.0.0.tar.gz", hash = "sha256:70ed030ba4d5cad57b62a46d016198fdabb356c7d3392f87406b2f141cbe287f", size = 239607, upload-time = "2026-03-11T02:41:00.085Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/bd/40e0ce0c54fce3e5dce8989d6e0b27d85de924f0e6542564566e1641214b/ha_mcp-7.1.0.tar.gz", hash = "sha256:591e696d2dd798e99ecd297d61bf04fbc32075c2ab06a35c62f9356fbdc52bc1", size = 249931, upload-time = "2026-03-18T10:51:34.495Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/07/10/41c8711a2c5c95a5db62efbf311e2707e827076139c0fbb3dc2f131acfde/ha_mcp-7.0.0-py3-none-any.whl", hash = "sha256:0c4da22df15abacd7da5b3b115980d8b142565e7d9f4d860385f0aa1445158a8", size = 271468, upload-time = "2026-03-11T02:40:57.408Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/a8/0076a50580f39abff1e4a5c4f2f40c55626d0e3ab16ed8a4d59b5eaaf109/ha_mcp-7.1.0-py3-none-any.whl", hash = "sha256:95b92eeaa1db54162a660a3485e61395532f4fe69d826b27696986a856b5b99f", size = 281769, upload-time = "2026-03-18T10:51:33.154Z" },
 ]
 
 [[package]]
@@ -352,7 +352,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ha-mcp", specifier = "==7.0.0" }]
+requires-dist = [{ name = "ha-mcp", specifier = "==7.1.0" }]
 
 [[package]]
 name = "httpcore"
