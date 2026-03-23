@@ -15,30 +15,64 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ARCHITECTURES: '["amd64", "aarch64"]'
+  IMAGE_NAME: claude-terminal-prowine
+
+permissions:
+  contents: read
+
 jobs:
-  build:
-    name: Test build
-    runs-on: ubuntu-24.04
-    permissions:
-      packages: read  # Pull cache images from ghcr.io
+  init:
+    name: Initialize build
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
+      - name: Get build matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@62a1597b84b3461abad9816d9cd92862a2b542c3 # 2026.03.2
         with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.IMAGE_NAME }}
 
-      - name: Test build
-        uses: home-assistant/builder@62a1597b84b3461abad9816d9cd92862a2b542c3 # 2026.03.2
+  build:
+    name: Test build ${{ matrix.arch }}
+    needs: init
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.init.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Get build_from
+        id: info
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          BUILD_FROM=$(grep "^  ${ARCH}:" claude-terminal/build.yaml | awk '{print $2}' | tr -d '"')
+          echo "build_from=$BUILD_FROM" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        uses: home-assistant/builder/actions/build-image@62a1597b84b3461abad9816d9cd92862a2b542c3 # 2026.03.2
         with:
-          args: |
-            --test \
-            --amd64 \
-            --aarch64 \
-            --target ./claude-terminal \
-            --image "claude-terminal-prowine-{arch}" \
-            --docker-hub ghcr.io/${{ github.repository_owner }}
+          arch: ${{ matrix.arch }}
+          build-args: |
+            BUILD_FROM=${{ steps.info.outputs.build_from }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./claude-terminal
+          cosign: "false"
+          image: ${{ matrix.image }}
+          image-tags: |
+            test
+          load: "true"
+          push: "false"
+          version: ${{ github.sha }}
