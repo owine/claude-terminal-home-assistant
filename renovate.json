@@ -15,18 +15,25 @@
   ],
   "packageRules": [
     {
-      "description": "Home Assistant base images - disable digest pinning in build.yaml",
+      "description": "Home Assistant base images - disable digest pinning (tracked via build.yaml)",
       "matchDatasources": [
         "docker"
-      ],
-      "matchManagers": [
-        "custom.regex"
       ],
       "matchPackageNames": [
         "ghcr.io/home-assistant/amd64-base",
         "ghcr.io/home-assistant/aarch64-base"
       ],
       "pinDigests": false
+    },
+    {
+      "description": "Home Assistant base images - disable Dockerfile manager (source of truth is build.yaml)",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchPackageNames": [
+        "ghcr.io/home-assistant/amd64-base"
+      ],
+      "enabled": false
     },
     {
       "description": "Group all non-major updates into a single weekly PR",
