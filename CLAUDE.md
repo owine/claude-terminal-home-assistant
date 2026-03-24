@@ -4,987 +4,181 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository contains Home Assistant apps, specifically the **Claude Terminal Prowine** app which provides a web-based terminal interface with Claude Code CLI pre-installed and persistent package management. The app allows Home Assistant users to access Claude AI capabilities directly from their dashboard.
+**Claude Terminal Prowine** — a Home Assistant add-on providing a web-based terminal with Claude Code CLI pre-installed and persistent package management.
 
-**Fork Attribution:** This is a personal fork maintained by [@owine](https://github.com/owine), built upon:
-- [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) - Original Claude Terminal app by Tom Cassady
+**Fork Attribution:** Personal fork by [@owine](https://github.com/owine), built upon:
+- [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) - Original by Tom Cassady
 - [ESJavadex/claude-code-ha](https://github.com/ESJavadex/claude-code-ha) - Enhanced fork by Javier Santos
-
-## Task Completion
-
-When reviewing PRs, complete the full review cycle before ending - summarize findings, provide actionable feedback, and confirm next steps with the user.
 
 ## Development Environment
 
 ### Setup
 ```bash
-# Enter the development shell (NixOS/Nix)
-nix develop
-
-# Or with direnv (if installed)
-direnv allow
+nix develop        # Enter development shell
+direnv allow       # Or with direnv
 ```
 
-### Core Development Commands
-
-**Build & Test:**
-- `build-addon` - Build the Claude Terminal Prowine app with Podman
-- `run-addon` - Run app locally on port 7681 with volume mapping
-- `test-endpoint` - Test web endpoint availability (curl localhost:7681)
-
-**Linting:**
-- `lint-all` - Run all linters (hadolint, shellcheck, yamllint, actionlint)
-- `lint-dockerfile` - Lint Dockerfile using hadolint
-- `lint-shell` - Lint all shell scripts using shellcheck
-- `lint-yaml` - Lint YAML files using yamllint
-- `lint-actions` - Lint GitHub Actions workflows using actionlint
-
-### Manual Commands (for local testing)
+### Commands
 ```bash
-# IMPORTANT: Replace {arch} with amd64 (x86_64) or aarch64 (ARM64/Apple Silicon)
+# Build & Test (Nix shell)
+build-addon        # Build with Podman
+run-addon          # Run locally on port 7681
+test-endpoint      # curl localhost:7681
 
-# Build (use docker or podman)
+# Linting
+lint-all           # All linters (hadolint, shellcheck, yamllint, actionlint)
+lint-dockerfile    # hadolint
+lint-shell         # shellcheck
+lint-yaml          # yamllint
+lint-actions       # actionlint
+
+# Manual build (replace {arch} with amd64 or aarch64)
 docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
   -t local/claude-terminal-prowine ./claude-terminal
-
-# Build without cache (required when dependencies change)
-docker build --no-cache \
-  --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
-  -t local/claude-terminal-prowine ./claude-terminal
-
-# Run locally
-docker run -p 7681:7681 -v $(pwd)/config:/config local/claude-terminal-prowine
-
-# Lint
-hadolint ./claude-terminal/Dockerfile
-
-# Test endpoint
-curl -X GET http://localhost:7681/
+# Add --no-cache when dependencies change
 ```
 
 ## Architecture
 
 ### App Structure (claude-terminal/)
-- **config.yaml** - Home Assistant app configuration (slug: `claude_terminal_prowine`)
-- **Dockerfile** - Alpine 3.23-based container with Node.js and Claude Code CLI
-- **build.yaml** - Multi-architecture build configuration (amd64, aarch64)
-- **run.sh** - Main startup script with credential management and ttyd terminal
-- **scripts/** - Modular credential management scripts
-- **ha-mcp/** - Home Assistant MCP server locked dependencies
-  - **pyproject.toml** - Pins ha-mcp version, configures `index-strategy = "unsafe-best-match"`
-  - **uv.lock** - **CRITICAL:** Locks all 75 transitive dependencies with exact versions and SHA256 hashes
-- **wrapper/** - Express.js server for image uploads and terminal proxy
-  - **server.js** - Main service (port 7680)
-  - **package.json** - Node.js dependencies (express 5.x, multer 2.x, http-proxy-middleware 3.x)
-  - **package-lock.json** - **CRITICAL:** Ensures deterministic builds with exact dependency versions
-  - **public/** - HTML interface with embedded ttyd terminal
-    - **manifest.json** - PWA web app manifest (app name, icons, display mode)
-    - **sw.js** - Service worker (network-first caching, offline fallback)
-    - **offline.html** - Offline fallback page shown when network is unavailable
-    - **icon-192.png / icon-512.png** - PWA icons (Claude `{ }` with HA badge)
-    - **icon-maskable-512.png** - Maskable icon variant for Android adaptive icons
-
-### Build Configuration (build.yaml)
-
-The `build.yaml` file configures the Home Assistant Builder for multi-architecture builds:
-
-```yaml
-# Architecture-specific base images (managed by Renovate)
-build_from:
-  aarch64: ghcr.io/home-assistant/aarch64-base:3.23
-  amd64: ghcr.io/home-assistant/amd64-base:3.23
-
-# Pre-built images location (what users pull)
-image: "ghcr.io/owine/{arch}-claude-terminal-prowine"
-
-# OCI container labels
-labels:
-  org.opencontainers.image.title: "Claude Terminal Prowine"
-  org.opencontainers.image.description: "Enhanced terminal interface for Claude Code CLI"
-  org.opencontainers.image.source: "https://github.com/owine/claude-terminal-home-assistant"
-  org.opencontainers.image.licenses: "MIT"
-```
-
-**Key Points:**
-- `build_from` - Specifies base images per architecture (Home Assistant maintains these)
-- `image` - Template for published image names (`{arch}` replaced with amd64/aarch64)
-- `labels` - OCI-compliant metadata embedded in images
-
-**Renovate Integration:**
-The file includes special comments that Renovate parses to track base image updates:
-```yaml
-# renovate: datasource=docker depName=ghcr.io/home-assistant/aarch64-base versioning=loose
-```
-When Home Assistant releases new base images, Renovate creates a PR to update the version.
-
-### Configuration Options (config.yaml)
-
-The app exposes these configuration options to users:
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `auto_launch_claude` | bool | `true` | Start Claude automatically or show session picker |
-| `dangerously_skip_permissions` | bool | `false` | Run Claude with unrestricted file access |
-| `enable_ha_mcp` | bool | `true` | Enable Home Assistant MCP server integration |
-| `tmux_mouse_mode` | bool | `false` | Enable mouse support in tmux (hold Shift to select text) |
-| `persistent_apk_packages` | list | `[]` | System packages to auto-install on startup |
-| `persistent_pip_packages` | list | `[]` | Python packages to auto-install on startup |
-
-**API Permissions (config.yaml):**
-- `hassio_api: true` - Access to Supervisor API
-- `hassio_role: manager` - Manager-level access for app operations
-- `homeassistant_api: true` - Access to Home Assistant Core API
-- `auth_api: true` - Access to authentication API
-
-**Panel Configuration:**
-- `panel_icon: mdi:code-braces-box` - Sidebar icon
-- `panel_title: "Claude Terminal Prowine"` - Sidebar title
-- `panel_admin: true` - Only visible to admin users
+- **config.yaml** — Add-on configuration (slug: `claude_terminal_prowine`)
+- **Dockerfile** — Alpine 3.23 container with Node.js and Claude Code CLI
+- **build.yaml** — Multi-arch build config (amd64, aarch64) with Renovate-tracked base images
+- **run.sh** — Startup script: health check → environment init → tools → services → terminal
+- **scripts/** — Modular credential management scripts
+- **ha-mcp/** — Home Assistant MCP server with locked dependencies (`pyproject.toml` + `uv.lock`)
+- **wrapper/** — Express.js server (port 7680): image uploads, terminal proxy, mouse mode toggle
+  - **public/** — HTML interface, PWA assets (manifest, service worker, icons, offline fallback)
 
 ### Key Components
-1. **Web Terminal**: Uses ttyd (v1.7.7) to provide browser-based terminal access
-2. **Wrapper Service**: Express.js server handling UI, terminal proxy, image uploads, and mouse mode toggle
-3. **Credential Management**: Persistent authentication storage in `/data/.config/claude/`
-4. **Service Integration**: Home Assistant ingress support with panel icon
-5. **Multi-Architecture**: Supports amd64, aarch64 platforms
-6. **Package Management**: Persistent package installation via `persist-install` script
-7. **Home Assistant MCP**: Pre-installed [ha-mcp](https://github.com/homeassistant-ai/ha-mcp) server with locked dependencies for deterministic builds
-8. **Progressive Web App**: Installable to iOS/Android home screens with offline fallback, works across direct port, HA ingress, and reverse proxy access paths
+1. **Web Terminal** — ttyd (v1.7.7) browser-based terminal
+2. **Wrapper Service** — Express.js handling UI, WebSocket proxy to ttyd, image uploads, mouse toggle
+3. **Credential Management** — Persistent auth storage in `/data/.config/claude/` with 600 permissions
+4. **Package Management** — Persistent installation via `persist-install` to `/data/packages/`
+5. **Home Assistant MCP** — Pre-installed ha-mcp server with locked dependencies
+6. **PWA** — Installable to home screens; relative URLs work across direct port, ingress, and reverse proxy
 
-### Credential System
-The app implements a sophisticated credential management system:
-- **Persistent Storage**: Credentials saved to `/config/claude-config/` (survives restarts)
-- **Multiple Locations**: Handles various Claude credential file locations
-- **Background Service**: Continuous credential monitoring and saving
-- **Security**: Proper file permissions (600) and safe directory operations
+### Wrapper Service Gotchas
+- **WebSocket pathRewrite** is required: `'^/terminal': ''` — without it, ttyd rejects with "illegal ws path"
+- **Middleware order matters**: API routes → terminal proxy → static files → error handler
+- **PWA cache version** (`CACHE_NAME` in `sw.js`) must be manually bumped when cached assets change
 
-### Container Execution Flow
+## Conventions
 
-The main startup script (`run.sh`) orchestrates the app initialization:
-
-1. **Health Check** (`run_health_check`) - Verify memory, disk, network, Node.js, Claude CLI
-2. **Environment Init** (`init_environment`) - Create `/data` directories, set XDG variables
-   - Migrate legacy auth files from old locations (`/root/.config/anthropic`, `/config/claude-config`)
-   - Create `/etc/profile.d/persistent-packages.sh` for all bash sessions
-   - Copy tmux.conf and apply mouse mode setting from configuration
-   - Install Claude skills and commands from `/opt/.claude` to `$HOME/.claude`
-   - Copy Claude binary to persistent home (`$HOME/.local/bin/claude`)
-3. **Install Tools** (`install_tools`) - Install ttyd, jq, curl, tmux via apk
-4. **Session Picker** (`setup_session_picker`) - Copy script to `/usr/local/bin/claude-session-picker`
-5. **Persistent Packages** (`setup_persistent_packages`) - Install persist-install command, auto-install configured packages
-6. **HA MCP** (`setup_ha_mcp`) - Register pre-installed ha-mcp binary with Claude Code (if enabled)
-7. **Wrapper Service** (`start_wrapper_service`) - Start Express.js on port 7680 with WebSocket proxy
-8. **tmux Session** (`setup_tmux_session`) - Create detached tmux session BEFORE ttyd starts
-9. **Web Terminal** - Launch ttyd on port 7681, attach to existing tmux session
-
-**Key Functions in run.sh:**
-- `init_environment()` - Core environment setup with XDG variables
-- `migrate_legacy_auth_files()` - One-time migration from old credential locations
-- `get_claude_launch_command()` - Determine startup command based on configuration
-- `start_wrapper_service()` - Launch Node.js wrapper service (UI, proxy, uploads, mouse toggle)
-- `setup_tmux_session()` - Create/attach tmux session (avoids nesting errors per ttyd#1396)
-
-## Development Notes
-
-### Local Container Testing
-For rapid development and debugging without pushing new versions.
-
-**IMPORTANT:** You must provide `--build-arg BUILD_FROM=...` because the Dockerfile has no default (this prevents multi-arch build issues).
-
-#### Determine Your Architecture
-
-```bash
-# Check your system architecture
-uname -m
-# x86_64  → use amd64-base
-# aarch64 → use aarch64-base (Apple Silicon, Raspberry Pi 4/5)
-# arm64   → use aarch64-base (macOS reports as arm64)
-```
-
-#### Quick Build & Test
-
-Use `docker` or `podman` (commands are interchangeable):
-
-```bash
-# For x86_64 / Intel / AMD systems:
-docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23 \
-  -t local/claude-terminal:test ./claude-terminal
-
-# For aarch64 / ARM64 / Apple Silicon systems:
-docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/aarch64-base:3.23 \
-  -t local/claude-terminal:test ./claude-terminal
-
-# Build without cache (required after dependency changes):
-docker build --no-cache \
-  --build-arg BUILD_FROM=ghcr.io/home-assistant/aarch64-base:3.23 \
-  -t local/claude-terminal:test ./claude-terminal
-
-# Create test config directory
-mkdir -p /tmp/test-config/claude-config
-
-# Configure session picker (optional)
-echo '{"auto_launch_claude": false}' > /tmp/test-config/options.json
-
-# Run test container
-docker run -d --name test-claude-dev -p 7681:7681 \
-  -v /tmp/test-config:/config \
-  local/claude-terminal:test
-
-# Check logs
-docker logs test-claude-dev
-
-# Test web interface at http://localhost:7681
-
-# Stop and cleanup
-docker stop test-claude-dev && docker rm test-claude-dev
-```
-
-#### Interactive Testing
-```bash
-# Test session picker directly
-docker run --rm -it local/claude-terminal:test /opt/scripts/claude-session-picker.sh
-
-# Execute commands inside running container
-docker exec -it test-claude-dev /bin/bash
-
-# Test script modifications without rebuilding
-docker cp ./claude-terminal/scripts/claude-session-picker.sh test-claude-dev:/opt/scripts/
-docker exec test-claude-dev chmod +x /opt/scripts/claude-session-picker.sh
-```
-
-#### Development Workflow
-1. **Make changes** to scripts or Dockerfile
-2. **Rebuild** with `docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 -t local/claude-terminal:test ./claude-terminal`
-3. **Stop/remove** old container: `docker stop test-claude-dev && docker rm test-claude-dev`
-4. **Start new** container with updated image
-5. **Test** changes at http://localhost:7681
-6. **Repeat** until satisfied, then commit and push
-
-**Note:** Replace `{arch}` with `amd64` or `aarch64` based on your system architecture.
-
-#### Debugging Tips
-- **Check container logs**: `docker logs -f test-claude-dev` (follow mode)
-- **Inspect running processes**: `docker exec test-claude-dev ps aux`
-- **Test individual scripts**: `docker exec test-claude-dev /opt/scripts/script-name.sh`
-- **Volume contents**: `ls -la /tmp/test-config/` to verify persistence
-
-### Production Testing
-- **Local Testing**: Build and test locally before creating releases
-- **Container Health**: Check logs with `docker logs <container-id>`
-- **Authentication**: Use `claude-auth debug` within terminal for credential troubleshooting
-
-## Documentation
-
-For documentation cleanup tasks: 1) List all files to be modified/deleted first, 2) Get explicit user approval, 3) Process in batches with checkpoints.
-
-## Design & Planning
-
-During design discussions and requirements gathering, create a running summary document that captures decisions made so far, so progress isn't lost if session ends.
-
-### File Conventions
-- **Shell Scripts**: Use `#!/usr/bin/with-contenv bashio` for app scripts
-- **Indentation**: 2 spaces for YAML, 4 spaces for shell scripts
-- **Error Handling**: Use `bashio::log.error` for error reporting
-- **Permissions**: Credential files must have 600 permissions
+### File Standards
+- **Shell Scripts**: `#!/usr/bin/with-contenv bashio`, 4-space indent, `bashio::log.error` for errors
+- **YAML**: 2-space indent
+- **Credentials**: 600 file permissions
 
 ### Key Environment Variables
-
-**Core Application:**
-- `ANTHROPIC_CONFIG_DIR=/data/.config/claude` - Claude Code configuration directory
-- `HOME=/data/home` - User home directory (persistent across restarts)
-- `SUPERVISOR_TOKEN` - Auto-populated token for Home Assistant Supervisor API
-- `WRAPPER_PORT=7680` - Wrapper service port
-- `TTYD_PORT=7681` - ttyd terminal port
-- `UPLOAD_DIR=/data/images` - Directory for uploaded images
-
-**XDG Base Directory Spec (set in run.sh):**
-- `XDG_CONFIG_HOME=/data/.config` - User configuration files
-- `XDG_CACHE_HOME=/data/.cache` - Non-essential cached data
-- `XDG_STATE_HOME=/data/.local/state` - State data that should persist
-- `XDG_DATA_HOME=/data/.local/share` - User data files
-
-**GitHub CLI:**
-- `GH_CONFIG_DIR=/data/.config/gh` - GitHub CLI persistent configuration
-
-**Claude Permissions:**
-- `CLAUDE_DANGEROUS_MODE` - Set to "true" when dangerously_skip_permissions is enabled
-- `IS_SANDBOX=1` - Required for --dangerously-skip-permissions when running as root
-- `ALLOW_YOLO_MODE` - Set to "1" when dangerously_skip_permissions is enabled; gates the session picker's Dangerous Mode (YOLO) menu option
+- `ANTHROPIC_CONFIG_DIR=/data/.config/claude` — Claude config
+- `HOME=/data/home` — Persistent home directory
+- `SUPERVISOR_TOKEN` — HA Supervisor API token
+- `WRAPPER_PORT=7680` / `TTYD_PORT=7681` — Service ports
+- `XDG_CONFIG_HOME=/data/.config`, `XDG_CACHE_HOME=/data/.cache`, `XDG_STATE_HOME=/data/.local/state`, `XDG_DATA_HOME=/data/.local/share`
 
 ### Important Constraints
-- No sudo privileges available in development environment
-- App targets Home Assistant OS (Alpine Linux 3.23 base)
-- Must handle credential persistence across container restarts
-- Requires multi-architecture compatibility (amd64, aarch64)
-- **CRITICAL:** `wrapper/package-lock.json` must be committed for deterministic npm builds
-- **CRITICAL:** `ha-mcp/uv.lock` must be committed for deterministic ha-mcp builds
+- No sudo in dev environment; targets Alpine Linux 3.23
+- Multi-architecture: amd64 + aarch64
+- **CRITICAL:** `wrapper/package-lock.json` must be committed (deterministic npm builds)
+- **CRITICAL:** `ha-mcp/uv.lock` must be committed (deterministic Python builds)
 - Docker builds require `--no-cache` when npm or Python dependencies change
+- Credential persistence must survive container restarts
+
+## Dependency Management
+
+### Updating npm dependencies (wrapper/)
+```bash
+cd claude-terminal/wrapper && npm install
+git add package-lock.json
+```
+Note: `.gitignore` has a specific exception for `!claude-terminal/wrapper/package-lock.json`.
+
+### Updating ha-mcp dependencies
+```bash
+docker run --rm --entrypoint bash \
+  -v $(pwd)/claude-terminal/ha-mcp:/opt/ha-mcp \
+  ghcr.io/home-assistant/aarch64-base:3.23 -c \
+  'apk add --no-cache curl > /dev/null 2>&1 && \
+   curl -fsSL https://astral.sh/uv/install.sh | sh > /dev/null 2>&1 && \
+   export PATH="$HOME/.local/bin:$PATH" && \
+   cd /opt/ha-mcp && uv lock'
+git add claude-terminal/ha-mcp/uv.lock
+```
+Note: Renovate auto-tracks both `pyproject.toml` + `uv.lock`. Manual updates rarely needed.
+
+### Renovate
+- Auto-merges patch updates; groups minor updates; individual PRs for major
+- Tracks npm, Docker, GitHub Actions, and Python (uv) dependencies
+- All GitHub Actions use SHA256 digest pinning (Renovate auto-updates)
+- See `renovate.json` for config
 
 ## Release Management
 
 ### CRITICAL: Always Update Version and Changelog
 
-**When making ANY changes to the app, you MUST:**
+**Every change to the add-on MUST include:**
+1. **Version bump** in `claude-terminal/config.yaml` (patch/minor/major)
+2. **Changelog entry** at TOP of `claude-terminal/CHANGELOG.md`
 
-1. **Bump the version** in `claude-terminal/config.yaml`
-   - Patch version (x.x.X) for bug fixes and small changes
-   - Minor version (x.X.0) for new features
-   - Major version (X.0.0) for breaking changes
-
-2. **Update the changelog** in `claude-terminal/CHANGELOG.md`
-   - Add new version section at the TOP of the file
-   - Use the format: `## X.X.X` followed by `### Category - Description`
-   - Categories: ✨ New Feature, 🐛 Bug Fix, 🛠️ Improvement, 📚 Documentation, 🔧 Technical
-   - Include bullet points describing what changed and why
-
-**Example workflow:**
-```bash
-# 1. Make your code changes
-# 2. Bump version in config.yaml (e.g., 1.7.3 → 1.7.4)
-# 3. Add changelog entry at the top of CHANGELOG.md
-# 4. Commit all changes together
-```
-
-**Changelog entry format:**
+Changelog format:
 ```markdown
-## 1.7.4
+## X.X.X
 
 ### ✨ New Feature - Short Description
-- **Bold summary**: Detailed explanation of the change
-  - Sub-bullet for additional details
-  - Another sub-bullet if needed
+- **Bold summary**: Detailed explanation
 ```
+Categories: ✨ New Feature, 🐛 Bug Fix, 🛠️ Improvement, 📚 Documentation, 🔧 Technical
 
-**DO NOT** commit changes without updating both the version and changelog!
+### Release Process
 
-### Release Process (v1.3.0+)
+1. Bump version + update changelog + commit + push to main
+2. Test workflow runs automatically (validates builds without publishing)
+3. When ready: create GitHub release → publish workflow builds, signs (cosign), and pushes images
 
-The app uses **pre-built Docker images** published to GitHub Container Registry (ghcr.io) with a **multi-job CI/CD workflow**:
+```bash
+# Create release
+gh release create v1.3.1 --title "v1.3.1" --notes "See CHANGELOG.md"
 
-#### Development Workflow
-
-1. **Make changes** to the codebase
-2. **Update version** in `claude-terminal/config.yaml`
-3. **Update changelog** in `claude-terminal/CHANGELOG.md`
-4. **Commit and push** to main branch
-   ```bash
-   git add .
-   git commit -m "feat: description of changes"
-   git push origin main
-   ```
-
-5. **Test workflow runs automatically**
-   - Triggered by push to main or pull requests
-   - 2-job structure: init job (matrix setup) → per-arch validate-only builds on native runners (amd64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`, no QEMU)
-   - Builds validate successfully without publishing images to the registry
-   - See `.github/workflows/test.yml`
-
-#### Publishing a Release
-
-**When ready to publish a new version:**
-
-1. **Create a GitHub Release**
-   ```bash
-   # Via GitHub CLI
-   gh release create v1.3.1 \
-     --title "v1.3.1" \
-     --notes "$(cat <<EOF
-   ## Changes
-   - Feature: Description
-   - Fix: Description
-
-   See CHANGELOG.md for full details.
-   EOF
-   )"
-
-   # Or via GitHub web UI:
-   # - Go to Releases → Draft a new release
-   # - Choose tag: v1.3.1 (create new tag)
-   # - Title: v1.3.1
-   # - Description: Copy from CHANGELOG.md
-   # - Click "Publish release"
-   ```
-
-2. **Publish workflow runs automatically**
-   - Triggered by GitHub release publication
-   - 4-job structure: init → parallel per-arch builds on native runners (amd64 + aarch64, no QEMU) → multi-arch manifest → image scan
-   - **Signs per-arch images and the multi-arch manifest with cosign** for cryptographic verification
-   - Publishes per-arch images to `ghcr.io/owine/{arch}-claude-terminal-prowine` and a combined manifest to `ghcr.io/owine/claude-terminal-prowine`
-   - Tags images with version (e.g., `2.2.0`) and `latest`
-   - See `.github/workflows/publish.yml`
-
-3. **Verify publication**
-   ```bash
-   # Check workflow status
-   gh run list --workflow=publish.yml --limit 3
-
-   # Verify images published
-   gh api /user/packages/container/amd64-claude-terminal-prowine/versions \
-     --jq '.[0] | {tags: .metadata.container.tags, created: .created_at}'
-   ```
-
-#### CI/CD Workflows
-
-**Test Workflow** (`.github/workflows/test.yml`)
-- **Triggers:** Push to main, pull requests
-- **Purpose:** Validate builds without publishing
-- **Structure:** 2-job pipeline — init job (matrix setup) → per-arch builds on native runners (`ubuntu-24.04` for amd64, `ubuntu-24.04-arm` for aarch64, no QEMU)
-- **Caching:** GHA cache + authenticates with ghcr.io to pull `latest` images as registry layer cache; reuses unchanged layers (apk, npm ci, etc.)
-- **Duration:** ~1-2 minutes (with cache hits on unchanged layers)
-- **Output:** Build validation only (no registry push)
-
-**Publish Workflow** (`.github/workflows/publish.yml`)
-- **Triggers:** GitHub release published
-- **Purpose:** Build and publish signed production images
-- **Structure:** 4-job pipeline — init → parallel per-arch builds on native runners → multi-arch manifest → image scan
-- **Actions:** Uses composable `home-assistant/builder/actions/{init,build,manifest}` actions (SHA-pinned)
-- **Duration:** ~2-3 minutes
-- **Output:** Per-arch images at `ghcr.io/owine/{arch}-claude-terminal-prowine` and a combined manifest at `ghcr.io/owine/claude-terminal-prowine`; cosign signatures on per-arch images and manifest
-- **Permissions:** Requires `id-token: write` for cosign
-
-#### Image Locations
-
-**Published images:**
-- `ghcr.io/owine/amd64-claude-terminal-prowine:latest`
-- `ghcr.io/owine/amd64-claude-terminal-prowine:2.2.0`
-- `ghcr.io/owine/aarch64-claude-terminal-prowine:latest`
-- `ghcr.io/owine/aarch64-claude-terminal-prowine:2.2.0`
-- `ghcr.io/owine/claude-terminal-prowine:latest` (multi-arch manifest)
-- `ghcr.io/owine/claude-terminal-prowine:2.2.0` (multi-arch manifest)
-
-**Image configuration:**
-- Defined in `claude-terminal/build.yaml`
-- `image:` field points to ghcr.io location
-- Home Assistant pulls these pre-built images (no local build)
-
-#### Why Pre-Built Images?
-
-Prior to v1.3.0, Home Assistant built images locally during installation. This approach had critical flaws:
-
-**Problems with local builds:**
-- ✗ Home Assistant's npm install ignored `package-lock.json`
-- ✗ Ignored exact version pins in `package.json`
-- ✗ Random build failures from Docker layer caching
-- ✗ 5+ minute installation time
-- ✗ Inconsistent dependency versions across installs
-
-**Benefits of pre-built images (v1.3.0+):**
-- ✓ Fast installation (~30 seconds download vs ~5 minutes build)
-- ✓ Guaranteed correct dependency versions (built in controlled environment)
-- ✓ Cryptographically signed with cosign for supply chain security
-- ✓ Standard practice for production Home Assistant apps
-- ✓ Test builds validate changes before publication
-
-#### Troubleshooting Releases
-
-**Build fails in test workflow:**
-- Check GitHub Actions logs: `gh run view <run-id> --log-failed`
-- Common issues: Dockerfile syntax, missing files, npm dependency errors
-- Fix issues and push again (test workflow re-runs automatically)
-
-**Build fails in publish workflow:**
-- Verify GitHub release was created correctly
-- Check cosign permissions (`id-token: write` required)
-- Ensure `--image` parameter matches `build.yaml` configuration
-- Review builder logs for specific error messages
-
-**Images not appearing in ghcr.io:**
-- Check workflow completed successfully
-- Verify GITHUB_TOKEN has `packages: write` permission
-- Check package visibility settings (should be public)
-- Allow a few minutes for registry propagation
-
-**Home Assistant can't pull images:**
-- Verify images exist: `gh api /user/packages/container/amd64-claude-terminal-prowine/versions`
-- Check package is public (not private)
-- Ensure `build.yaml` image field matches published location
-- Try manual pull: `docker pull ghcr.io/owine/amd64-claude-terminal-prowine:latest`
-
-## Wrapper Service & Dependency Management
-
-### Wrapper Service Architecture (server.js)
-
-The wrapper service (`claude-terminal/wrapper/server.js`) is a Node.js Express server that provides:
-
-**Core Functions:**
-1. **Image Uploads** - Handle paste/drag-drop image uploads from browser
-2. **Terminal Proxy** - WebSocket proxy to ttyd for Home Assistant ingress compatibility
-3. **Static File Serving** - Serve the HTML interface with embedded terminal
-4. **Mouse Mode Toggle** - Runtime tmux mouse mode switching via `/mouse-mode` API
-
-**Endpoints:**
-- `GET /health` - Health check, returns `{ status: 'ok', uploadDir: '/data/images' }`
-- `GET /config` - Configuration for frontend `{ ttydPort, uploadDir }`
-- `POST /upload` - Image upload (multipart/form-data with 'image' field)
-- `GET /terminal/*` - Proxy to ttyd terminal (HTTP and WebSocket)
-- `GET /` - Static HTML interface
-
-**WebSocket Proxy Configuration:**
-```javascript
-const terminalProxy = createProxyMiddleware({
-    target: `http://localhost:${TTYD_PORT}`,
-    changeOrigin: true,
-    ws: true,
-    pathRewrite: {
-        '^/terminal': '' // Strip /terminal prefix for WebSocket upgrades
-    },
-    // ... error handling
-});
+# Verify
+gh run list --workflow=publish.yml --limit 3
 ```
-
-The `pathRewrite` is critical - http-proxy-middleware v3 strips mount points for HTTP requests automatically, but WebSocket upgrades require explicit path rewriting. Without this, ttyd rejects connections with "illegal ws path: /terminal/ws".
-
-**Middleware Order:**
-1. API routes (`/health`, `/config`, `/upload`) - MUST come first
-2. Terminal proxy (`/terminal`) - WebSocket-aware proxy to ttyd
-3. Static files (`express.static`) - HTML interface
-4. Error handler - Multer and general error handling
-
-This order is important because Express matches routes in order. Static middleware before API routes would intercept API requests.
-
-### Progressive Web App (PWA)
-
-The wrapper's `public/` directory includes PWA assets that enable "Add to Home Screen" on iOS and Android:
-
-- **`manifest.json`** — Web app manifest with `"start_url": "."` and `"scope": "."` (relative URLs)
-- **`sw.js`** — Service worker using network-first strategy with offline fallback
-- **`offline.html`** — Shown when network is unavailable (respects OS light/dark preference)
-- **Icon assets** — `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`
-
-**Key design decisions:**
-- All URLs are relative, so PWA works across direct port access, HA ingress, and reverse proxies
-- Network-first strategy ensures users always get fresh content (terminal needs live connection)
-- `skipWaiting()` + `clients.claim()` means service worker updates take effect immediately
-- `manifest.json` includes `"id": "claude-terminal-prowine"` for stable PWA identity across URLs
-- Cache version (`CACHE_NAME` in `sw.js`) must be manually bumped when cached assets change
-
-**Known limitation:** PWA installed via HA ingress may need re-adding if the ingress token rotates. Recommend installing via a stable URL (direct IP or reverse proxy).
-
-### CRITICAL: package-lock.json Requirement
-
-The **wrapper** directory contains a Node.js Express server that handles image uploads and WebSocket proxying. This service has specific npm dependencies that MUST be locked for deterministic builds.
-
-**Why package-lock.json is critical:**
-- Without it, `npm install` in Docker builds can install different versions than expected
-- Docker layer caching can cause old dependency versions to be used
-- This led to issues in v1.2.0-1.2.2 where security updates and WebSocket fixes didn't deploy
-
-**Current locked dependencies (v1.5.6):**
-```json
-{
-  "express": "5.2.1",           // Security improvements, stricter validation
-  "multer": "2.0.2",            // Fixes 4 critical CVEs
-  "http-proxy-middleware": "3.0.5"  // Eliminates util._extend deprecation
-}
-```
-
-### When Updating Dependencies
-
-**If you modify `wrapper/package.json`:**
-
-1. **Regenerate the lockfile:**
-   ```bash
-   cd claude-terminal/wrapper
-   npm install
-   ```
-
-2. **Commit the lockfile:**
-   ```bash
-   git add package-lock.json
-   git commit -m "chore: update npm dependencies"
-   ```
-
-3. **Rebuild without cache:**
-   ```bash
-   # For Home Assistant deployment, this happens automatically on reinstall
-   # For local testing (replace {arch} with amd64 or aarch64):
-   docker build --no-cache \
-     --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
-     -t local/claude-terminal:test ./claude-terminal
-   ```
-
-**IMPORTANT:** The `.gitignore` file has a specific exception for this lockfile:
-```gitignore
-# Blanket ignore for lockfiles
-package-lock.json
-
-# Exception: wrapper lockfile needed for Docker builds
-!claude-terminal/wrapper/package-lock.json
-```
-
-### CRITICAL: ha-mcp/uv.lock Requirement
-
-The **ha-mcp** directory contains a `pyproject.toml` and `uv.lock` that pin the Home Assistant MCP server and all 75 transitive dependencies for deterministic builds.
-
-**Why uv.lock is critical:**
-- The HA base image sets `UV_EXTRA_INDEX_URL` pointing to a musllinux wheel index
-- `uv`'s default `first-index` strategy can find packages on the wrong index (e.g., pydantic on musllinux but wrong version) and refuse to check PyPI
-- `pyproject.toml` sets `index-strategy = "unsafe-best-match"` to resolve across both indexes
-- `uv.lock` pins exact versions with SHA256 hashes for all dependencies
-- The Dockerfile runs `uv sync --locked` at build time — no runtime dependency resolution
-
-**When Updating ha-mcp Dependencies**
-
-**If you modify `ha-mcp/pyproject.toml`:**
-
-1. **Regenerate the lockfile** (must be done inside the HA base image or equivalent musl environment):
-   ```bash
-   docker run --rm --entrypoint bash \
-     -v $(pwd)/claude-terminal/ha-mcp:/opt/ha-mcp \
-     ghcr.io/home-assistant/aarch64-base:3.23 -c \
-     'apk add --no-cache curl > /dev/null 2>&1 && \
-      curl -fsSL https://astral.sh/uv/install.sh | sh > /dev/null 2>&1 && \
-      export PATH="$HOME/.local/bin:$PATH" && \
-      cd /opt/ha-mcp && uv lock'
-   ```
-
-2. **Commit the lockfile:**
-   ```bash
-   git add claude-terminal/ha-mcp/uv.lock
-   git commit -m "chore: update ha-mcp dependencies"
-   ```
-
-**NOTE:** Renovate automatically tracks `pyproject.toml` + `uv.lock` via its built-in `uv` manager. Manual updates are rarely needed.
-
-### Dependency Update Automation
-
-The repository uses **Renovate** for automated dependency updates:
-- Auto-merges patch updates (x.x.X)
-- Groups minor updates (x.X.0) for review
-- Individual PRs for major updates (X.0.0)
-- Security vulnerability alerts enabled
-- Tracks npm, Docker, and GitHub Actions dependencies
-
-See `renovate.json` for configuration details.
-
-## GitHub Actions Workflows
-
-This repository uses several GitHub Actions workflows for CI/CD and development automation.
 
 ### CI/CD Workflows
 
-**Test Workflow** (`.github/workflows/test.yml`)
-- **Purpose:** Validate builds on push to main and pull requests
-- **Triggers:** `push` (main branch only), `pull_request`
-- **What it does:**
-  - 2-job structure: init job (matrix setup) → per-arch validate-only builds
-  - Runs amd64 on `ubuntu-24.04` and aarch64 on `ubuntu-24.04-arm` (no QEMU)
-  - Uses composable `home-assistant/builder/actions/{init,build}` actions (SHA-pinned)
-  - Authenticates with ghcr.io (`packages: read`) to enable registry-based layer caching
-  - GHA cache + registry `latest` image used as `--cache-from`; reuses unchanged layers (apk, npm ci, etc.)
-  - Builds validate without pushing to the registry (`push: false`, `load: true`)
-  - Fast feedback on PR build compatibility
-- **Duration:** ~1-2 minutes (with cache hits on unchanged layers)
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `test.yml` | Push to main, PRs | Validate builds (2-job: init → per-arch native builds, no QEMU) |
+| `lint.yml` | Push/PR to main | hadolint, shellcheck, yamllint, actionlint |
+| `publish.yml` | Release published | Build + sign + push images (4-job: init → per-arch → manifest → scan) |
+| `claude-code-review.yml` | PR events | AI code review (optional) |
+| `claude.yml` | @claude mentions | Respond to mentions in issues/PRs (optional) |
 
-**Lint Workflow** (`.github/workflows/lint.yml`)
-- **Purpose:** Enforce code quality standards
-- **Triggers:** Push/PR to `main` branch
-- **Jobs:**
-  - `hadolint` - Dockerfile best practices
-  - `shellcheck` - Shell script analysis (uses pre-installed version on runners)
-  - `yamllint` - YAML validation (uses pre-installed version on runners)
-  - `actionlint` - GitHub Actions workflow validation
-- **Configuration files:** `.hadolint.yaml`, `.shellcheckrc`, `.yamllint.yml`
-- **See also:** `.github/LINTING.md` for detailed linting documentation
+**Images:** `ghcr.io/owine/{arch}-claude-terminal-prowine:{version|latest}` and multi-arch manifest at `ghcr.io/owine/claude-terminal-prowine`
 
-**Publish Workflow** (`.github/workflows/publish.yml`)
-- **Purpose:** Build and publish signed production images
-- **Triggers:** GitHub release published
-- **What it does:**
-  - 4-job structure: init → parallel per-arch builds on native runners → multi-arch manifest → image scan
-  - Uses composable `home-assistant/builder/actions/{init,build,manifest}` actions (SHA-pinned)
-  - Runs amd64 on `ubuntu-24.04` and aarch64 on `ubuntu-24.04-arm` (no QEMU)
-  - Publishes per-arch images to `ghcr.io/owine/{arch}-claude-terminal-prowine`
-  - Creates a combined multi-arch manifest at `ghcr.io/owine/claude-terminal-prowine`
-  - Signs per-arch images and the multi-arch manifest with cosign (keyless OIDC)
-- **Permissions required:**
-  - `contents: read` - Read repository
-  - `packages: write` - Push to Container Registry
-  - `id-token: write` - Required for cosign keyless signing (OIDC)
-- **Duration:** ~2-3 minutes
+## Persistent Package Management
 
-### Development Automation Workflows
-
-**Claude Code Review** (`.github/workflows/claude-code-review.yml`)
-- **Purpose:** Automated AI code review for pull requests
-- **Triggers:** PR opened, synchronized, ready for review, reopened
-- **What it does:**
-  - Uses Claude Code Action to analyze PR changes
-  - Provides inline comments and suggestions
-  - Checks for code quality, security issues, best practices
-- **Configuration:**
-  - `allowed_bots: 'renovate'` - Also reviews Renovate dependency PRs
-  - Uses code-review plugin from claude-code-plugins marketplace
-- **Requirements:**
-  - `CLAUDE_CODE_OAUTH_TOKEN` secret configured in repository settings
-  - Active Claude Code subscription
-- **Note:** Optional workflow - can be disabled without affecting the app
-
-**Claude Code Comment** (`.github/workflows/claude.yml`)
-- **Purpose:** Respond to @claude mentions in issues and PRs
-- **Triggers:**
-  - `issue_comment.created` with @claude mention
-  - `pull_request_review_comment.created` with @claude mention
-  - `issues.opened` or `issues.assigned` with @claude mention
-  - `pull_request_review.submitted` with @claude mention
-- **What it does:**
-  - Analyzes context (code, issue, PR diff)
-  - Responds with suggestions, code fixes, or answers
-- **Permissions:**
-  - Standard read permissions for issues and PRs
-  - `actions: read` - Read CI results on PRs
-- **Requirements:**
-  - `CLAUDE_CODE_OAUTH_TOKEN` secret configured
-- **Note:** Optional workflow - can be disabled without affecting the app
-
-### Actions Pinning Strategy
-
-All GitHub Actions use SHA256 digest pinning for security:
-```yaml
-uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-```
-
-This prevents supply chain attacks where a tag could be moved to malicious code. Renovate automatically updates these digests when new versions are released.
-
-`home-assistant/builder` composable actions are SHA-pinned like all other actions (e.g., `@62a1597b...`).
-
-**DO NOT** commit changes without updating both the version and changelog!
-
-## Persistent Package Management (v1.4.0+)
-
-### CRITICAL: When Users Ask to Install Packages
-
-**ALWAYS use `persist-install` instead of `apk add` or `pip install` directly!**
-
-When a user asks you to install ANY package (Python, system tools, libraries, etc.), you MUST:
-
-1. **Recognize the intent**: User says "install X", "I need X", "can you add X", etc.
-2. **Use persist-install**: NEVER use `apk add` or `pip install` directly
-3. **Explain why**: Tell them it will persist across reboots
-4. **Verify**: Check that it worked and is available
-
-### Why persist-install?
+**ALWAYS use `persist-install` instead of `apk add` or `pip install`** — direct installs are lost on restart.
 
 ```bash
-# ❌ WRONG - This disappears after reboot!
-apk add python3
-
-# ✅ CORRECT - This survives reboots!
-persist-install python3
+persist-install python3 py3-pip git    # System packages
+persist-install --python requests      # Python packages
+persist-install --ha-cli               # Home Assistant CLI
+persist-install --list                 # Show installed
 ```
 
-**Container Architecture**:
-- `apk add` installs to ephemeral container layer (LOST on restart)
-- `persist-install` installs to `/data/packages` (PERSISTENT storage)
-- `/data` is mounted from Home Assistant and survives all reboots
+Packages persist to `/data/packages/` (bin, lib, python venv). Auto-install via add-on config: `persistent_apk_packages` and `persistent_pip_packages` lists.
 
-### Usage Examples
+See `claude-terminal/PERSISTENT_PACKAGES.md` for full details.
 
-```bash
-# Install system packages (Alpine APK)
-persist-install python3 py3-pip git vim htop
+## Task Completion
 
-# Install Python packages
-persist-install --python requests pandas numpy
+When reviewing PRs, complete the full review cycle — summarize findings, provide actionable feedback, confirm next steps.
 
-# Install Home Assistant CLI (official ha command)
-persist-install --ha-cli
+## Documentation
 
-# List installed packages
-persist-install --list
+For cleanup tasks: 1) List files to modify/delete, 2) Get user approval, 3) Process in batches.
 
-# Check help
-persist-install --help
-```
+## Design & Planning
 
-### How It Works
-
-```
-/data/packages/
-├── bin/              # Executable binaries (automatically in PATH)
-├── lib/              # Shared libraries (LD_LIBRARY_PATH)
-└── python/
-    └── venv/         # Python virtual environment
-        ├── bin/      # Python executables (in PATH)
-        └── lib/      # Python packages (site-packages)
-```
-
-**Environment Setup**:
-- `PATH="/data/packages/bin:/data/packages/python/venv/bin:$PATH"`
-- Persistent packages are checked FIRST (highest priority)
-- Python venv automatically activated when packages installed
-
-### When User Asks to Install Something
-
-**Example Conversation Flow**:
-
-```
-User: "I need Python installed"
-
-Claude (YOU): "I'll install Python using persist-install so it survives reboots."
-
-[Run]: persist-install python3 py3-pip
-
-[Verify]: python3 --version
-
-Claude: "Python 3.11.x installed successfully! It's stored in /data/packages
-        and will persist across container restarts and reboots."
-```
-
-**Another Example**:
-
-```
-User: "I want to interact with Home Assistant entities"
-
-Claude (YOU): "I'll show you how to use the Supervisor API to interact with
-              Home Assistant. Let me install Python requests library."
-
-[Run]: persist-install --python requests
-
-[Show]: curl -H "Authorization: Bearer $SUPERVISOR_TOKEN" \
-             http://supervisor/core/api/states | jq '.[0]'
-
-Claude: "You can interact with Home Assistant using the Supervisor API!
-        Check /opt/scripts/ha-api-examples.sh for more examples, or use
-        Python's requests library for programmatic access."
-```
-
-### Proactive Behavior
-
-**You should proactively use persist-install when:**
-
-1. User mentions needing a package/tool/library
-2. User wants to run a command that isn't installed
-3. You recommend installing something
-4. User asks about package management
-5. Error indicates missing package
-
-**Examples of user intent**:
-- "install python"
-- "I need git"
-- "can you add vim?"
-- "let's install requests"
-- "how do I get pandas?"
-- "bash: python: command not found" (error message)
-
-### Common Packages Users Might Request
-
-**System Tools**:
-- `git` - Version control
-- `vim` / `nano` - Text editors (nano already installed)
-- `htop` - Process monitor
-- `curl` / `wget` - Download tools (curl already installed)
-- `jq` - JSON processor (already installed)
-- `sqlite` - SQLite database
-
-**Python Tools**:
-- `python3 py3-pip` - Python and package manager
-- `requests` - HTTP library for API calls
-- `pyyaml` - YAML parser
-- `pandas` - Data analysis
-- `numpy` - Numerical computing
-- `flask` / `fastapi` - Web frameworks
-- `jupyter` - Jupyter notebooks
-
-**Home Assistant CLI**:
-- `ha` - Official Home Assistant CLI (install with `persist-install --ha-cli`)
-  - Downloads from: https://github.com/home-assistant/cli
-  - Provides commands: `ha core`, `ha supervisor`, `ha addons`, etc.
-  - Alternative: Use Supervisor REST API (`http://supervisor/`) with `$SUPERVISOR_TOKEN`
-  - See `scripts/ha-api-examples.sh` for API usage examples
-
-### Auto-Install Configuration
-
-Users can configure packages to auto-install on startup by editing the app configuration:
-
-```yaml
-persistent_apk_packages:
-  - python3
-  - py3-pip
-  - git
-  - vim
-
-persistent_pip_packages:
-  - homeassistant-cli
-  - requests
-```
-
-**When users ask about auto-install**, guide them to:
-1. Go to Settings → Apps → Claude Terminal
-2. Click Configuration tab
-3. Add packages to the lists above
-4. Save and restart the app
-
-### Troubleshooting
-
-**Package not found after installation**:
-```bash
-# Check if it's in persistent storage
-ls -la /data/packages/bin/
-
-# Verify PATH includes persistent directory
-echo $PATH | grep /data/packages
-
-# If PATH is wrong, check if profile script exists
-cat /etc/profile.d/persistent-packages.sh
-
-# Source the profile manually if needed (temporary fix)
-source /etc/profile.d/persistent-packages.sh
-
-# If the profile script is missing, you're running an old version
-# Update to v1.5.2+ which includes the PATH fix
-```
-
-**CRITICAL FIX (v1.5.2)**: Previous versions had a bug where persistent packages
-were installed correctly but not in the PATH for ttyd bash sessions. This was
-fixed by creating `/etc/profile.d/persistent-packages.sh` which is automatically
-sourced by all bash sessions. If you installed packages before v1.5.2 and they
-don't work, update to the latest version and restart the app.
-
-**Python import errors**:
-```bash
-# Activate venv manually if needed
-source /data/packages/python/venv/bin/activate
-
-# Check installed packages
-pip list
-```
-
-**Check disk usage**:
-```bash
-# See how much space packages use
-du -sh /data/packages
-```
-
-### IMPORTANT REMINDERS
-
-1. **NEVER use `apk add` for user-requested packages** - Always use `persist-install`
-2. **ALWAYS verify after installation** - Run `--version` or test command
-3. **EXPLAIN persistence** - Tell users packages will survive reboots
-4. **BE PROACTIVE** - Install packages without being explicitly asked if user needs them
-5. **CHECK FIRST** - Use `which` or `command -v` to see if already installed
-
-### Example: Complete Installation Flow
-
-```bash
-# User asks: "I want to do data analysis with Python"
-
-# Step 1: Install Python and pip
-persist-install python3 py3-pip
-
-# Step 2: Install data science packages
-persist-install --python pandas numpy matplotlib jupyter
-
-# Step 3: Verify installations
-python3 --version
-pip list | grep pandas
-
-# Step 4: Inform user
-echo "All set! You can now use Python for data analysis."
-echo "Packages installed: pandas, numpy, matplotlib, jupyter"
-echo "These will persist across reboots."
-```
-
-### Documentation Reference
-
-For comprehensive details, see: `claude-terminal/PERSISTENT_PACKAGES.md`
+During design discussions, create a running summary document capturing decisions so progress isn't lost if session ends.
