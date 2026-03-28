@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.2.3
 
 ### 🐛 Bug Fix - iOS Scroll and Keyboard Both Working
 - **Fix scrolling regression from keyboard fix**: The `pointer-events: none` approach broke scrolling because iOS assigns touch targets at `touchstart` — mid-gesture changes to `pointer-events` don't redirect touches
