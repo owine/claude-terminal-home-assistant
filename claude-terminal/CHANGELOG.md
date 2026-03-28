@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### 🐛 Bug Fix - iOS Scroll and Keyboard Both Working
+- **Fix scrolling regression from keyboard fix**: The `pointer-events: none` approach broke scrolling because iOS assigns touch targets at `touchstart` — mid-gesture changes to `pointer-events` don't redirect touches
+  - Overlay is now always active (`pointer-events: auto`) on touch devices
+  - Swipes are captured and converted to terminal scroll commands (unchanged)
+  - Taps focus xterm.js's hidden `.xterm-helper-textarea` directly from the `touchend` handler — iOS treats this as a user-initiated focus and opens the keyboard
+
 ### 🛠️ Improvement - Favicon
 - **Add browser tab icon**: Reuses the PWA `icon-192.png` as the favicon so browser tabs show the Claude HA icon instead of a generic globe
 

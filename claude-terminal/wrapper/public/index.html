@@ -125,10 +125,10 @@
             touch-action: auto;
         }
 
-        /* Touch scroll overlay — captures swipe events on iOS where
-           iframes don't forward them. Starts with pointer-events: none
-           so taps pass through to the iframe (required for iOS keyboard).
-           Only enabled mid-swipe to prevent iframe rubber-banding. */
+        /* Touch scroll overlay — captures touch events on iOS where
+           iframes don't forward them. Always active on touch devices.
+           Swipes are converted to terminal scroll. Taps trigger focus
+           on xterm's hidden textarea to open the iOS keyboard. */
         #touch-scroll-overlay {
             display: none;
             position: absolute;
@@ -138,7 +138,6 @@
             height: 100%;
             z-index: 5;
             touch-action: none;
-            pointer-events: none;
         }
 
         @media (pointer: coarse) {
@@ -807,57 +806,41 @@
         // iOS Touch-to-Scroll for Terminal
         // ========================================
         // iOS doesn't deliver touch events to iframes in PWA standalone mode.
-        // Strategy: overlay starts with pointer-events:none so taps reach the
-        // iframe natively (required for iOS keyboard). On touchstart, we record
-        // the position. On touchmove, if the gesture is a vertical swipe, we
-        // enable the overlay to capture the swipe and scroll the terminal.
-        // On touchend, the overlay returns to pointer-events:none.
+        // The overlay is always active on touch devices (pointer-events: auto
+        // via display:block). It captures all touches in the terminal area:
+        //   - Vertical swipes → scroll the terminal via WheelEvent + scrollLines
+        //   - Taps → focus xterm's hidden textarea to open iOS keyboard
+        // iOS keyboard requires focus() on a real input element from a user
+        // gesture handler — the overlay's touchend qualifies as a user gesture.
 
         (function() {
             const overlay = document.getElementById('touch-scroll-overlay');
-            const termContainer = document.getElementById('terminal-container');
-            if (!overlay || !termContainer) return;
+            if (!overlay) return;
 
             let startY = 0;
             let startX = 0;
             let lastY = 0;
             let isSwiping = false;
-            let tracking = false;
+            let touchStartTime = 0;
             const SWIPE_THRESHOLD = 10;
             const LINE_HEIGHT = 20;
 
-            // Use document-level capture to detect touches in the terminal area
-            // This fires BEFORE the iframe swallows the event
-            document.addEventListener('touchstart', (e) => {
-                const touch = e.touches[0];
-                const rect = termContainer.getBoundingClientRect();
-
-                // Only track touches inside the terminal area
-                if (touch.clientX < rect.left || touch.clientX > rect.right ||
-                    touch.clientY < rect.top || touch.clientY > rect.bottom) {
-                    tracking = false;
-                    return;
-                }
-
-                tracking = true;
+            overlay.addEventListener('touchstart', (e) => {
+                startY = lastY = e.touches[0].clientY;
+                startX = e.touches[0].clientX;
                 isSwiping = false;
-                startY = lastY = touch.clientY;
-                startX = touch.clientX;
-            }, { passive: true, capture: true });
+                touchStartTime = Date.now();
+            }, { passive: true });
 
-            document.addEventListener('touchmove', (e) => {
-                if (!tracking) return;
-
+            overlay.addEventListener('touchmove', (e) => {
                 const currentY = e.touches[0].clientY;
                 const currentX = e.touches[0].clientX;
                 const totalDeltaY = Math.abs(currentY - startY);
                 const totalDeltaX = Math.abs(currentX - startX);
 
-                // Detect vertical swipe
+                // Only handle vertical swipes
                 if (!isSwiping && totalDeltaY > SWIPE_THRESHOLD && totalDeltaY > totalDeltaX) {
                     isSwiping = true;
-                    // Enable overlay to capture remaining touch events
-                    overlay.style.pointerEvents = 'auto';
                 }
 
                 if (!isSwiping) return;
@@ -891,15 +874,30 @@
                 } catch (err) {
                     // Cross-origin or term not ready
                 }
-            }, { passive: false, capture: true });
+            }, { passive: false });
 
-            document.addEventListener('touchend', () => {
-                if (!tracking) return;
-                tracking = false;
-                // Always return overlay to transparent so next tap reaches iframe
-                overlay.style.pointerEvents = 'none';
-                isSwiping = false;
-            }, { passive: true, capture: true });
+            overlay.addEventListener('touchend', (e) => {
+                if (isSwiping) return; // Was a scroll, not a tap
+
+                const elapsed = Date.now() - touchStartTime;
+                if (elapsed > 300) return; // Long press, not a tap
+
+                // Tap detected — focus xterm's hidden textarea to open keyboard.
+                // This runs inside a user gesture handler (touchend on overlay),
+                // so iOS treats the focus() call as user-initiated and opens the keyboard.
+                const iframe = document.getElementById('terminal-frame');
+                try {
+                    const xtermTextarea = iframe.contentDocument?.querySelector('.xterm-helper-textarea');
+                    if (xtermTextarea) {
+                        xtermTextarea.focus();
+                    } else {
+                        // Fallback: focus the iframe itself
+                        iframe.focus();
+                    }
+                } catch (err) {
+                    iframe.focus();
+                }
+            });
         })();
 
         // ========================================
