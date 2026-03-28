@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.2
+
+### 🐛 Bug Fix - iOS Keyboard Not Opening
+- **Fix keyboard not appearing on tap**: The touch overlay was blocking native taps from reaching the iframe, preventing iOS from opening the virtual keyboard
+  - Overlay now defaults to `pointer-events: none` so taps pass through natively to the iframe
+  - Document-level capture listeners detect vertical swipes and only enable the overlay mid-gesture
+  - Overlay returns to transparent on touchend so the next tap reaches the iframe
+  - iOS requires a real (not synthetic) user tap on an input element to open the keyboard — this approach preserves that
+
 ## 2.2.1
 
 ### 🐛 Bug Fix - iOS Keyboard Hides Terminal Bottom
