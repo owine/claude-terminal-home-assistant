@@ -29,12 +29,14 @@
             color: #fff;
             overflow: hidden;
             height: 100vh;
+            height: var(--app-height, 100vh);
         }
 
         #container {
             display: flex;
             flex-direction: column;
             height: 100vh;
+            height: var(--app-height, 100vh);
         }
 
         #header {
@@ -909,6 +911,27 @@
                     overlay.style.pointerEvents = 'auto';
                 }, 200);
             });
+        })();
+
+        // ========================================
+        // iOS Virtual Keyboard Height Fix
+        // ========================================
+        // iOS doesn't resize the layout viewport when the keyboard opens —
+        // 100vh still equals full screen height, hiding the terminal bottom.
+        // Use the Visual Viewport API to set a CSS custom property (--app-height)
+        // that tracks the actual visible height.
+
+        (function() {
+            const vv = window.visualViewport;
+            if (!vv) return; // Not supported, 100vh fallback works fine
+
+            function updateHeight() {
+                document.documentElement.style.setProperty('--app-height', vv.height + 'px');
+            }
+
+            vv.addEventListener('resize', updateHeight);
+            // Set initial value
+            updateHeight();
         })();
 
         // ========================================

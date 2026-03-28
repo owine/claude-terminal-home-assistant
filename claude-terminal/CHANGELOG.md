@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.1
+
+### 🐛 Bug Fix - iOS Keyboard Hides Terminal Bottom
+- **Fix terminal resizing when iOS keyboard opens**: On iOS, the virtual keyboard doesn't shrink the layout viewport (`100vh` stays full screen), causing the bottom of the terminal to be hidden behind the keyboard
+  - Uses the Visual Viewport API to track the actual visible height and sets a `--app-height` CSS custom property
+  - Body and container heights dynamically adjust when the keyboard opens/closes
+  - Falls back to `100vh` on browsers without Visual Viewport API support
+
 ## 2.2.0
 
 ### 🔧 Technical - Migrate to New HA Builder Composable Actions
