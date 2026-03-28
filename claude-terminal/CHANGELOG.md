@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### 🛠️ Improvement - Favicon
+- **Add browser tab icon**: Reuses the PWA `icon-192.png` as the favicon so browser tabs show the Claude HA icon instead of a generic globe
+
 ## 2.2.2
 
 ### 🐛 Bug Fix - iOS Keyboard Not Opening
