@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.4
+
+### 🔧 Technical - Dependency Updates
+- **Update all non-major dependencies**: Routine dependency bump across npm and other tracked packages via Renovate
+
 ## 2.2.3
 
 ### 🐛 Bug Fix - iOS Scroll and Keyboard Both Working
