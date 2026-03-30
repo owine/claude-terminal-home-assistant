@@ -32,7 +32,7 @@ RUN apk add --no-cache \
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
 # renovate: datasource=custom.claude-code
-ARG CLAUDE_VERSION=2.1.74
+ARG CLAUDE_VERSION=2.1.81
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -82,7 +82,7 @@ RUN set -eux; \
 # Install uv for running ha-mcp (Python package manager/runner) with SHA256 verification
 # ha-mcp requires Python 3.13+, uv handles this automatically
 # renovate: datasource=github-releases depName=astral-sh/uv
-ARG UV_VERSION=0.11.0
+ARG UV_VERSION=0.11.2
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -156,7 +156,7 @@ RUN case "${TARGETARCH}" in \
 # Install GitHub CLI (gh command) with SHA256 verification
 # Download appropriate binary based on build architecture
 # renovate: datasource=github-releases depName=cli/cli
-ARG GH_CLI_VERSION=2.88.1
+ARG GH_CLI_VERSION=2.89.0
 RUN set -eux; \
     # Determine architecture
     case "${TARGETARCH}" in \
