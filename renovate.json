@@ -71,6 +71,12 @@
       ],
       "automerge": true,
       "automergeType": "pr"
+    },
+    {
+      "description": "Use deps: commit type for release-please compatibility (deps is a releasable unit)",
+      "semanticCommitType": "deps",
+      "semanticCommitScope": "",
+      "matchUpdateTypes": ["minor", "patch", "digest", "major", "pin", "lockFileMaintenance"]
     }
   ],
   "lockFileMaintenance": {
