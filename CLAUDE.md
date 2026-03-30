@@ -70,6 +70,11 @@ docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
 - **YAML**: 2-space indent
 - **Credentials**: 600 file permissions
 
+### Commit Messages
+- **Conventional Commits** format required: `type: description` or `type(scope): description`
+- Common types: `feat`, `fix`, `deps`, `chore`, `docs`, `refactor`, `ci`, `perf`, `test`
+- Only `feat`, `fix`, `deps`, `perf`, and `revert` trigger releases
+
 ### Key Environment Variables
 - `ANTHROPIC_CONFIG_DIR=/data/.config/claude` — Claude config
 - `HOME=/data/home` — Persistent home directory
@@ -115,32 +120,30 @@ Note: Renovate auto-tracks both `pyproject.toml` + `uv.lock`. Manual updates rar
 
 ## Release Management
 
-### CRITICAL: Always Update Version and Changelog
+### Conventional Commits
 
-**Every change to the add-on MUST include:**
-1. **Version bump** in `claude-terminal/config.yaml` (patch/minor/major)
-2. **Changelog entry** at TOP of `claude-terminal/CHANGELOG.md`
+All commits to `main` must use [Conventional Commits](https://www.conventionalcommits.org/) format. release-please uses these to determine version bumps and generate changelogs automatically.
 
-Changelog format:
-```markdown
-## X.X.X
-
-### ✨ New Feature - Short Description
-- **Bold summary**: Detailed explanation
-```
-Categories: ✨ New Feature, 🐛 Bug Fix, 🛠️ Improvement, 📚 Documentation, 🔧 Technical
+| Prefix | Version bump | Example |
+|--------|-------------|---------|
+| `feat:` | Minor (x.Y.0) | `feat: add persistent tmux sessions` |
+| `fix:` | Patch (x.x.Z) | `fix: restore iOS scrolling` |
+| `deps:` | Patch (x.x.Z) | `deps: update express to v5` (Renovate) |
+| `perf:` | Patch (x.x.Z) | `perf: reduce container startup time` |
+| `BREAKING CHANGE` footer | Major (X.0.0) | Any type with breaking change footer |
+| `chore:`, `docs:`, `ci:`, etc. | No release | Not releasable — included if bundled with releasable commits |
 
 ### Release Process
 
-1. Bump version + update changelog + commit + push to main
-2. Test workflow runs automatically (validates builds without publishing)
-3. When ready: create GitHub release → publish workflow builds, signs (cosign), and pushes images
+Releases are managed by [release-please](https://github.com/googleapis/release-please). Do **not** manually bump `config.yaml` version or edit `CHANGELOG.md` — release-please handles both.
+
+1. Push commits to `main` using Conventional Commits format
+2. release-please automatically creates/updates a Release PR with version bump + changelog
+3. Merge the Release PR when ready to release
+4. `publish.yml` triggers automatically → builds, signs, and pushes Docker images
 
 ```bash
-# Create release
-gh release create v1.3.1 --title "v1.3.1" --notes "See CHANGELOG.md"
-
-# Verify
+# Verify release
 gh run list --workflow=publish.yml --limit 3
 ```
 
@@ -148,6 +151,7 @@ gh run list --workflow=publish.yml --limit 3
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
+| `release-please.yml` | Push to main | Maintain Release PR (version bump + changelog) |
 | `test.yml` | Push to main, PRs | Validate builds (2-job: init → per-arch native builds, no QEMU) |
 | `lint.yml` | Push/PR to main | hadolint, shellcheck, yamllint, actionlint |
 | `publish.yml` | Release published | Build + sign + push images (4-job: init → per-arch → manifest → scan) |
