@@ -1,45 +1,32 @@
----
-name: "Claude Terminal Prowine"
-description: "Enhanced terminal interface for Anthropic's Claude Code CLI with persistent auth, package management, and image paste support"
-version: "2.2.4"
-slug: "claude_terminal_prowine"
+name: Claude Terminal Prowine
+description: >-
+  Enhanced terminal interface for Anthropic's Claude Code CLI with persistent
+  auth, package management, and image paste support
+version: 2.2.4
+slug: claude_terminal_prowine
 init: false
-
-# Supported architectures
 arch:
   - aarch64
   - amd64
-
-# External resources
-url: "https://github.com/owine/claude-terminal-home-assistant"
-
-# Web interface configuration
+url: https://github.com/owine/claude-terminal-home-assistant
 ingress: true
 ingress_port: 7680
 panel_icon: mdi:code-braces-box
-panel_title: "Claude Terminal Prowine"
+panel_title: Claude Terminal Prowine
 panel_admin: true
-
-# Port configuration
 ports:
   7680/tcp: 7680
   7681/tcp: 7681
 ports_description:
-  7680/tcp: "Image upload service and web interface"
-  7681/tcp: "ttyd terminal (embedded in web interface)"
-
-# App configuration options
+  7680/tcp: Image upload service and web interface
+  7681/tcp: ttyd terminal (embedded in web interface)
 options:
   auto_launch_claude: true
   dangerously_skip_permissions: false
   enable_ha_mcp: true
-  # tmux_mouse_mode: Enable mouse support in tmux
-  #   When true: Mouse wheel scrolling works, but hold Shift to select text
-  #   When false: Normal text selection works, but no mouse scrolling (default)
   tmux_mouse_mode: false
   persistent_apk_packages: []
   persistent_pip_packages: []
-
 schema:
   auto_launch_claude: bool?
   dangerously_skip_permissions: bool?
@@ -49,19 +36,11 @@ schema:
     - str?
   persistent_pip_packages:
     - str?
-
-# Volume mappings for file access
 map:
-  - config:rw    # Access to Home Assistant configuration files
-
-# API access for Home Assistant integration
+  - config:rw
 hassio_api: true
 hassio_role: manager
 homeassistant_api: true
 auth_api: true
-
-# Service startup configuration
 startup: services
-
-# Web UI access URL
 webui: http://[HOST]:[PORT:7680]/
