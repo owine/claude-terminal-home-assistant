@@ -8,9 +8,8 @@
       "include-v-in-tag": true,
       "extra-files": [
         {
-          "type": "yaml",
-          "path": "config.yaml",
-          "jsonpath": "$.version"
+          "type": "generic",
+          "path": "config.yaml"
         }
       ]
     }
