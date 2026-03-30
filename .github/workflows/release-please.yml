@@ -1,0 +1,32 @@
+# Release Please Workflow
+#
+# Maintains a standing "Release PR" that accumulates changes.
+# Merging the PR creates a GitHub release, which triggers publish.yml.
+#
+# Release chain:
+#   push to main → release-please updates Release PR
+#       ↓ (merge Release PR)
+#   release-please creates GitHub release
+#       ↓ (release: published event)
+#   publish.yml builds + signs Docker images
+#
+# Config: release-please-config.json + .release-please-manifest.json
+
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
