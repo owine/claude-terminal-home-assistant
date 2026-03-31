@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.2.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.2.4...v2.2.5) (2026-03-30)
+
+
+### Bug Fixes
+
+* correct release-please config — use generic updater to preserve YAML formatting ([9021d79](https://github.com/owine/claude-terminal-home-assistant/commit/9021d7908fc8d3ca14a1b737538d8c9c35104487))
+
+
+### Dependencies
+
+* lock file maintenance ([#97](https://github.com/owine/claude-terminal-home-assistant/issues/97)) ([e99f248](https://github.com/owine/claude-terminal-home-assistant/commit/e99f2480fcb9cc914deb63d2017c1ad95466c12d))
+
 ## 2.2.4
 
 ### 🔧 Technical - Dependency Updates
