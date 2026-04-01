@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.2.6](https://github.com/owine/claude-terminal-home-assistant/compare/v2.2.5...v2.2.6) (2026-04-01)
+
+
+### Dependencies
+
+* lock file maintenance ([#102](https://github.com/owine/claude-terminal-home-assistant/issues/102)) ([1ce8f41](https://github.com/owine/claude-terminal-home-assistant/commit/1ce8f4167ef8f00d9b7efee822a9c40588aae91a))
+* update all non-major dependencies ([#100](https://github.com/owine/claude-terminal-home-assistant/issues/100)) ([56cc426](https://github.com/owine/claude-terminal-home-assistant/commit/56cc426acd842caf000775a1d2cf11aab8abe704))
+* update dependency home-assistant/cli to v5 ([#101](https://github.com/owine/claude-terminal-home-assistant/issues/101)) ([20cc508](https://github.com/owine/claude-terminal-home-assistant/commit/20cc508b6c3aeb86634e46cd13ff27581d40f081))
+
 ## [2.2.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.2.4...v2.2.5) (2026-03-30)
 
 
