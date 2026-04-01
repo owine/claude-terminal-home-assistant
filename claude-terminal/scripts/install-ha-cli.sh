@@ -7,7 +7,7 @@ set -e
 
 PERSIST_BIN="/data/packages/bin"
 # renovate: datasource=github-releases depName=home-assistant/cli
-HA_VERSION="4.46.0"
+HA_VERSION="5.0.0"
 BASE_URL="https://github.com/home-assistant/cli/releases/download/${HA_VERSION}"
 
 # Detect architecture
