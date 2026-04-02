@@ -125,6 +125,17 @@
       ]
     },
     {
+      "description": "Update git commit SHA pins in Dockerfile ARGs",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^claude-terminal/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=git-refs depName=(?<depName>\\S+) packageName=(?<packageName>\\S+) branch=(?<currentValue>\\S+)\\s+ARG [A-Z_]+=(?<currentDigest>[0-9a-f]{40})"
+      ],
+      "datasourceTemplate": "git-refs"
+    },
+    {
       "description": "Update build_from base images in build.yaml",
       "customType": "regex",
       "managerFilePatterns": [
