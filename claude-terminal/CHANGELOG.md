@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.3.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.2.6...v2.3.0) (2026-04-02)
+
+
+### Features
+
+* vendor HA agent skills into ha-mcp package ([5011f12](https://github.com/owine/claude-terminal-home-assistant/commit/5011f1246d33fa808229eb9cb33c4968a948c44f))
+
+
+### Bug Fixes
+
+* consolidate ha-mcp RUN instructions to fix DL3059 lint ([60044fd](https://github.com/owine/claude-terminal-home-assistant/commit/60044fd3b112d27a0cbb19586fb009f7dabece90))
+
+
+### Miscellaneous Chores
+
+* re-trigger release with app token ([db6f3cd](https://github.com/owine/claude-terminal-home-assistant/commit/db6f3cd36b7ea80bc44133fd8466f62fe3c1e261))
+
 ## [2.2.6](https://github.com/owine/claude-terminal-home-assistant/compare/v2.2.5...v2.2.6) (2026-04-01)
 
 
