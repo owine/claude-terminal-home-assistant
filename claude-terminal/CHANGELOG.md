@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.2.6...v2.3.0) (2026-04-02)
+
+
+### Features
+
+* vendor HA agent skills into ha-mcp package ([5011f12](https://github.com/owine/claude-terminal-home-assistant/commit/5011f1246d33fa808229eb9cb33c4968a948c44f))
+
 ## [2.2.6](https://github.com/owine/claude-terminal-home-assistant/compare/v2.2.5...v2.2.6) (2026-04-01)
 
 
