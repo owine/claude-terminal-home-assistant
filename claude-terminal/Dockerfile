@@ -4,12 +4,10 @@ ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23
 # renovate: ignore - base image version managed via build.yaml
 FROM ${BUILD_FROM}
 
-# Upgrade base image packages to pick up security patches (e.g., zlib CVE-2026-22184)
-RUN apk upgrade --no-cache
-
-# Install packages in a single layer to minimize image size
+# Upgrade base packages for security patches, then install dependencies in one layer
 # Node.js and npm kept for wrapper service dependency
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache \
+    && apk add --no-cache \
     nodejs \
     npm \
     bash \

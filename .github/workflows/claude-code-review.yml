@@ -29,12 +29,6 @@ on:
     # Skip GitHub Actions workflow updates - claude-review errors on YAML workflows
     paths-ignore:
       - ".github/workflows/**"
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
 
 jobs:
   claude-review:
