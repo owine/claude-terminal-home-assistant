@@ -212,16 +212,15 @@ RUN set -eux; \
 # The index-strategy in pyproject.toml allows uv to find packages across both
 # the HA musllinux wheel index (UV_EXTRA_INDEX_URL) and PyPI
 COPY ha-mcp/pyproject.toml ha-mcp/uv.lock /opt/ha-mcp/
-RUN cd /opt/ha-mcp \
-    && uv sync --locked --no-dev --no-editable \
-    && echo "ha-mcp installed at /opt/ha-mcp/.venv/bin/ha-mcp"
-
 # Vendor HA agent skills into the ha-mcp package.
 # The skills are a git submodule in the ha-mcp repo but aren't included in
 # the PyPI package. ha-mcp expects them at ha_mcp/resources/skills-vendor/skills/.
 # renovate: datasource=git-refs depName=homeassistant-ai/skills packageName=https://github.com/homeassistant-ai/skills branch=main
 ARG HA_SKILLS_COMMIT=9c41da3a09876b46d1610c0590f5356db72e566f
-RUN HA_MCP_PKG="$(/opt/ha-mcp/.venv/bin/python -c 'import ha_mcp, pathlib; print(pathlib.Path(ha_mcp.__file__).parent)')" \
+RUN cd /opt/ha-mcp \
+    && uv sync --locked --no-dev --no-editable \
+    && echo "ha-mcp installed at /opt/ha-mcp/.venv/bin/ha-mcp" \
+    && HA_MCP_PKG="$(/opt/ha-mcp/.venv/bin/python -c 'import ha_mcp, pathlib; print(pathlib.Path(ha_mcp.__file__).parent)')" \
     && git clone https://github.com/homeassistant-ai/skills.git "${HA_MCP_PKG}/resources/skills-vendor" \
     && cd "${HA_MCP_PKG}/resources/skills-vendor" \
     && git checkout "${HA_SKILLS_COMMIT}" \
