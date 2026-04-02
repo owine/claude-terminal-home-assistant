@@ -16,7 +16,7 @@
 # tool that can be disabled without affecting the core project.
 #
 # Configuration:
-# - Skips Renovate bot PRs to conserve CI minutes (dependency bumps are auto-merged)
+# - Skips Renovate and release-please bot PRs to conserve CI minutes
 # - Can be customized to filter by PR author or file paths
 #
 # See: https://github.com/anthropics/claude-code-action
@@ -38,10 +38,11 @@ on:
 
 jobs:
   claude-review:
-    # Skip forked PRs and Renovate bot PRs (auto-merged, no review needed)
+    # Skip forked PRs, Renovate bot PRs, and release-please PRs
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login != 'renovate[bot]'
+      github.event.pull_request.user.login != 'renovate[bot]' &&
+      github.event.pull_request.user.login != 'claude-terminal-release-bot[bot]'
 
     # Optional: Filter by PR author
     # if: |
