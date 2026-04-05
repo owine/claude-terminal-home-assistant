@@ -31,7 +31,7 @@ RUN apk upgrade --no-cache \
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
 # renovate: datasource=custom.claude-code
-ARG CLAUDE_VERSION=2.1.81
+ARG CLAUDE_VERSION=2.1.85
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -81,7 +81,7 @@ RUN set -eux; \
 # Install uv for running ha-mcp (Python package manager/runner) with SHA256 verification
 # ha-mcp requires Python 3.13+, uv handles this automatically
 # renovate: datasource=github-releases depName=astral-sh/uv
-ARG UV_VERSION=0.11.2
+ARG UV_VERSION=0.11.3
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -215,7 +215,7 @@ COPY ha-mcp/pyproject.toml ha-mcp/uv.lock /opt/ha-mcp/
 # The skills are a git submodule in the ha-mcp repo but aren't included in
 # the PyPI package. ha-mcp expects them at ha_mcp/resources/skills-vendor/skills/.
 # renovate: datasource=git-refs depName=homeassistant-ai/skills packageName=https://github.com/homeassistant-ai/skills branch=main
-ARG HA_SKILLS_COMMIT=9c41da3a09876b46d1610c0590f5356db72e566f
+ARG HA_SKILLS_COMMIT=79691a2e1784672f5e78798113d1c7b00ff86b65
 RUN cd /opt/ha-mcp \
     && uv sync --locked --no-dev --no-editable \
     && echo "ha-mcp installed at /opt/ha-mcp/.venv/bin/ha-mcp" \
