@@ -145,6 +145,20 @@
         "(?:aarch64|amd64):\\s*(?<depName>ghcr\\.io/[^:]+):(?<currentValue>[^\\s]+)"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Update pinned Alpine apk packages via Repology",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^claude-terminal/Dockerfile$/"
+      ],
+      "matchStringsStrategy": "any",
+      "matchStrings": [
+        "\\s\\s(?<package>[a-z0-9][a-z0-9-_]+)=(?<currentValue>[a-z0-9-_.]+)\\s+"
+      ],
+      "versioningTemplate": "loose",
+      "datasourceTemplate": "repology",
+      "depNameTemplate": "alpine_3_23/{{package}}"
     }
   ],
   "customDatasources": {
