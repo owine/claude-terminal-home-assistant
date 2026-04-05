@@ -147,7 +147,7 @@
       "datasourceTemplate": "docker"
     },
     {
-      "description": "Update pinned Alpine apk packages via Repology",
+      "description": "Update pinned Alpine apk packages via Repology. IMPORTANT: bump alpine version in depNameTemplate when base image changes (e.g. alpine_3_23 → alpine_3_24)",
       "customType": "regex",
       "managerFilePatterns": [
         "/^claude-terminal/Dockerfile$/"

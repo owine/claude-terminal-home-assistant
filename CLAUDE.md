@@ -114,8 +114,10 @@ Note: Renovate auto-tracks both `pyproject.toml` + `uv.lock`. Manual updates rar
 
 ### Renovate
 - Auto-merges patch updates; groups minor updates; individual PRs for major
-- Tracks npm, Docker, GitHub Actions, and Python (uv) dependencies
+- Tracks npm, Docker, GitHub Actions, Python (uv), and Alpine apk (Repology) dependencies
 - All GitHub Actions use SHA256 digest pinning (Renovate auto-updates)
+- Alpine packages in `Dockerfile` are pinned to exact versions; Renovate tracks them via the Repology datasource
+- **IMPORTANT:** When bumping the Alpine base image (e.g., 3.23 → 3.24), you must also update `depNameTemplate` in `renovate.json` from `alpine_3_23/{{package}}` to `alpine_3_24/{{package}}` — otherwise Renovate will look up versions from the wrong Alpine release
 - See `renovate.json` for config
 
 ## Release Management
