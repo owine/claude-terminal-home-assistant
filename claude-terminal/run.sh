@@ -202,16 +202,6 @@ migrate_legacy_auth_files() {
     fi
 }
 
-# Install required tools
-install_tools() {
-    bashio::log.info "Installing additional tools..."
-    if ! apk add --no-cache ttyd jq curl tmux; then
-        bashio::log.error "Failed to install required tools"
-        exit 1
-    fi
-    bashio::log.info "Tools installed successfully"
-}
-
 # Setup session picker script
 setup_session_picker() {
     # Copy session picker script from built-in location
@@ -475,7 +465,6 @@ main() {
     bashio::log.info "Initializing Claude Terminal app..."
 
     init_environment
-    install_tools
 
     # Run diagnostics after environment is initialized (Claude binary needs PATH setup)
     run_health_check

@@ -8,24 +8,25 @@ FROM ${BUILD_FROM}
 # Node.js and npm kept for wrapper service dependency
 RUN apk upgrade --no-cache \
     && apk add --no-cache \
-    nodejs \
-    npm \
     bash \
     curl \
+    git \
+    jq \
     nano \
-    python3 \
+    nodejs \
+    npm \
+    py3-aiohttp \
+    py3-beautifulsoup4 \
     py3-pip \
     py3-requests \
-    py3-aiohttp \
     py3-yaml \
-    py3-beautifulsoup4 \
-    jq \
-    yq \
-    git \
+    python3 \
+    tmux \
+    tree \
+    ttyd \
     vim \
     wget \
-    tree \
-    tmux
+    yq
 
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
