@@ -215,7 +215,7 @@ COPY ha-mcp/pyproject.toml ha-mcp/uv.lock /opt/ha-mcp/
 # The skills are a git submodule in the ha-mcp repo but aren't included in
 # the PyPI package. ha-mcp expects them at ha_mcp/resources/skills-vendor/skills/.
 # renovate: datasource=git-refs depName=homeassistant-ai/skills packageName=https://github.com/homeassistant-ai/skills branch=main
-ARG HA_SKILLS_COMMIT=4d0e4bdd4f1c766b527c0c4b6beecc6c41a5f359
+ARG HA_SKILLS_COMMIT=e503410aa2c412dd27579562f194ee6614314dd8
 RUN cd /opt/ha-mcp \
     && uv sync --locked --no-dev --no-editable \
     && echo "ha-mcp installed at /opt/ha-mcp/.venv/bin/ha-mcp" \
