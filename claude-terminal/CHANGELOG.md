@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.3.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.0...v2.3.1) (2026-04-07)
+
+
+### Bug Fixes
+
+* move ttyd install from runtime to build-time ([172396c](https://github.com/owine/claude-terminal-home-assistant/commit/172396c3f7a611d43b4219d118ba9d7fbdbdbb80))
+
+
+### Dependencies
+
+* lock file maintenance ([#108](https://github.com/owine/claude-terminal-home-assistant/issues/108)) ([26bf089](https://github.com/owine/claude-terminal-home-assistant/commit/26bf089b1e2d2a7eb7e473dee22ceadb7805c8b6))
+* lock file maintenance ([#110](https://github.com/owine/claude-terminal-home-assistant/issues/110)) ([1091c6b](https://github.com/owine/claude-terminal-home-assistant/commit/1091c6b7c171c4a130942cf4299b581742f409e8))
+* lock file maintenance ([#113](https://github.com/owine/claude-terminal-home-assistant/issues/113)) ([4ce22d0](https://github.com/owine/claude-terminal-home-assistant/commit/4ce22d0eaf5d1513638455881f1aaf41092bfdfa))
+* pin Alpine apk packages and add Repology to Renovate ([90cca72](https://github.com/owine/claude-terminal-home-assistant/commit/90cca72a45aacd8778bb21da2f10c3f57fe24687))
+* update all non-major dependencies ([#107](https://github.com/owine/claude-terminal-home-assistant/issues/107)) ([d181e60](https://github.com/owine/claude-terminal-home-assistant/commit/d181e60ac5f8c8032c513024e0d2f94cc4d4e5bc))
+* update homeassistant-ai/skills digest to 4d0e4bd ([#111](https://github.com/owine/claude-terminal-home-assistant/issues/111)) ([cae723d](https://github.com/owine/claude-terminal-home-assistant/commit/cae723d8fa480d9a1a085df9ebe5796b601fcae7))
+* update homeassistant-ai/skills digest to e503410 ([#112](https://github.com/owine/claude-terminal-home-assistant/issues/112)) ([120bb5c](https://github.com/owine/claude-terminal-home-assistant/commit/120bb5c0db8b03840c45e26dcb68d5ee821d35c5))
+
 ## [2.3.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.2.6...v2.3.0) (2026-04-02)
 
 
