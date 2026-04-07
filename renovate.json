@@ -10,6 +10,9 @@
   "schedule": [
     "on Monday"
   ],
+  "automergeSchedule": [
+    "at any time"
+  ],
   "labels": [
     "dependencies"
   ],
@@ -40,7 +43,8 @@
       "matchUpdateTypes": [
         "minor",
         "patch",
-        "digest"
+        "digest",
+        "pin"
       ],
       "groupName": "all non-major dependencies",
       "automerge": true,
@@ -48,15 +52,15 @@
       "automergeStrategy": "squash"
     },
     {
-      "description": "Group all major updates together for review",
+      "description": "Major updates - separate PRs for review",
       "matchUpdateTypes": [
         "major"
       ],
-      "groupName": "major updates",
       "labels": [
         "dependencies",
         "major-update"
-      ]
+      ],
+      "automerge": false
     },
     {
       "description": "Auto-merge Claude Code patch updates from stable channel",
