@@ -5,8 +5,8 @@
 CVE-2025-15558
 
 # Go stdlib CVEs in pre-compiled binaries (Claude CLI, gh CLI, ha CLI)
-# We download upstream binaries compiled with Go 1.23.x — cannot fix until upstream recompiles
-# Review: check if upstream releases include Go 1.24+ builds
+# Cannot fix until upstream recompiles with Go 1.25.9+ or 1.26.2+
+# Claude CLI: Go 1.23.3 | gh CLI: Go 1.25.8 | ha CLI: Go 1.26.1
 CVE-2025-68121
 CVE-2025-22869
 CVE-2025-47907
@@ -16,6 +16,9 @@ CVE-2025-61728
 CVE-2025-61729
 CVE-2024-45337
 CVE-2026-25679
+CVE-2026-32280
+CVE-2026-32282
+CVE-2026-33810
 
 # google.golang.org/grpc: authorization bypass via missing leading slash
 # In pre-compiled upstream binaries (gh CLI) — cannot fix until upstream recompiles with grpc >= 1.79.3
