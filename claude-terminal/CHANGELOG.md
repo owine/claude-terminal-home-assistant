@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.3](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.2...v2.3.3) (2026-04-15)
+
+
+### Bug Fixes
+
+* resolve spurious health check warning on every startup ([4a45c9d](https://github.com/owine/claude-terminal-home-assistant/commit/4a45c9de42a9ed0ceefce1b394bc96573d01532d))
+* set xterm.js dark theme via JS instead of ttyd --theme flag ([499e3d3](https://github.com/owine/claude-terminal-home-assistant/commit/499e3d3813002be30def1cc498e2dab9c0df8b42))
+
 ## [2.3.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.1...v2.3.2) (2026-04-15)
 
 
