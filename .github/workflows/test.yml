@@ -76,3 +76,64 @@ jobs:
           load: "true"
           push: "false"
           version: ${{ github.sha }}
+
+      - name: Smoke test
+        env:
+          IMAGE: ${{ matrix.image }}:test
+        run: |
+          set -euo pipefail
+
+          # Start container with a fake Supervisor token.
+          # bashio::config returns its default argument when the Supervisor API
+          # is unreachable, so startup proceeds with sane defaults.
+          docker run -d \
+            --name smoke-test \
+            -p 7680:7680 \
+            -p 7681:7681 \
+            -e SUPERVISOR_TOKEN=smoke-test-fake-token \
+            "$IMAGE"
+
+          # Poll until ttyd (7681) and wrapper (7680) both respond, or timeout.
+          echo "Waiting for services to start (up to 60s)..."
+          READY=false
+          for i in $(seq 1 30); do
+            if curl -sf --max-time 2 http://localhost:7681/ > /dev/null 2>&1 && \
+               curl -sf --max-time 2 http://localhost:7680/ > /dev/null 2>&1; then
+              echo "Services ready after $((i * 2))s"
+              READY=true
+              break
+            fi
+            # Bail early if the container crashed
+            if ! docker ps -q --filter name=smoke-test | grep -q .; then
+              echo "Container exited unexpectedly"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          if [ "$READY" != "true" ]; then
+            echo "ERROR: Services did not become ready within 60s"
+            exit 1
+          fi
+
+          # Verify ttyd returns HTTP 200 — proves ttyd started and exec'd its command
+          TTYD_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:7681/)
+          [ "$TTYD_CODE" = "200" ] || { echo "ERROR: ttyd returned HTTP $TTYD_CODE"; exit 1; }
+          echo "ttyd endpoint: HTTP $TTYD_CODE"
+
+          # Verify wrapper returns HTTP 200 — proves the Node service started
+          WRAP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:7680/)
+          [ "$WRAP_CODE" = "200" ] || { echo "ERROR: wrapper returned HTTP $WRAP_CODE"; exit 1; }
+          echo "Wrapper endpoint: HTTP $WRAP_CODE"
+
+          echo "Smoke test passed"
+
+      - name: Show container logs
+        if: always()
+        run: docker logs smoke-test 2>&1 || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop smoke-test 2>/dev/null || true
+          docker rm smoke-test 2>/dev/null || true
