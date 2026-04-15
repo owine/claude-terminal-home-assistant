@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.4](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.3...v2.3.4) (2026-04-15)
+
+
+### Bug Fixes
+
+* switch ttyd to DOM renderer to fix blurry text on iOS 26 ([3b4c8dc](https://github.com/owine/claude-terminal-home-assistant/commit/3b4c8dcba82e74626d941eac3d68431eee79d112))
+
 ## [2.3.3](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.2...v2.3.3) (2026-04-15)
 
 
