@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.3.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.1...v2.3.2) (2026-04-15)
+
+
+### Bug Fixes
+
+* disable raw ttyd port 7681 by default ([2cd5850](https://github.com/owine/claude-terminal-home-assistant/commit/2cd5850efae4606a0b77b19a55ebf7c182e6b3ca))
+* enable tmux focus-events for Claude Code and editor integration ([1e0a33e](https://github.com/owine/claude-terminal-home-assistant/commit/1e0a33e29e42bd0fac5ae5a4b6b7e0a23ef94c7f))
+* enable xterm-keys for Ctrl+Arrow and extended key sequence support ([1a659f4](https://github.com/owine/claude-terminal-home-assistant/commit/1a659f462b9ab606560056cf0689a0b0bdf2743d))
+* force explicit ttyd theme to prevent invisible text on Safari/iOS ([3aaf45d](https://github.com/owine/claude-terminal-home-assistant/commit/3aaf45d664216f907a6e457a0ce4293be2a6f2d4))
+* increase tmux display-time for readability in browser terminal ([e042093](https://github.com/owine/claude-terminal-home-assistant/commit/e042093685b8ad1984ddf8f031363b9e5aee772c))
+
+
+### Dependencies
+
+* lock file maintenance ([#115](https://github.com/owine/claude-terminal-home-assistant/issues/115)) ([afd4c24](https://github.com/owine/claude-terminal-home-assistant/commit/afd4c24df3efe4e90c4d5dc427c4bb6eab71a352))
+* lock file maintenance ([#120](https://github.com/owine/claude-terminal-home-assistant/issues/120)) ([3c880ee](https://github.com/owine/claude-terminal-home-assistant/commit/3c880ee7ea9cfd3bffbb5930b07064f0108b2205))
+* update all non-major dependencies ([#114](https://github.com/owine/claude-terminal-home-assistant/issues/114)) ([9d692ed](https://github.com/owine/claude-terminal-home-assistant/commit/9d692ed92d11cc14cacac7658d9760d977951d14))
+* update all non-major dependencies ([#119](https://github.com/owine/claude-terminal-home-assistant/issues/119)) ([8071990](https://github.com/owine/claude-terminal-home-assistant/commit/807199062e0139bd35f6b418f28ef24a5aeee83d))
+
 ## [2.3.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.0...v2.3.1) (2026-04-07)
 
 
