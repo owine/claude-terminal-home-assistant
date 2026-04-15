@@ -430,15 +430,11 @@ start_web_terminal() {
 
     # Run ttyd - it just attaches to the existing tmux session
     # Each browser connection gets attached to the same session
-    # Force explicit terminal colors so text is always readable regardless of
-    # browser color-scheme settings (fixes invisible text on Safari/iOS, Firefox
-    # after HA 2026.04 changed how color schemes propagate into ingress iframes)
     bashio::log.info "Starting ttyd with tmux attach..."
     exec ttyd \
         --port "${port}" \
         --interface 0.0.0.0 \
         --writable \
-        --theme '{"background":"#1e1e1e","foreground":"#d4d4d4","cursor":"#d4d4d4","cursorAccent":"#1e1e1e","selection":"rgba(255,255,255,0.3)"}' \
         tmux attach-session -t "$session_name"
 }
 
