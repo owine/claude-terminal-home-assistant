@@ -464,17 +464,6 @@
                             const indicator = document.getElementById('term-indicator');
                             indicator.style.background = '#4ec9b0';
                             indicator.title = 'Terminal ready';
-                            console.log('Terminal term instance ready');
-                            // Force explicit dark theme so text is always readable regardless
-                            // of browser color-scheme (fixes invisible text on Safari/iOS
-                            // after HA 2026.04 changed color-scheme propagation into iframes)
-                            iframe.contentWindow.term.options.theme = {
-                                background: '#1e1e1e',
-                                foreground: '#d4d4d4',
-                                cursor: '#d4d4d4',
-                                cursorAccent: '#1e1e1e',
-                                selectionBackground: 'rgba(255,255,255,0.3)'
-                            };
                         }
                     } catch (e) {
                         // iframe not accessible yet
