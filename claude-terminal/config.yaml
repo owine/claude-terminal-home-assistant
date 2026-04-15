@@ -23,10 +23,10 @@ panel_admin: true
 # Port configuration
 ports:
   7680/tcp: 7680
-  7681/tcp: 7681
+  7681/tcp: null
 ports_description:
   7680/tcp: "Image upload service and web interface"
-  7681/tcp: "ttyd terminal (embedded in web interface)"
+  7681/tcp: "ttyd terminal (not required, access via ingress on port 7680)"
 
 # App configuration options
 options:
