@@ -75,62 +75,22 @@ check_node_installation() {
 check_claude_cli() {
     bashio::log.info "=== Claude CLI Check ==="
 
-    if command -v claude >/dev/null 2>&1; then
-        bashio::log.info "Claude CLI found at: $(which claude) ✓"
-
-        # Check if Claude CLI is executable
-        if [ -x "$(which claude)" ]; then
-            bashio::log.info "Claude CLI is executable ✓"
-        else
-            bashio::log.error "Claude CLI is not executable ✗"
-            return 1
+    # Check known install locations directly — do not rely on PATH here because
+    # with-contenv resets PATH to the s6 container environment, which does not
+    # include /data/home/.local/bin (set at runtime by run.sh, not at build time).
+    local claude_bin=""
+    for candidate in /root/.local/bin/claude /data/home/.local/bin/claude; do
+        if [ -x "$candidate" ]; then
+            claude_bin="$candidate"
+            break
         fi
+    done
+
+    if [ -n "$claude_bin" ]; then
+        bashio::log.info "Claude CLI found at: $claude_bin ✓"
     else
         bashio::log.error "Claude CLI not found ✗"
-        bashio::log.info "Attempting to install Claude CLI..."
         return 1
-    fi
-}
-
-check_network_connectivity() {
-    bashio::log.info "=== Network Connectivity Check ==="
-
-    # Check DNS resolution first
-    if host claude.ai >/dev/null 2>&1 || nslookup claude.ai >/dev/null 2>&1; then
-        bashio::log.info "DNS resolution working ✓"
-    else
-        bashio::log.error "DNS resolution failing - check network configuration"
-        bashio::log.info "Try setting custom DNS servers (e.g., 8.8.8.8, 1.1.1.1)"
-    fi
-
-    # Try to reach Claude installer endpoint
-    if curl -s --head --connect-timeout 10 --max-time 15 https://claude.ai/install.sh > /dev/null; then
-        bashio::log.info "Can reach Claude installer ✓"
-    else
-        bashio::log.warning "Cannot reach Claude installer - this may affect Claude CLI installation"
-        bashio::log.info "This could be due to:"
-        bashio::log.info "  - Network proxy/firewall blocking access"
-        bashio::log.info "  - DNS resolution issues"
-        bashio::log.info "  - Slow network connection (try increasing timeout)"
-    fi
-
-    # Try to reach GitHub Container Registry
-    if curl -s --head --connect-timeout 10 --max-time 15 https://ghcr.io > /dev/null; then
-        bashio::log.info "Can reach GitHub Container Registry ✓"
-    else
-        bashio::log.error "Cannot reach GitHub Container Registry (ghcr.io)"
-        bashio::log.info "This is likely the cause of installation failures"
-        bashio::log.info "Possible solutions:"
-        bashio::log.info "  1. Check if your network blocks ghcr.io"
-        bashio::log.info "  2. Try using a VPN or different network"
-        bashio::log.info "  3. Check VM network adapter settings"
-    fi
-
-    # Try to reach Anthropic API
-    if curl -s --head --connect-timeout 10 --max-time 15 https://api.anthropic.com > /dev/null; then
-        bashio::log.info "Can reach Anthropic API ✓"
-    else
-        bashio::log.warning "Cannot reach Anthropic API - this may affect Claude functionality"
     fi
 }
 
@@ -145,7 +105,6 @@ run_diagnostics() {
     check_directory_permissions || ((errors++))
     check_node_installation || ((errors++))
     check_claude_cli || ((errors++))
-    check_network_connectivity || ((errors++))
 
     bashio::log.info "========================================="
 
@@ -154,41 +113,6 @@ run_diagnostics() {
     else
         bashio::log.error "❌ $errors check(s) failed"
         bashio::log.info "Please review the errors above"
-
-        # Provide VirtualBox-specific advice if relevant
-        if [ -f /proc/modules ] && grep -q vboxguest /proc/modules; then
-            bashio::log.info ""
-            bashio::log.info "=== VirtualBox Environment Detected ==="
-            bashio::log.warning "VirtualBox users commonly experience network issues"
-            bashio::log.info ""
-            bashio::log.info "Required VM settings:"
-            bashio::log.info "  • Memory: At least 2GB RAM (4GB recommended)"
-            bashio::log.info "  • Storage: At least 8GB disk space"
-            bashio::log.info "  • VirtualBox Guest Additions: MUST be installed"
-            bashio::log.info ""
-            bashio::log.info "Network adapter configuration:"
-            bashio::log.info "  • Recommended: Bridged Adapter mode"
-            bashio::log.info "  • Alternative: NAT with port forwarding"
-            bashio::log.info "  • Ensure 'Cable Connected' is checked"
-            bashio::log.info ""
-            bashio::log.info "If installation fails with network timeout:"
-            bashio::log.info "  1. Try changing VM network adapter to Bridged mode"
-            bashio::log.info "  2. Restart the VM after network changes"
-            bashio::log.info "  3. Check if your host firewall blocks container registries"
-            bashio::log.info "  4. Try installation during off-peak hours (network congestion)"
-            bashio::log.info "  5. Consider using Home Assistant on bare metal or Docker instead"
-        fi
-
-        # Check for Proxmox environment
-        if [ -f /proc/cpuinfo ] && grep -q "QEMU Virtual CPU" /proc/cpuinfo; then
-            bashio::log.info ""
-            bashio::log.info "=== Virtual Environment Detected (Possibly Proxmox) ==="
-            bashio::log.info "If running in Proxmox, ensure:"
-            bashio::log.info "  • VM has sufficient resources (2GB+ RAM)"
-            bashio::log.info "  • Network device uses VirtIO (recommended)"
-            bashio::log.info "  • Firewall rules allow container registry access"
-            bashio::log.info "  • DNS is properly configured in the VM"
-        fi
     fi
 
     return $errors
