@@ -24,14 +24,14 @@ RUN apk upgrade --no-cache \
     tmux=3.6-r0 \
     tree=2.2.1-r0 \
     ttyd=1.7.7-r0 \
-    vim=9.2.0357-r0 \
+    vim=9.2.0389-r0 \
     wget=1.25.0-r2 \
     yq-go=4.49.2-r5
 
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
 # renovate: datasource=custom.claude-code
-ARG CLAUDE_VERSION=2.1.104
+ARG CLAUDE_VERSION=2.1.112
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -155,7 +155,7 @@ RUN case "${TARGETARCH}" in \
 # Install GitHub CLI (gh command) with SHA256 verification
 # Download appropriate binary based on build architecture
 # renovate: datasource=github-releases depName=cli/cli
-ARG GH_CLI_VERSION=2.90.0
+ARG GH_CLI_VERSION=2.91.0
 RUN set -eux; \
     # Determine architecture
     case "${TARGETARCH}" in \
