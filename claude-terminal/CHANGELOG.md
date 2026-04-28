@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.3.6](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.5...v2.3.6) (2026-04-28)
+
+
+### Dependencies
+
+* lock file maintenance ([#132](https://github.com/owine/claude-terminal-home-assistant/issues/132)) ([ed246e0](https://github.com/owine/claude-terminal-home-assistant/commit/ed246e0d313f795f9165361ce36a9a181264c19e))
+* update all non-major dependencies ([#126](https://github.com/owine/claude-terminal-home-assistant/issues/126)) ([627d2ca](https://github.com/owine/claude-terminal-home-assistant/commit/627d2cae4d22f63202749c2c6fd7473d97604819))
+* update all non-major dependencies ([#128](https://github.com/owine/claude-terminal-home-assistant/issues/128)) ([2b5b6ed](https://github.com/owine/claude-terminal-home-assistant/commit/2b5b6edaf9f1872488c61b799b903a9b557e6ff9))
+* update dependency astral-sh/uv to v0.11.8 ([#130](https://github.com/owine/claude-terminal-home-assistant/issues/130)) ([a73ccaa](https://github.com/owine/claude-terminal-home-assistant/commit/a73ccaa6e43a09fb5f10d45c31190f75d38cb80a))
+
 ## [2.3.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.4...v2.3.5) (2026-04-20)
 
 
