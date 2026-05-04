@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.3.7](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.6...v2.3.7) (2026-05-04)
+
+
+### Bug Fixes
+
+* revert ttyd DOM renderer now that iOS canvas blur is resolved ([59880f4](https://github.com/owine/claude-terminal-home-assistant/commit/59880f49a3617946edf1e7152de27e7974e0a014))
+
+
+### Dependencies
+
+* lock file maintenance ([#134](https://github.com/owine/claude-terminal-home-assistant/issues/134)) ([e334467](https://github.com/owine/claude-terminal-home-assistant/commit/e334467d87ee96b7dc332c8fe2ac098e470e40dd))
+* update all non-major dependencies ([#133](https://github.com/owine/claude-terminal-home-assistant/issues/133)) ([272eee5](https://github.com/owine/claude-terminal-home-assistant/commit/272eee521feb3f7d6ed13701653af50e9081e9c3))
+* update dependency home-assistant/cli to v5.1.0 ([#136](https://github.com/owine/claude-terminal-home-assistant/issues/136)) ([58345d8](https://github.com/owine/claude-terminal-home-assistant/commit/58345d8f0ce1d9d5c35fd436cbd2afdb6bbd70fc))
+
 ## [2.3.6](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.5...v2.3.6) (2026-04-28)
 
 
