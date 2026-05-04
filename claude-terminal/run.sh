@@ -435,7 +435,6 @@ start_web_terminal() {
         --port "${port}" \
         --interface 0.0.0.0 \
         --writable \
-        --client-option "rendererType=dom" \
         tmux attach-session -t "$session_name"
 }
 
