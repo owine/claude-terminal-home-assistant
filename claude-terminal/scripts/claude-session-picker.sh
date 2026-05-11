@@ -29,10 +29,9 @@ get_claude_flags() {
 
 show_banner() {
     clear
-    echo "╔════════════════════════════════════════════════════════════╗"
-    echo "║                    🤖 Claude Terminal                      ║"
-    echo "║                          Menu                              ║"
-    echo "╚════════════════════════════════════════════════════════════╝"
+    echo "╔════════════════════════════════════════╗"
+    echo "║         🤖  Claude Terminal Menu       ║"
+    echo "╚════════════════════════════════════════╝"
     echo ""
 }
 
@@ -41,21 +40,21 @@ is_yolo_enabled() {
 }
 
 show_menu() {
-    echo "Choose your Claude session type:"
+    echo "  Choose your session type:"
     echo ""
-    echo "  1) 🆕 New interactive session (default)"
-    echo "  2) ⏩ Continue most recent conversation (-c)"
-    echo "  3) 📋 Resume from conversation list (-r)"
-    echo "  4) ⚙️  Custom Claude command (manual flags)"
-    echo "  5) 🔐 Claude authentication helper"
-    echo "  6) 🐙 GitHub CLI login (gh auth)"
-    echo "  7) 🐚 Drop to bash shell (exit menu)"
-    echo "  8) 🔄 Clear & restart session (reset scrollback)"
-    echo ""
-    echo "  ─────────────────────────────────────"
+    echo "   1) 🆕  New session"
+    echo "   2) ⏩  Continue (-c)"
+    echo "   3) 📋  Resume (-r)"
+    echo "   4) ⚙️   Custom command"
+    echo "   5) 🔐  Auth helper"
+    echo "   6) 🐙  GitHub login"
+    echo "   7) 🐚  Bash shell"
+    echo "   8) 🔄  Restart"
     if is_yolo_enabled; then
-        echo "  9) ☢️  Dangerous Mode (YOLO - skip all permissions)"
+        echo "   ────────────────────────────────────"
+        echo "   9) ☢️   YOLO Mode"
     fi
+    echo ""
 }
 
 get_user_choice() {
@@ -78,9 +77,9 @@ get_user_choice() {
 # Show a message when returning from Claude
 show_return_message() {
     echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  Claude session ended. Returning to menu..."
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "────────────────────────────────────────"
+    echo "  Session ended. Returning to menu..."
+    echo "────────────────────────────────────────"
     sleep 2
 }
 
@@ -157,8 +156,8 @@ run_auth_helper() {
 
 run_github_auth() {
     echo ""
-    echo "🐙 GitHub CLI Authentication"
-    echo "════════════════════════════"
+    echo "🐙  GitHub CLI Authentication"
+    echo "────────────────────────────────"
     echo ""
 
     if ! command -v gh &>/dev/null; then
@@ -283,9 +282,9 @@ run_claude_yolo() {
     fi
 
     clear
-    echo "╔════════════════════════════════════════════════════════════╗"
-    echo "║               ☢️  DANGEROUS MODE WARNING (YOLO) ☢️          ║"
-    echo "╚════════════════════════════════════════════════════════════╝"
+    echo "╔════════════════════════════════════════╗"
+    echo "║     ☢️   DANGEROUS MODE (YOLO)  ☢️     ║"
+    echo "╚════════════════════════════════════════╝"
     echo ""
     if ! is_yolo_enabled; then
         echo "❌ YOLO mode is disabled by default for safety"

@@ -5,17 +5,16 @@
 
 show_auth_menu() {
     clear
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║               🔐 Claude Authentication Helper                 ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo "╔════════════════════════════════════════╗"
+    echo "║       🔐  Claude Auth Helper           ║"
+    echo "╚════════════════════════════════════════╝"
     echo ""
-    echo "Having trouble pasting the authentication code?"
+    echo "  Trouble pasting the auth code?"
     echo ""
-    echo "Options:"
-    echo "  1) 📋 Manual input (type or paste the code)"
-    echo "  2) 📁 Read code from file (/config/auth-code.txt)"
-    echo "  3) 🔄 Retry standard authentication"
-    echo "  4) ❌ Exit"
+    echo "   1) 📋  Manual input"
+    echo "   2) 📁  Read from /config/auth-code.txt"
+    echo "   3) 🔄  Retry standard auth"
+    echo "   4) ❌  Exit"
     echo ""
 }
 
