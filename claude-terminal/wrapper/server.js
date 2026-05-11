@@ -252,8 +252,7 @@ app.use((err, req, res, next) => {
 // Create HTTP server and start listening
 const server = http.createServer(app);
 
-// Handle WebSocket upgrade for terminal proxy
-// This is required in http-proxy-middleware v3
+// http-proxy-middleware does not auto-bind WS upgrades; without this the terminal won't connect.
 server.on('upgrade', terminalProxy.upgrade);
 
 server.listen(PORT, '0.0.0.0', () => {
