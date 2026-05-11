@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.3.8](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.7...v2.3.8) (2026-05-11)
+
+
+### Bug Fixes
+
+* tighten menu ASCII boxes to fit mobile terminal widths ([416eb6a](https://github.com/owine/claude-terminal-home-assistant/commit/416eb6ae1d34cb15970f5f37a50432f3067aa437))
+
+
+### Dependencies
+
+* update all non-major dependencies ([#137](https://github.com/owine/claude-terminal-home-assistant/issues/137)) ([8fba689](https://github.com/owine/claude-terminal-home-assistant/commit/8fba689957d9d7295dcf12c64e3abc3c34d7b78d))
+* update all non-major dependencies ([#139](https://github.com/owine/claude-terminal-home-assistant/issues/139)) ([27e3cab](https://github.com/owine/claude-terminal-home-assistant/commit/27e3cab4da884e7ab733955c359ab98b153f4045))
+* update dependency http-proxy-middleware to v4 ([#140](https://github.com/owine/claude-terminal-home-assistant/issues/140)) ([c2c4be5](https://github.com/owine/claude-terminal-home-assistant/commit/c2c4be5f15622e638e7775142e314ad74be67c87))
+
 ## [2.3.7](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.6...v2.3.7) (2026-05-04)
 
 
