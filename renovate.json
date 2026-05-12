@@ -27,6 +27,12 @@
       "matchDatasources": ["custom.claude-code"],
       "matchUpdateTypes": ["patch"],
       "automerge": true
+    },
+    {
+      "description": "pyproject requires-python is a compatibility floor, not a pinned dep — don't let Renovate tighten >=3.13 to ==3.14.x",
+      "matchManagers": ["pep621"],
+      "matchDepNames": ["python"],
+      "enabled": false
     }
   ],
   "customManagers": [
