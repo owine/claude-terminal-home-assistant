@@ -1,27 +1,14 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:best-practices",
-    ":semanticCommits",
-    ":semanticPrefixFixDepsChoreOthers"
-  ],
-  "commitMessageAction": "update",
-  "timezone": "America/Chicago",
-  "schedule": [
-    "on Monday"
-  ],
-  "automergeSchedule": [
-    "at any time"
-  ],
-  "labels": [
-    "dependencies"
+    "github>owine/renovate-config",
+    "github>owine/renovate-config:automerge",
+    "github>owine/renovate-config:docker"
   ],
   "packageRules": [
     {
-      "description": "Home Assistant base images - disable digest pinning (tracked via build.yaml)",
-      "matchDatasources": [
-        "docker"
-      ],
+      "description": "Home Assistant base images — disable digest pinning (tracked via build.yaml as the source of truth)",
+      "matchDatasources": ["docker"],
       "matchPackageNames": [
         "ghcr.io/home-assistant/amd64-base",
         "ghcr.io/home-assistant/aarch64-base"
@@ -29,72 +16,19 @@
       "pinDigests": false
     },
     {
-      "description": "Home Assistant base images - disable Dockerfile manager (source of truth is build.yaml)",
-      "matchManagers": [
-        "dockerfile"
-      ],
-      "matchPackageNames": [
-        "ghcr.io/home-assistant/amd64-base"
-      ],
+      "description": "HA amd64-base — disable the Dockerfile manager; build.yaml is the source of truth",
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["ghcr.io/home-assistant/amd64-base"],
       "enabled": false
     },
     {
-      "description": "Group all non-major updates into a single weekly PR",
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "digest",
-        "pin"
-      ],
-      "groupName": "all non-major dependencies",
-      "automerge": true,
-      "automergeType": "pr",
-      "automergeStrategy": "squash"
-    },
-    {
-      "description": "Major updates - separate PRs for review",
-      "matchUpdateTypes": [
-        "major"
-      ],
-      "labels": [
-        "dependencies",
-        "major-update"
-      ],
-      "automerge": false
-    },
-    {
-      "description": "Auto-merge Claude Code patch updates from stable channel",
-      "matchManagers": [
-        "custom.regex"
-      ],
-      "matchDatasources": [
-        "custom.claude-code"
-      ],
-      "matchUpdateTypes": [
-        "patch"
-      ],
-      "automerge": true,
-      "automergeType": "pr"
-    },
-    {
-      "description": "Use deps: commit type for release-please compatibility (deps is a releasable unit)",
-      "semanticCommitType": "deps",
-      "semanticCommitScope": "",
-      "matchUpdateTypes": ["minor", "patch", "digest", "major", "pin", "lockFileMaintenance"]
+      "description": "Auto-merge Claude Code patch updates from the stable channel",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["custom.claude-code"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
     }
   ],
-  "lockFileMaintenance": {
-    "enabled": true,
-    "automerge": true,
-    "automergeType": "pr",
-    "automergeStrategy": "squash"
-  },
-  "vulnerabilityAlerts": {
-    "enabled": true,
-    "labels": [
-      "security"
-    ]
-  },
   "customManagers": [
     {
       "description": "Update Claude Code version in Dockerfile",
@@ -151,7 +85,7 @@
       "datasourceTemplate": "docker"
     },
     {
-      "description": "Update pinned Alpine apk packages via Repology. IMPORTANT: bump alpine version in depNameTemplate when base image changes (e.g. alpine_3_23 → alpine_3_24)",
+      "description": "Update pinned Alpine apk packages via Repology. IMPORTANT: bump alpine version in depNameTemplate when the base image changes (e.g. alpine_3_23 -> alpine_3_24)",
       "customType": "regex",
       "managerFilePatterns": [
         "/^claude-terminal/Dockerfile$/"
