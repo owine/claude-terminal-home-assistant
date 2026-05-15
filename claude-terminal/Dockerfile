@@ -9,7 +9,7 @@ FROM ${BUILD_FROM}
 RUN apk upgrade --no-cache \
     && apk add --no-cache \
     bash=5.3.3-r1 \
-    curl=8.17.0-r1 \
+    curl=8.19.0-r0 \
     git=2.52.0-r0 \
     jq=1.8.1-r0 \
     nano=8.7-r0 \
@@ -24,7 +24,7 @@ RUN apk upgrade --no-cache \
     tmux=3.6-r0 \
     tree=2.2.1-r0 \
     ttyd=1.7.7-r0 \
-    vim=9.2.0452-r0 \
+    vim=9.2.0481-r0 \
     wget=1.25.0-r2 \
     yq-go=4.49.2-r5
 
