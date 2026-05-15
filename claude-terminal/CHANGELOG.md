@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.9](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.8...v2.3.9) (2026-05-15)
+
+
+### Bug Fixes
+
+* update dependency ha-mcp to v7.5.0 [security] ([#148](https://github.com/owine/claude-terminal-home-assistant/issues/148)) ([52c93b8](https://github.com/owine/claude-terminal-home-assistant/commit/52c93b8e2ade1107f58757f312fc324f80925fee))
+
+
+### Dependencies
+
+* lock file maintenance ([#146](https://github.com/owine/claude-terminal-home-assistant/issues/146)) ([c38356c](https://github.com/owine/claude-terminal-home-assistant/commit/c38356c40c8a1364e6af3ef22834eba123f5fac5))
+
 ## [2.3.8](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.7...v2.3.8) (2026-05-11)
 
 
