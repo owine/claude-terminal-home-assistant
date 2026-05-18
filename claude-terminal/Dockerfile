@@ -24,9 +24,9 @@ RUN apk upgrade --no-cache \
     tmux=3.6-r0 \
     tree=2.2.1-r0 \
     ttyd=1.7.7-r0 \
-    vim=9.2.0481-r0 \
+    vim=9.2.0498-r0 \
     wget=1.25.0-r2 \
-    yq-go=4.49.2-r5
+    yq-go=4.49.2-r6
 
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
@@ -215,7 +215,7 @@ COPY ha-mcp/pyproject.toml ha-mcp/uv.lock /opt/ha-mcp/
 # The skills are a git submodule in the ha-mcp repo but aren't included in
 # the PyPI package. ha-mcp expects them at ha_mcp/resources/skills-vendor/skills/.
 # renovate: datasource=git-refs depName=homeassistant-ai/skills packageName=https://github.com/homeassistant-ai/skills branch=main
-ARG HA_SKILLS_COMMIT=237ff71091b5b791e869334a65cc5d98641a8376
+ARG HA_SKILLS_COMMIT=cf2b714c162fab63533273239b8693e47d9fc4ec
 RUN cd /opt/ha-mcp \
     && uv sync --locked --no-dev --no-editable \
     && echo "ha-mcp installed at /opt/ha-mcp/.venv/bin/ha-mcp" \
