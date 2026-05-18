@@ -28,6 +28,11 @@
       "matchDatasources": ["custom.claude-code"],
       "matchUpdateTypes": ["patch"],
       "automerge": true
+    },
+    {
+      "description": "Alpine apk packages (Repology) — override the default 3-day minimumReleaseAge",
+      "matchDatasources": ["repology"],
+      "minimumReleaseAge": "0 days"
     }
   ],
   "customManagers": [
@@ -95,7 +100,6 @@
       "matchStrings": [
         "\\s\\s(?<package>[a-z0-9][a-z0-9-_]+)=(?<currentValue>[a-z0-9-_.]+)\\s+"
       ],
-      "minimumReleaseAge": "0 days",
       "versioningTemplate": "loose",
       "datasourceTemplate": "repology",
       "depNameTemplate": "alpine_3_23/{{package}}"
