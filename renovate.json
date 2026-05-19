@@ -4,7 +4,8 @@
     "github>owine/renovate-config",
     "github>owine/renovate-config:automerge",
     "github>owine/renovate-config:python",
-    "github>owine/renovate-config:docker"
+    "github>owine/renovate-config:docker",
+    "github>owine/renovate-config:alpine"
   ],
   "packageRules": [
     {
@@ -28,11 +29,6 @@
       "matchDatasources": ["custom.claude-code"],
       "matchUpdateTypes": ["patch"],
       "automerge": true
-    },
-    {
-      "description": "Alpine apk packages (Repology) — override the default 3-day minimumReleaseAge",
-      "matchDatasources": ["repology"],
-      "minimumReleaseAge": "0 days"
     }
   ],
   "customManagers": [
