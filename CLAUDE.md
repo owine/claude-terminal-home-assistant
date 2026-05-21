@@ -90,6 +90,16 @@ docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
 - Docker builds require `--no-cache` when npm or Python dependencies change
 - Credential persistence must survive container restarts
 
+### Docker Socket Access (optional feature)
+
+Two new add-on options (both default `false`):
+- `enable_docker` — installs `docker-cli` + `docker-cli-compose` via `persist-install` at startup and expects the host Docker socket at `/run/docker.sock`
+- `enable_docker_buildx` — additionally installs `docker-cli-buildx`; only meaningful when `enable_docker` is also `true`
+
+The manifest sets `docker_api: true`, but this is **inert while Protection Mode is ON** (the HA Supervisor default). The socket is only bind-mounted into the container when the user disables Protection Mode in the add-on's **Info** tab. Both the config option AND the Protection Mode toggle are required — neither alone is sufficient.
+
+The Docker CLI packages are installed via `persist-install` (unpinned, floats to current Alpine repo version) and are not tracked by Renovate — consistent with how `persistent_apk_packages` behaves. Docker socket access is effectively root on the host; it compounds with `dangerously_skip_permissions`.
+
 ## Dependency Management
 
 ### Updating npm dependencies (wrapper/)
