@@ -366,6 +366,18 @@ du -sh /data/packages/*
 
 ---
 
+## 🐳 Docker CLI (via `enable_docker`)
+
+Enabling the `enable_docker` add-on option automatically installs `docker-cli` and `docker-cli-compose` via `persist-install` into `/data/packages` at startup — so the tools survive container restarts without any manual steps.
+
+If `enable_docker_buildx: true` is also set, `docker-cli-buildx` is installed in the same way, adding `docker buildx` support for image builds.
+
+**Important:** installing the CLI tools alone is not enough to use Docker. The host Docker socket (`/run/docker.sock`) is only mounted into the container when **Protection Mode is disabled** in the add-on's **Info** tab. While Protection Mode is on (the default), the socket is never available, and `docker` commands will fail with a daemon connection error.
+
+Like all packages installed via `persist-install`, the Docker CLI version floats to whatever Alpine's package repos currently provide — it is not version-pinned and is not tracked by Renovate.
+
+---
+
 ## 🐛 Known Limitations
 
 1. **Complex packages**: Some packages with heavy system dependencies may not work

@@ -280,6 +280,51 @@ auto_install_packages() {
     fi
 }
 
+# Optional Docker CLI support.
+# Installs docker-cli (+ compose, optional buildx) via persist-install and
+# validates access to the host Docker socket. Requires Protection Mode OFF.
+# Never aborts startup — all failures degrade to warnings.
+init_docker() {
+    local enable_docker enable_buildx
+    enable_docker=$(bashio::config 'enable_docker' 'false')
+
+    if [ "$enable_docker" != "true" ]; then
+        return 0
+    fi
+
+    bashio::log.info "Docker support enabled — installing Docker CLI..."
+
+    local packages="docker-cli docker-cli-compose"
+    enable_buildx=$(bashio::config 'enable_docker_buildx' 'false')
+    if [ "$enable_buildx" = "true" ]; then
+        packages="$packages docker-cli-buildx"
+    fi
+
+    # shellcheck disable=SC2086  # word-splitting is intentional for the package list
+    if ! /usr/local/bin/persist-install $packages; then
+        bashio::log.warning "Failed to install Docker CLI packages; 'docker' may be unavailable"
+        return 0
+    fi
+
+    # Validate socket presence (mounted by docker_api when Protection Mode is OFF).
+    if [ ! -S "/run/docker.sock" ]; then
+        bashio::log.warning "Docker socket /run/docker.sock not found."
+        bashio::log.warning "Disable Protection Mode in the add-on's Info tab to enable Docker access."
+        return 0
+    fi
+
+    # Docker is active — surface the security implications now that it can actually be used.
+    bashio::log.warning "SECURITY: Docker socket access grants effectively ROOT on the host."
+    bashio::log.warning "SECURITY: Only keep enable_docker on if you understand this risk."
+
+    # Confirm daemon connectivity (lightweight).
+    if docker version >/dev/null 2>&1; then
+        bashio::log.info "Docker CLI ready and connected to the host daemon."
+    else
+        bashio::log.warning "Docker socket present but daemon unreachable ('docker version' failed)."
+    fi
+}
+
 # Legacy monitoring functions removed - using simplified /data approach
 
 # Determine Claude launch command based on configuration
@@ -470,6 +515,7 @@ main() {
     run_health_check
     setup_session_picker
     setup_persistent_packages
+    init_docker
     setup_ha_mcp
     start_web_terminal
 }

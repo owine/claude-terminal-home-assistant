@@ -77,6 +77,41 @@ YOLO Mode provides on-demand access to `--dangerously-skip-permissions` without 
 - Configure APK and pip packages to auto-install on startup
 - Packages are stored in `/data/packages` and survive restarts
 
+### Docker Access
+
+The add-on can optionally provide access to the host Docker socket, letting you manage containers directly from the terminal — including the Home Assistant core container, other add-on containers, and any Docker workloads running on the host.
+
+**What you can do with Docker access:**
+- Run `docker ps`, `docker logs`, `docker exec` against any container on the host
+- Start, stop, and restart containers
+- Pull images and run new containers
+- Use `docker compose` for multi-container workflows
+- Build images (requires `enable_docker_buildx: true`)
+
+**⚠️ Security Warning:** Docker socket access grants effectively **root-level access to the host machine**. Anyone with terminal access can escape any container boundary, read any file, or run arbitrary code as root. Only enable this if you fully understand and accept the implications. This risk compounds further if `dangerously_skip_permissions` is also enabled — together they give Claude unrestricted access to the host.
+
+#### Two required steps
+
+Enabling Docker access requires **both** of the following — either alone is not enough:
+
+1. **Set `enable_docker: true`** in the add-on configuration
+2. **Disable Protection Mode** in the add-on's **Info** tab in the Home Assistant UI
+
+Protection Mode is a per-add-on HA Supervisor toggle (on by default). While it is on, the host Docker socket is never mounted into the container, regardless of the `enable_docker` setting. You must turn it off explicitly.
+
+#### Optional: Buildx support
+
+Set `enable_docker_buildx: true` to also install `docker buildx`, enabling multi-platform image builds. This has no effect unless `enable_docker: true` is also set.
+
+#### Package installation note
+
+When `enable_docker: true`, the add-on installs `docker-cli` and `docker-cli-compose` (and `docker-cli-buildx` if enabled) via `persist-install` into `/data/packages` at startup, so they survive restarts. The version installed floats to whatever Alpine's package repos currently provide — consistent with how all `persist-install` packages behave (not version-pinned, not Renovate-tracked).
+
+#### Troubleshooting Docker access
+
+- **`docker: command not found`** — `enable_docker` is off, or package installation failed on the last startup. Check the add-on log for `persist-install` errors and restart the add-on.
+- **`Cannot connect to the Docker daemon` / socket not found** — Protection Mode is still ON. The Docker socket is not mounted into the container until you disable Protection Mode in the add-on's **Info** tab.
+
 **Example Configuration**:
 ```yaml
 auto_launch_claude: false
@@ -100,6 +135,8 @@ Your OAuth credentials are stored in the `/config/claude-config` directory and w
 | `tmux_mouse_mode` | `false` | Enable mouse support in tmux (use Shift+select to copy) |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |
+| `enable_docker` | `false` | Install the Docker CLI and enable host Docker socket access (requires Protection Mode disabled) ⚠️ |
+| `enable_docker_buildx` | `false` | Also install `docker buildx` for image builds (only meaningful with `enable_docker`) |
 
 ## Usage
 
