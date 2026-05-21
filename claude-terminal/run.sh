@@ -306,16 +306,16 @@ init_docker() {
         return 0
     fi
 
-    # Prominent security warning.
-    bashio::log.warning "SECURITY: Docker socket access grants effectively ROOT on the host."
-    bashio::log.warning "SECURITY: Only keep enable_docker on if you understand this risk."
-
     # Validate socket presence (mounted by docker_api when Protection Mode is OFF).
     if [ ! -S "/run/docker.sock" ]; then
         bashio::log.warning "Docker socket /run/docker.sock not found."
         bashio::log.warning "Disable Protection Mode in the add-on's Info tab to enable Docker access."
         return 0
     fi
+
+    # Docker is active — surface the security implications now that it can actually be used.
+    bashio::log.warning "SECURITY: Docker socket access grants effectively ROOT on the host."
+    bashio::log.warning "SECURITY: Only keep enable_docker on if you understand this risk."
 
     # Confirm daemon connectivity (lightweight).
     if docker version >/dev/null 2>&1; then
