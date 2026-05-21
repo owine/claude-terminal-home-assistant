@@ -100,6 +100,8 @@ The manifest sets `docker_api: true`, but this is **inert while Protection Mode 
 
 The Docker CLI packages are installed via `persist-install` (unpinned, floats to current Alpine repo version) and are not tracked by Renovate — consistent with how `persistent_apk_packages` behaves. Docker socket access is effectively root on the host; it compounds with `dangerously_skip_permissions`.
 
+**AppArmor:** Verified on a live HA install (v2.4.0) that Docker socket access works with AppArmor left **enabled** (default) — disabling Protection Mode alone is sufficient. No `apparmor: false` or custom AppArmor profile is required, so the syscall sandbox stays intact for all other operations.
+
 ## Dependency Management
 
 ### Updating npm dependencies (wrapper/)
