@@ -39,6 +39,8 @@ options:
   tmux_mouse_mode: false
   persistent_apk_packages: []
   persistent_pip_packages: []
+  enable_docker: false
+  enable_docker_buildx: false
 
 schema:
   auto_launch_claude: bool?
@@ -49,6 +51,8 @@ schema:
     - str?
   persistent_pip_packages:
     - str?
+  enable_docker: bool?
+  enable_docker_buildx: bool?
 
 # Volume mappings for file access
 map:
@@ -59,6 +63,10 @@ hassio_api: true
 hassio_role: manager
 homeassistant_api: true
 auth_api: true
+# Docker socket access (inert while Protection Mode is ON).
+# Lets the terminal talk to the host Docker daemon when the user disables
+# Protection Mode AND sets enable_docker: true. See DOCS.md "Docker Access".
+docker_api: true
 
 # Service startup configuration
 startup: services
