@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.4.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.10...v2.4.0) (2026-05-21)
+
+
+### Features
+
+* optional Docker socket access ([#158](https://github.com/owine/claude-terminal-home-assistant/issues/158)) ([aec79be](https://github.com/owine/claude-terminal-home-assistant/commit/aec79bed634f729c25c9581fb8ad7e4dc0c5f276))
+
+
+### Dependencies
+
+* lock file maintenance ([#155](https://github.com/owine/claude-terminal-home-assistant/issues/155)) ([4b56253](https://github.com/owine/claude-terminal-home-assistant/commit/4b5625378b9647b9edc30838e4c947d6d5196140))
+
 ## [2.3.10](https://github.com/owine/claude-terminal-home-assistant/compare/v2.3.9...v2.3.10) (2026-05-15)
 
 
