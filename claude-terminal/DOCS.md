@@ -109,7 +109,7 @@ When `enable_docker: true`, the add-on installs `docker-cli` and `docker-cli-com
 
 #### Troubleshooting Docker access
 
-- **`docker: command not found`** — `enable_docker` is off, or the add-on is still running first-boot package installation. Wait for startup to complete or restart the add-on.
+- **`docker: command not found`** — `enable_docker` is off, or package installation failed on the last startup. Check the add-on log for `persist-install` errors and restart the add-on.
 - **`Cannot connect to the Docker daemon` / socket not found** — Protection Mode is still ON. The Docker socket is not mounted into the container until you disable Protection Mode in the add-on's **Info** tab.
 
 **Example Configuration**:
