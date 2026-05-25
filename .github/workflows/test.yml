@@ -6,10 +6,11 @@ on:
     paths:
       - 'claude-terminal/**'
       - '.github/workflows/test.yml'
+  # Run on every PR (no paths filter): the branch ruleset requires
+  # `Test build amd64` and `Test build aarch64` to pass, so a PR that doesn't
+  # touch the filtered paths would leave them expected-but-missing and
+  # permanently block merge.
   pull_request:
-    paths:
-      - 'claude-terminal/**'
-      - '.github/workflows/test.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
