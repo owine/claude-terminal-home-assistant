@@ -9,14 +9,12 @@ on:
       - '.hadolint.yaml'
       - '.shellcheckrc'
       - '.yamllint.yml'
+  # Run on every PR (no paths filter): the branch ruleset requires `Lint all`
+  # to pass, so a PR that doesn't touch the filtered paths would leave the
+  # check expected-but-missing and permanently block merge. Linting is fast
+  # so the cost of running on every PR is trivial.
   pull_request:
     branches: [main]
-    paths:
-      - 'claude-terminal/**'
-      - '.github/workflows/**'
-      - '.hadolint.yaml'
-      - '.shellcheckrc'
-      - '.yamllint.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
