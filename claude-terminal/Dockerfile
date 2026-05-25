@@ -81,7 +81,7 @@ RUN set -eux; \
 # Install uv for running ha-mcp (Python package manager/runner) with SHA256 verification
 # ha-mcp requires Python 3.13+, uv handles this automatically
 # renovate: datasource=github-releases depName=astral-sh/uv
-ARG UV_VERSION=0.11.15
+ARG UV_VERSION=0.11.16
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -215,7 +215,7 @@ COPY ha-mcp/pyproject.toml ha-mcp/uv.lock /opt/ha-mcp/
 # The skills are a git submodule in the ha-mcp repo but aren't included in
 # the PyPI package. ha-mcp expects them at ha_mcp/resources/skills-vendor/skills/.
 # renovate: datasource=git-refs depName=homeassistant-ai/skills packageName=https://github.com/homeassistant-ai/skills branch=main
-ARG HA_SKILLS_COMMIT=cf2b714c162fab63533273239b8693e47d9fc4ec
+ARG HA_SKILLS_COMMIT=c1abc300f5249685e8b98cdc560ebf4bcdb17161
 RUN cd /opt/ha-mcp \
     && uv sync --locked --no-dev --no-editable \
     && echo "ha-mcp installed at /opt/ha-mcp/.venv/bin/ha-mcp" \
