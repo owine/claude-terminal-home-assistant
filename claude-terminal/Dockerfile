@@ -81,7 +81,7 @@ RUN set -eux; \
 # Install uv for running ha-mcp (Python package manager/runner) with SHA256 verification
 # ha-mcp requires Python 3.13+, uv handles this automatically
 # renovate: datasource=github-releases depName=astral-sh/uv
-ARG UV_VERSION=0.11.16
+ARG UV_VERSION=0.11.17
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -155,7 +155,7 @@ RUN case "${TARGETARCH}" in \
 # Install GitHub CLI (gh command) with SHA256 verification
 # Download appropriate binary based on build architecture
 # renovate: datasource=github-releases depName=cli/cli
-ARG GH_CLI_VERSION=2.92.0
+ARG GH_CLI_VERSION=2.93.0
 RUN set -eux; \
     # Determine architecture
     case "${TARGETARCH}" in \
@@ -211,20 +211,11 @@ RUN set -eux; \
 # The index-strategy in pyproject.toml allows uv to find packages across both
 # the HA musllinux wheel index (UV_EXTRA_INDEX_URL) and PyPI
 COPY ha-mcp/pyproject.toml ha-mcp/uv.lock /opt/ha-mcp/
-# Vendor HA agent skills into the ha-mcp package.
-# The skills are a git submodule in the ha-mcp repo but aren't included in
-# the PyPI package. ha-mcp expects them at ha_mcp/resources/skills-vendor/skills/.
-# renovate: datasource=git-refs depName=homeassistant-ai/skills packageName=https://github.com/homeassistant-ai/skills branch=main
-ARG HA_SKILLS_COMMIT=c1abc300f5249685e8b98cdc560ebf4bcdb17161
+# ha-mcp >= 7.6.0 bundles the HA agent skills in the PyPI package at
+# ha_mcp/resources/skills-vendor/skills/, so no separate vendoring step is needed.
 RUN cd /opt/ha-mcp \
     && uv sync --locked --no-dev --no-editable \
-    && echo "ha-mcp installed at /opt/ha-mcp/.venv/bin/ha-mcp" \
-    && HA_MCP_PKG="$(/opt/ha-mcp/.venv/bin/python -c 'import ha_mcp, pathlib; print(pathlib.Path(ha_mcp.__file__).parent)')" \
-    && git clone https://github.com/homeassistant-ai/skills.git "${HA_MCP_PKG}/resources/skills-vendor" \
-    && cd "${HA_MCP_PKG}/resources/skills-vendor" \
-    && git checkout "${HA_SKILLS_COMMIT}" \
-    && rm -rf .git \
-    && echo "HA agent skills (${HA_SKILLS_COMMIT}) vendored into ${HA_MCP_PKG}/resources/skills-vendor/"
+    && echo "ha-mcp installed at /opt/ha-mcp/.venv/bin/ha-mcp"
 
 # Create directory for Claude configuration and set working directory
 RUN mkdir -p /config/claude-config
