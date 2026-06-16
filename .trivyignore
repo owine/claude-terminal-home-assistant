@@ -1,25 +1,25 @@
 # Trivy vulnerability ignore list
-# Review periodically — remove entries when upstream fixes are available
+# Review periodically — remove entries when the HA base image ships a rebuilt tempio.
 
-# docker/cli: Windows-only privilege escalation — not exploitable in Alpine Linux containers
-CVE-2025-15558
-
-# Go stdlib CVEs in pre-compiled binaries (Claude CLI, gh CLI, ha CLI)
-# Cannot fix until upstream recompiles with Go 1.25.9+ or 1.26.2+
-# Claude CLI: Go 1.23.3 | gh CLI: Go 1.25.8 | ha CLI: Go 1.26.1
-CVE-2025-68121
-CVE-2025-22869
-CVE-2025-47907
-CVE-2025-58183
-CVE-2025-61726
-CVE-2025-61728
-CVE-2025-61729
+# Go stdlib + x/crypto CVEs in /usr/bin/tempio, the templating binary baked into
+# the Home Assistant base image (built with Go 1.23.3 / x/crypto 0.26.0).
+# Not fixable here — tempio is not an apk package and is not recompiled by this
+# add-on; only a new HA base image release can resolve these. Re-scan and prune
+# when the base image is bumped. Last verified against amd64-base:3.24.
 CVE-2024-45337
+CVE-2025-22869
+CVE-2025-61726
+CVE-2025-61729
+CVE-2025-68121
 CVE-2026-25679
 CVE-2026-32280
-CVE-2026-32282
-CVE-2026-33810
-
-# google.golang.org/grpc: authorization bypass via missing leading slash
-# In pre-compiled upstream binaries (gh CLI) — cannot fix until upstream recompiles with grpc >= 1.79.3
-CVE-2026-33186
+CVE-2026-32281
+CVE-2026-32283
+CVE-2026-33811
+CVE-2026-33814
+CVE-2026-39820
+CVE-2026-39823
+CVE-2026-39825
+CVE-2026-39836
+CVE-2026-42499
+CVE-2026-42504
