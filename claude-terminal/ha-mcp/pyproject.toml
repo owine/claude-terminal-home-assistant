@@ -8,3 +8,8 @@ dependencies = [
 
 [tool.uv]
 index-strategy = "unsafe-best-match"
+# ha-mcp hard-pins cryptography==48.0.0, which ships a vulnerable bundled OpenSSL
+# (GHSA-537c-gmf6-5ccf). Upstream fix homeassistant-ai/ha-mcp#1630 bumps it to
+# 49.0.0 but is not yet released; this override matches that target so it becomes
+# a no-op (safe to remove) once ha-mcp ships the bump.
+override-dependencies = ["cryptography==49.0.0"]
