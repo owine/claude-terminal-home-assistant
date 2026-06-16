@@ -18,11 +18,9 @@ Thank you for your interest in contributing! This guide will help you get starte
 git clone https://github.com/owine/claude-terminal-home-assistant.git
 cd claude-terminal-home-assistant
 
-# Option 1: Use Nix development shell (recommended)
-nix develop
-
-# Option 2: Install tools manually
-brew install hadolint shellcheck yamllint actionlint
+# Install the toolchain (macOS via Homebrew)
+brew install hadolint shellcheck yamllint actionlint ruff node
+# Plus a container runtime: podman (or docker)
 ```
 
 See [CLAUDE.md](./CLAUDE.md) for comprehensive development documentation.
@@ -35,7 +33,7 @@ Before submitting changes, always test locally:
 
 ```bash
 # Build the app (replace {arch} with amd64 or aarch64)
-docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
+docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.24 \
   -t local/claude-terminal:test ./claude-terminal
 
 # Run locally
@@ -54,17 +52,18 @@ docker stop test-claude-dev && docker rm test-claude-dev
 
 ### 2. Run Linters
 
-All code must pass linting before being merged:
+All code must pass linting before being merged. Run from the repo root:
 
 ```bash
-# Run all linters
-lint-all
-
-# Or individually
-lint-dockerfile   # Dockerfile
-lint-shell        # Shell scripts
-lint-yaml         # YAML files
-lint-actions      # GitHub Actions
+hadolint claude-terminal/Dockerfile                       # Dockerfile
+shellcheck --external-sources claude-terminal/run.sh \
+  claude-terminal/scripts/*.sh claude-terminal/scripts/persist-install \
+  test-wrapper-integration.sh                             # Shell scripts
+yamllint -c .yamllint.yml claude-terminal/config.yaml \
+  claude-terminal/build.yaml .trivy.yaml .github/workflows/  # YAML files
+actionlint                                                # GitHub Actions
+(cd claude-terminal/wrapper && npm ci && npm run lint)    # ESLint (wrapper JS)
+ruff check                                                # Python (tools/)
 ```
 
 CI will automatically run these on all PRs.
@@ -250,10 +249,7 @@ docker build --no-cache \
 
 **Problem:** CI fails on shellcheck or hadolint
 
-**Solution:** Run linters locally before pushing:
-```bash
-lint-all  # Fix any issues reported
-```
+**Solution:** Run the linters locally before pushing (see [Run Linters](#2-run-linters)) and fix any issues reported.
 
 ## Getting Help
 

@@ -10,6 +10,8 @@ All linting runs automatically on every push and pull request via `.github/workf
 - **shellcheck** - Shell script analysis (pre-installed on runners)
 - **yamllint** - YAML file validation (pre-installed on runners)
 - **actionlint** - GitHub Actions workflow validation (via action)
+- **ESLint** - Wrapper JS (`server.js`, `public/sw.js`) via `setup-node` + `npm run lint`
+- **Ruff** - Python (`tools/`) via the `astral-sh/ruff-action` (version pinned, Renovate-managed)
 
 **Note:** shellcheck and yamllint use the pre-installed versions on GitHub Actions runners, reducing external dependencies and improving CI speed.
 
@@ -17,43 +19,34 @@ All linting runs automatically on every push and pull request via `.github/workf
 
 ### Prerequisites
 
-Install linters via Homebrew:
+Install the linters via Homebrew:
 ```bash
-brew install hadolint shellcheck yamllint actionlint
-```
-
-Or use the Nix development shell (installs automatically):
-```bash
-nix develop
+brew install hadolint shellcheck yamllint actionlint ruff node
 ```
 
 ### Running Linters
 
-```bash
-# Run all linters at once
-lint-all
-
-# Run individual linters
-lint-dockerfile   # Lint Dockerfile
-lint-shell        # Lint shell scripts
-lint-yaml         # Lint YAML files
-lint-actions      # Lint GitHub Actions workflows
-```
-
-### Manual Commands
-
+Run each from the repo root:
 ```bash
 # Dockerfile
 hadolint -c .hadolint.yaml claude-terminal/Dockerfile
 
 # Shell scripts
-shellcheck claude-terminal/run.sh claude-terminal/scripts/*.sh
+shellcheck --external-sources claude-terminal/run.sh claude-terminal/scripts/*.sh \
+  claude-terminal/scripts/persist-install test-wrapper-integration.sh
 
 # YAML files
-yamllint -c .yamllint.yml claude-terminal/config.yaml claude-terminal/build.yaml .github/workflows/
+yamllint -c .yamllint.yml claude-terminal/config.yaml claude-terminal/build.yaml \
+  .trivy.yaml .github/workflows/
 
 # GitHub Actions
 actionlint
+
+# Wrapper JS (ESLint)
+(cd claude-terminal/wrapper && npm ci && npm run lint)
+
+# Python (Ruff)
+ruff check
 ```
 
 ## Configuration Files
@@ -61,6 +54,8 @@ actionlint
 - `.hadolint.yaml` - Dockerfile linting rules (ignores DL3018 for HA apps)
 - `.shellcheckrc` - Shell script linting rules (handles bashio shebang)
 - `.yamllint.yml` - YAML formatting rules (120 char lines, 2-space indent)
+- `claude-terminal/wrapper/eslint.config.js` - ESLint flat config (Node + browser/service-worker)
+- `ruff.toml` - Ruff config for repo Python (`tools/`)
 
 ## Severity Levels
 

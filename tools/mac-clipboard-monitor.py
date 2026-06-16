@@ -15,17 +15,17 @@ Requirements:
     pip3 install pillow requests pasteboard
 """
 
+import hashlib
 import sys
 import time
-import hashlib
-import requests
-from pathlib import Path
 from datetime import datetime
 from io import BytesIO
 
+import requests
+
 try:
-    from PIL import Image
     import pasteboard
+    from PIL import Image
 except ImportError:
     print("Error: Required packages not installed")
     print("Please run: pip3 install pillow requests pasteboard")
@@ -106,7 +106,7 @@ class ClipboardMonitor:
                     timestamp_str = datetime.now().strftime('%H:%M:%S')
                     print(f"[{timestamp_str}] ✓ Uploaded: {filename} ({size_kb:.1f} KB)")
                     print(f"    Path copied to clipboard: {path}")
-                    print(f"    Ready to paste into Claude Code CLI!\n")
+                    print("    Ready to paste into Claude Code CLI!\n")
                     return True
                 else:
                     print(f"✗ Upload failed: {result.get('error', 'Unknown error')}")

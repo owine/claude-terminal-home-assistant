@@ -97,16 +97,14 @@ claude-logout        # Clear credentials and re-authenticate
 ### Development
 For local development and testing:
 ```bash
-# Enter development environment
-nix develop
-
-# Build and test locally
-build-addon
-run-addon
+# Build and run locally (replace amd64 with aarch64 for ARM)
+podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24 \
+  -t local/claude-terminal-prowine ./claude-terminal
+podman run -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
 
 # Lint and validate
-lint-dockerfile
-test-endpoint
+hadolint claude-terminal/Dockerfile
+curl -X GET http://localhost:7681/
 ```
 
 ## Architecture
@@ -130,20 +128,11 @@ Security features and improvements:
 
 ## Development Environment
 
-This app includes a comprehensive development setup using Nix:
-
-```bash
-# Available development commands
-build-addon      # Build the app container with Podman
-run-addon        # Run app locally on port 7681
-lint-dockerfile  # Lint Dockerfile with hadolint
-test-endpoint    # Test web endpoint availability
-```
-
 **Requirements for development:**
-- NixOS or Nix package manager
-- Podman (automatically provided in dev shell)
-- Optional: direnv for automatic environment activation
+- A container runtime: Podman or Docker
+- Linters: `hadolint`, `shellcheck`, `yamllint`, `actionlint`, `ruff`, and Node.js (`brew install hadolint shellcheck yamllint actionlint ruff node`)
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md) and [.github/LINTING.md](../.github/LINTING.md) for the full build, run, and lint commands.
 
 ## Documentation
 

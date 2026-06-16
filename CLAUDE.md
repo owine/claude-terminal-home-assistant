@@ -12,30 +12,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Environment
 
-### Setup
+### Prerequisites
+Install the toolchain locally (macOS via Homebrew):
 ```bash
-nix develop        # Enter development shell
-direnv allow       # Or with direnv
+brew install hadolint shellcheck yamllint actionlint ruff node
+# Plus a container runtime: podman (or docker) and curl/jq
 ```
 
-### Commands
+### Build & Test
 ```bash
-# Build & Test (Nix shell)
-build-addon        # Build with Podman
-run-addon          # Run locally on port 7681
-test-endpoint      # curl localhost:7681
-
-# Linting
-lint-all           # All linters (hadolint, shellcheck, yamllint, actionlint)
-lint-dockerfile    # hadolint
-lint-shell         # shellcheck
-lint-yaml          # yamllint
-lint-actions       # actionlint
-
-# Manual build (replace {arch} with amd64 or aarch64)
-docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
+# Build the image (replace amd64 with aarch64 for ARM)
+podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
-# Add --no-cache when dependencies change
+# Add --no-cache when npm or Python dependencies change
+
+# Run locally on port 7681, then test the endpoint
+podman run -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
+curl -X GET http://localhost:7681/
+```
+
+### Linting (run from repo root)
+```bash
+hadolint claude-terminal/Dockerfile
+shellcheck --external-sources claude-terminal/run.sh claude-terminal/scripts/*.sh \
+  claude-terminal/scripts/persist-install test-wrapper-integration.sh
+yamllint -c .yamllint.yml claude-terminal/config.yaml claude-terminal/build.yaml \
+  .trivy.yaml .github/workflows/
+actionlint
+(cd claude-terminal/wrapper && npm ci && npm run lint)   # ESLint (wrapper JS)
+ruff check                                                # Python (tools/)
 ```
 
 ## Architecture

@@ -5,10 +5,13 @@ on:
     branches: [main]
     paths:
       - 'claude-terminal/**'
+      - 'tools/**'
+      - 'test-wrapper-integration.sh'
       - '.github/workflows/**'
       - '.hadolint.yaml'
       - '.shellcheckrc'
       - '.yamllint.yml'
+      - 'ruff.toml'
   # Run on every PR (no paths filter): the branch ruleset requires `Lint all`
   # to pass, so a PR that doesn't touch the filtered paths would leave the
   # check expected-but-missing and permanently block merge. Linting is fast
@@ -28,6 +31,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '24.16.0' # renovate: datasource=node-version depName=node-lts-24 packageName=node
+          cache: npm
+          cache-dependency-path: claude-terminal/wrapper/package-lock.json
+
       - name: Hadolint
         uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
         with:
@@ -40,7 +50,9 @@ jobs:
           shellcheck --version
           shellcheck --external-sources --severity=error \
             claude-terminal/run.sh \
-            claude-terminal/scripts/*.sh
+            claude-terminal/scripts/*.sh \
+            claude-terminal/scripts/persist-install \
+            test-wrapper-integration.sh
 
       - name: yamllint
         run: |
@@ -53,3 +65,16 @@ jobs:
 
       - name: actionlint
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
+
+      - name: ESLint
+        working-directory: claude-terminal/wrapper
+        run: |
+          npm --version
+          npm ci
+          npm run lint
+
+      - name: Ruff
+        uses: astral-sh/ruff-action@0ce1b0bf8b818ef400413f810f8a11cdbda0034b # v4.0.0
+        with:
+          version: '0.15.17' # renovate: datasource=pypi depName=ruff
+          args: check
