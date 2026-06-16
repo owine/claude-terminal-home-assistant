@@ -72,8 +72,10 @@ list_packages() {
     echo ""
 
     echo "🔧 System Binaries ($PERSIST_BIN):"
-    if [ -d "$PERSIST_BIN" ] && [ "$(ls -A $PERSIST_BIN 2>/dev/null)" ]; then
-        ls -1 "$PERSIST_BIN" | sed 's/^/  • /'
+    if [ -d "$PERSIST_BIN" ] && [ -n "$(ls -A "$PERSIST_BIN" 2>/dev/null)" ]; then
+        for bin in "$PERSIST_BIN"/*; do
+            echo "  • $(basename "$bin")"
+        done
     else
         echo "  (none installed)"
     fi
@@ -94,14 +96,14 @@ list_packages() {
 }
 
 install_system_packages() {
-    local packages="$@"
+    local packages=("$@")
 
-    echo "📦 Installing system packages: $packages"
+    echo "📦 Installing system packages: ${packages[*]}"
     echo ""
 
     # Install via APK first
     echo "⏳ Installing via APK..."
-    if ! apk add --no-cache $packages; then
+    if ! apk add --no-cache "${packages[@]}"; then
         echo "❌ Failed to install packages"
         exit 1
     fi
@@ -110,7 +112,7 @@ install_system_packages() {
     echo "💾 Copying to persistent storage..."
     mkdir -p "$PERSIST_BIN" "$PERSIST_ROOT/lib"
 
-    for pkg in $packages; do
+    for pkg in "${packages[@]}"; do
         echo "  Processing: $pkg"
 
         # Get list of files installed by package
@@ -118,7 +120,7 @@ install_system_packages() {
             # Copy executables
             if [[ "$file" == /usr/bin/* ]] || [[ "$file" == /usr/sbin/* ]] || [[ "$file" == /bin/* ]]; then
                 if [ -f "$file" ] && [ -x "$file" ]; then
-                    cp -a "$file" "$PERSIST_BIN/" 2>/dev/null && echo "    ✓ $(basename $file)"
+                    cp -a "$file" "$PERSIST_BIN/" 2>/dev/null && echo "    ✓ $(basename "$file")"
                 fi
             fi
 
@@ -137,9 +139,9 @@ install_system_packages() {
 }
 
 install_python_packages() {
-    local packages="$@"
+    local packages=("$@")
 
-    echo "🐍 Installing Python packages: $packages"
+    echo "🐍 Installing Python packages: ${packages[*]}"
     echo ""
 
     # Ensure system Python exists before building/repairing the venv.
@@ -172,7 +174,7 @@ install_python_packages() {
 
     echo "⏳ Installing packages..."
     pip install --upgrade pip -q
-    pip install $packages
+    pip install "${packages[@]}"
 
     echo ""
     echo "✅ Python packages installed!"
@@ -185,8 +187,8 @@ install_ha_cli() {
     local BASE_URL="https://github.com/home-assistant/cli/releases/download/${HA_VERSION}"
 
     # Detect architecture
-    local machine=$(uname -m)
-    local arch=""
+    local machine arch=""
+    machine=$(uname -m)
 
     case "$machine" in
         x86_64)     arch="amd64" ;;
@@ -235,7 +237,8 @@ install_ha_cli() {
     fi
 
     # Check file size (should be > 1MB)
-    local size=$(stat -f%z "${target_path}" 2>/dev/null || stat -c%s "${target_path}" 2>/dev/null || echo "0")
+    local size
+    size=$(stat -f%z "${target_path}" 2>/dev/null || stat -c%s "${target_path}" 2>/dev/null || echo "0")
     if [ "$size" -lt 1000000 ]; then
         echo "❌ Downloaded file is too small (${size} bytes)"
         rm -f "${target_path}"
