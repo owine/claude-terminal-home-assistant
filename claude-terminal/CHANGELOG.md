@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.4.4...v2.4.5) (2026-06-16)
+
+
+### Bug Fixes
+
+* rebuild persistent venv when base-image Python version changes ([#187](https://github.com/owine/claude-terminal-home-assistant/issues/187)) ([54dc703](https://github.com/owine/claude-terminal-home-assistant/commit/54dc70362f0fbc6f95c6e521e8a64074b8b9f7aa))
+
 ## [2.4.4](https://github.com/owine/claude-terminal-home-assistant/compare/v2.4.3...v2.4.4) (2026-06-16)
 
 
