@@ -11,25 +11,33 @@ PERSIST_LIB="$PERSIST_ROOT/lib"
 PERSIST_PYTHON="$PERSIST_ROOT/python"
 PERSIST_APK_CACHE="$PERSIST_ROOT/apk-cache"
 
+# Echo the Python minor version (e.g. "3.14") the system interpreter reports.
+system_python_minor() {
+    python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null
+}
+
+# Echo the Python minor version recorded in a venv's pyvenv.cfg (empty if absent).
+# Matches both "version = 3.14.6" and "version_info = 3.14.6.final.0".
+venv_python_minor() {
+    sed -n 's/^version[_a-z]*[[:space:]]*=[[:space:]]*\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' \
+        "$1/pyvenv.cfg" 2>/dev/null | head -n1
+}
+
 # Decide whether the persistent venv must be (re)created. A venv binds to a
 # specific Python minor version (packages live in lib/pythonX.Y/site-packages);
 # when the base image bumps Python, the old pip is orphaned and fails with
 # "No module named 'pip'". Detect missing, corrupt, or version-mismatched venvs.
 venv_needs_recreate() {
     local venv_dir="$1"
-    local cfg="$venv_dir/pyvenv.cfg"
 
     [ -d "$venv_dir" ] || return 0
-    [ -f "$cfg" ] || return 0
+    [ -f "$venv_dir/pyvenv.cfg" ] || return 0
 
-    local current existing
-    current=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) || return 0
+    local current
+    current=$(system_python_minor) || return 0
     [ -n "$current" ] || return 0
 
-    # Matches both "version = 3.14.6" and "version_info = 3.14.6.final.0".
-    existing=$(sed -n 's/^version[_a-z]*[[:space:]]*=[[:space:]]*\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$cfg" | head -n1)
-
-    [ "$existing" = "$current" ] && return 1
+    [ "$(venv_python_minor "$venv_dir")" = "$current" ] && return 1
     return 0
 }
 
@@ -49,7 +57,9 @@ init_persistent_storage() {
     # an Alpine base-image upgrade bumps the interpreter and orphans pip).
     if venv_needs_recreate "$PERSIST_PYTHON/venv"; then
         if [ -d "$PERSIST_PYTHON/venv" ]; then
-            bashio::log.warning "Rebuilding persistent venv (Python version changed or venv corrupt)..."
+            local had
+            had=$(venv_python_minor "$PERSIST_PYTHON/venv")
+            bashio::log.warning "Rebuilding persistent venv (venv Python ${had:-unknown} != system Python $(system_python_minor))..."
             rm -rf "$PERSIST_PYTHON/venv"
         else
             bashio::log.info "Creating persistent Python virtual environment..."
