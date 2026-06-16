@@ -11,6 +11,28 @@ PERSIST_LIB="$PERSIST_ROOT/lib"
 PERSIST_PYTHON="$PERSIST_ROOT/python"
 PERSIST_APK_CACHE="$PERSIST_ROOT/apk-cache"
 
+# Decide whether the persistent venv must be (re)created. A venv binds to a
+# specific Python minor version (packages live in lib/pythonX.Y/site-packages);
+# when the base image bumps Python, the old pip is orphaned and fails with
+# "No module named 'pip'". Detect missing, corrupt, or version-mismatched venvs.
+venv_needs_recreate() {
+    local venv_dir="$1"
+    local cfg="$venv_dir/pyvenv.cfg"
+
+    [ -d "$venv_dir" ] || return 0
+    [ -f "$cfg" ] || return 0
+
+    local current existing
+    current=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) || return 0
+    [ -n "$current" ] || return 0
+
+    # Matches both "version = 3.14.6" and "version_info = 3.14.6.final.0".
+    existing=$(sed -n 's/^version[_a-z]*[[:space:]]*=[[:space:]]*\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$cfg" | head -n1)
+
+    [ "$existing" = "$current" ] && return 1
+    return 0
+}
+
 # Initialize persistent package directories
 init_persistent_storage() {
     bashio::log.info "Initializing persistent package storage..."
@@ -22,9 +44,16 @@ init_persistent_storage() {
 
     chmod 755 "$PERSIST_ROOT" "$PERSIST_BIN" "$PERSIST_LIB" "$PERSIST_PYTHON"
 
-    # Setup Python virtual environment in persistent storage
-    if [ ! -d "$PERSIST_PYTHON/venv" ]; then
-        bashio::log.info "Creating persistent Python virtual environment..."
+    # Setup Python virtual environment in persistent storage. Rebuild it when
+    # missing, corrupt, or built against a different Python version (e.g. after
+    # an Alpine base-image upgrade bumps the interpreter and orphans pip).
+    if venv_needs_recreate "$PERSIST_PYTHON/venv"; then
+        if [ -d "$PERSIST_PYTHON/venv" ]; then
+            bashio::log.warning "Rebuilding persistent venv (Python version changed or venv corrupt)..."
+            rm -rf "$PERSIST_PYTHON/venv"
+        else
+            bashio::log.info "Creating persistent Python virtual environment..."
+        fi
         python3 -m venv "$PERSIST_PYTHON/venv"
     fi
 
