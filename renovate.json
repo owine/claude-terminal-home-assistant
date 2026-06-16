@@ -5,7 +5,8 @@
     "github>owine/renovate-config:automerge",
     "github>owine/renovate-config:python",
     "github>owine/renovate-config:docker",
-    "github>owine/renovate-config:alpine"
+    "github>owine/renovate-config:alpine",
+    "github>owine/renovate-config:node"
   ],
   "packageRules": [
     {

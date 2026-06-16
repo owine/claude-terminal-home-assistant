@@ -4,14 +4,25 @@
   "description": "Web wrapper service for Claude Terminal Pro (UI, terminal proxy, image uploads)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "lint": "eslint ."
   },
-  "keywords": ["claude", "terminal", "wrapper", "proxy"],
+  "keywords": [
+    "claude",
+    "terminal",
+    "wrapper",
+    "proxy"
+  ],
   "author": "Javier Santos",
   "license": "MIT",
   "dependencies": {
     "express": "5.2.1",
-    "multer": "2.1.1",
-    "http-proxy-middleware": "4.1.0"
+    "http-proxy-middleware": "4.1.0",
+    "multer": "2.1.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.5.0",
+    "globals": "17.6.0"
   }
 }
