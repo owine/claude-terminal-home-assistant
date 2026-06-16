@@ -1,0 +1,16 @@
+# Ruff configuration for repo-level Python (tools/). See https://docs.astral.sh/ruff/
+# This is the only project ruff config; ha-mcp/ ships no .py (it installs via uv), so
+# this effectively governs tools/mac-clipboard-monitor.py.
+#
+# target-version is intentionally unset. Per ruff config discovery, when a config is
+# found in the hierarchy ruff infers a missing target-version only from a
+# requires-python in a pyproject.toml in the SAME directory as that config. There is
+# no root pyproject.toml, so ruff uses its default (py39) — deterministically, since a
+# config is always discovered first. ha-mcp's requires-python >=3.13 is deliberately
+# NOT inherited (different dir, no [tool.ruff]): this script runs standalone on users'
+# own Python, not the add-on runtime.
+line-length = 100
+
+[lint]
+# pycodestyle errors/warnings, pyflakes, import sorting, pyupgrade, bugbear.
+select = ["E", "F", "W", "I", "UP", "B"]

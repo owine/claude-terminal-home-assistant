@@ -5,10 +5,13 @@ on:
     branches: [main]
     paths:
       - 'claude-terminal/**'
+      - 'tools/**'
+      - 'test-wrapper-integration.sh'
       - '.github/workflows/**'
       - '.hadolint.yaml'
       - '.shellcheckrc'
       - '.yamllint.yml'
+      - 'ruff.toml'
   # Run on every PR (no paths filter): the branch ruleset requires `Lint all`
   # to pass, so a PR that doesn't touch the filtered paths would leave the
   # check expected-but-missing and permanently block merge. Linting is fast
@@ -69,3 +72,9 @@ jobs:
           npm --version
           npm ci
           npm run lint
+
+      - name: Ruff
+        uses: astral-sh/ruff-action@0ce1b0bf8b818ef400413f810f8a11cdbda0034b # v4.0.0
+        with:
+          version: '0.15.17' # renovate: datasource=pypi depName=ruff
+          args: check
