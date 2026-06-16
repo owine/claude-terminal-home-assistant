@@ -40,7 +40,9 @@ jobs:
           shellcheck --version
           shellcheck --external-sources --severity=error \
             claude-terminal/run.sh \
-            claude-terminal/scripts/*.sh
+            claude-terminal/scripts/*.sh \
+            claude-terminal/scripts/persist-install \
+            test-wrapper-integration.sh
 
       - name: yamllint
         run: |

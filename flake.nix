@@ -58,7 +58,7 @@
 
             # Linting aliases
             alias lint-dockerfile='hadolint ./claude-terminal/Dockerfile'
-            alias lint-shell='shellcheck claude-terminal/run.sh claude-terminal/scripts/*.sh'
+            alias lint-shell='shellcheck claude-terminal/run.sh claude-terminal/scripts/*.sh claude-terminal/scripts/persist-install test-wrapper-integration.sh'
             alias lint-yaml='yamllint -c .yamllint.yml claude-terminal/config.yaml claude-terminal/build.yaml .github/workflows/'
             alias lint-actions='actionlint'
             alias lint-all='echo "Running all linters..." && lint-dockerfile && lint-shell && lint-yaml && lint-actions && echo "✓ All linters passed!"'
