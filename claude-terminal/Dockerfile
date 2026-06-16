@@ -1,6 +1,6 @@
 # Home Assistant base image (provided by Home Assistant Builder via build.yaml)
-# For local testing, pass --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.23
+# For local testing, pass --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.24
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24
 # renovate: ignore - base image version managed via build.yaml
 FROM ${BUILD_FROM}
 
@@ -8,25 +8,25 @@ FROM ${BUILD_FROM}
 # Node.js and npm kept for wrapper service dependency
 RUN apk upgrade --no-cache \
     && apk add --no-cache \
-    bash=5.3.3-r1 \
-    curl=8.19.0-r0 \
-    git=2.52.0-r0 \
+    bash=5.3.9-r1 \
+    curl=8.20.0-r1 \
+    git=2.54.0-r0 \
     jq=1.8.1-r0 \
-    nano=8.7-r0 \
-    nodejs=24.14.1-r0 \
-    npm=11.11.0-r0 \
+    nano=9.0-r0 \
+    nodejs=24.16.0-r0 \
+    npm=11.12.1-r0 \
     py3-aiohttp=3.13.5-r0 \
-    py3-beautifulsoup4=4.14.3-r0 \
-    py3-pip=25.1.1-r1 \
+    py3-beautifulsoup4=4.15.0-r0 \
+    py3-pip=26.1.2-r0 \
     py3-requests=2.33.1-r0 \
-    py3-yaml=6.0.3-r0 \
-    python3=3.12.13-r0 \
-    tmux=3.6-r0 \
-    tree=2.2.1-r0 \
+    py3-yaml=6.0.3-r2 \
+    python3=3.14.5-r0 \
+    tmux=3.6b-r0 \
+    tree=2.3.2-r0 \
     ttyd=1.7.7-r0 \
     vim=9.2.0602-r0 \
-    wget=1.25.0-r2 \
-    yq-go=4.49.2-r6
+    wget=1.25.0-r3 \
+    yq-go=4.53.3-r0
 
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
