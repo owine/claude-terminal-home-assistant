@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.4.4](https://github.com/owine/claude-terminal-home-assistant/compare/v2.4.3...v2.4.4) (2026-06-16)
+
+
+### Bug Fixes
+
+* override cryptography to 49.0.0 to resolve GHSA-537c-gmf6-5ccf ([#185](https://github.com/owine/claude-terminal-home-assistant/issues/185)) ([14f3315](https://github.com/owine/claude-terminal-home-assistant/commit/14f3315e28f7d54db83cfc6351bf169d639f92af))
+* update all non-major dependencies ([#180](https://github.com/owine/claude-terminal-home-assistant/issues/180)) ([fd10889](https://github.com/owine/claude-terminal-home-assistant/commit/fd1088981525bdc134bf3b0ce7397720164d050f))
+
+
+### Dependencies
+
+* lock file maintenance all non-major dependencies ([#181](https://github.com/owine/claude-terminal-home-assistant/issues/181)) ([37ca54d](https://github.com/owine/claude-terminal-home-assistant/commit/37ca54d8f4e31bfdd03ac612f6ad784236bcff7d))
+* lock file maintenance all non-major dependencies ([#184](https://github.com/owine/claude-terminal-home-assistant/issues/184)) ([b6b21bb](https://github.com/owine/claude-terminal-home-assistant/commit/b6b21bb9da68b09d8b4db4ef1b3746fa7a460cf1))
+* migrate to Alpine 3.24 base image + refresh .trivyignore ([#186](https://github.com/owine/claude-terminal-home-assistant/issues/186)) ([e68ee2a](https://github.com/owine/claude-terminal-home-assistant/commit/e68ee2a37b9665761b1aef2b8367fc2dd8d26f33))
+
 ## [2.4.3](https://github.com/owine/claude-terminal-home-assistant/compare/v2.4.2...v2.4.3) (2026-06-08)
 
 
