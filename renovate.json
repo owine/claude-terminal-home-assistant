@@ -27,6 +27,12 @@
       "matchDatasources": ["custom.claude-code"],
       "matchUpdateTypes": ["patch"],
       "automerge": true
+    },
+    {
+      "description": "home-assistant/builder uses CalVer (YYYY.MM.PATCH); the default github-actions versioning can't parse it",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["home-assistant/builder"],
+      "versioning": "regex:^(?<major>\\d{4})\\.(?<minor>\\d{2})\\.(?<patch>\\d+)$"
     }
   ],
   "customManagers": [
