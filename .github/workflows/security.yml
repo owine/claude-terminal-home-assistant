@@ -11,14 +11,12 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   filesystem-scan:
     name: Filesystem scan
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -38,6 +36,19 @@ jobs:
           format: table
           output: trivy-fs-results.txt
 
+      # Cap the report so large result sets don't blow past the job-summary (1 MiB)
+      # or issue-body (64 KiB) limits. Used by both the summary and the issue.
+      - name: Prepare findings report
+        if: steps.trivy.outcome == 'failure'
+        run: |
+          max=500
+          {
+            head -n "$max" trivy-fs-results.txt
+            if [ "$(wc -l < trivy-fs-results.txt)" -gt "$max" ]; then
+              echo "... (truncated at ${max} lines; see the workflow logs for the full output)"
+            fi
+          } > trivy-report.txt
+
       - name: Publish results to job summary
         if: always()
         env:
@@ -49,7 +60,7 @@ jobs:
               echo "### ⚠️ CRITICAL/HIGH fixable findings"
               echo ""
               echo '```'
-              cat trivy-fs-results.txt || true
+              cat trivy-report.txt || true
               echo '```'
             else
               echo "✅ No CRITICAL/HIGH fixable vulnerabilities found."
@@ -71,7 +82,7 @@ jobs:
             echo "<details><summary>Scan output</summary>"
             echo ""
             echo '```'
-            cat trivy-fs-results.txt || true
+            cat trivy-report.txt || true
             echo '```'
             echo ""
             echo "</details>"
@@ -79,7 +90,9 @@ jobs:
             echo "_Source run: ${RUN_URL}_"
           } > issue-body.md
           gh label create security --color D93F0B --description "Security issues and updates" --force >/dev/null 2>&1 || true
-          existing=$(gh issue list --label security --state open --search "in:title Trivy filesystem scan" --json number --jq '.[0].number // empty')
+          # Tolerate transient API failures (advisory job) and match the title exactly.
+          existing=$(gh issue list --label security --state open --json number,title 2>/dev/null \
+            | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty' || echo "")
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body-file issue-body.md
           else
