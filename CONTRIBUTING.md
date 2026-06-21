@@ -60,7 +60,7 @@ shellcheck --external-sources claude-terminal/run.sh \
   claude-terminal/scripts/*.sh claude-terminal/scripts/persist-install \
   test-wrapper-integration.sh                             # Shell scripts
 yamllint -c .yamllint.yml claude-terminal/config.yaml \
-  claude-terminal/build.yaml .trivy.yaml .github/workflows/  # YAML files
+  .trivy.yaml .github/workflows/  # YAML files
 actionlint                                                # GitHub Actions
 (cd claude-terminal/wrapper && npm ci && npm run lint)    # ESLint (wrapper JS)
 ruff check                                                # Python (tools/)
@@ -141,7 +141,7 @@ git commit -m "docs: clarify persistent package installation"
 ### Dockerfile
 
 - Follow Home Assistant app conventions
-- Use Alpine base images from `build.yaml`
+- Base image is digest-pinned in the Dockerfile (`ghcr.io/home-assistant/base`)
 - Minimize layers where practical
 - Document complex RUN commands
 
@@ -167,7 +167,6 @@ git commit -m "docs: clarify persistent package installation"
 claude-terminal/
 ├── config.yaml           # App configuration
 ├── Dockerfile            # Container definition
-├── build.yaml            # Multi-arch build config
 ├── run.sh                # Main startup script
 ├── scripts/              # Modular functionality scripts
 │   ├── health-check.sh

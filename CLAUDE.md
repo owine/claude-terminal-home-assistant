@@ -22,7 +22,7 @@ brew install hadolint shellcheck yamllint actionlint ruff node
 ### Build & Test
 ```bash
 # Build the image (replace amd64 with aarch64 for ARM)
-podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24 \
+podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
 # Add --no-cache when npm or Python dependencies change
 
@@ -36,7 +36,7 @@ curl -X GET http://localhost:7681/
 hadolint claude-terminal/Dockerfile
 shellcheck --external-sources claude-terminal/run.sh claude-terminal/scripts/*.sh \
   claude-terminal/scripts/persist-install test-wrapper-integration.sh
-yamllint -c .yamllint.yml claude-terminal/config.yaml claude-terminal/build.yaml \
+yamllint -c .yamllint.yml claude-terminal/config.yaml \
   .trivy.yaml .github/workflows/
 actionlint
 (cd claude-terminal/wrapper && npm ci && npm run lint)   # ESLint (wrapper JS)
@@ -46,9 +46,8 @@ ruff check                                                # Python (tools/)
 ## Architecture
 
 ### App Structure (claude-terminal/)
-- **config.yaml** — Add-on configuration (slug: `claude_terminal_prowine`)
-- **Dockerfile** — Alpine 3.23 container with Node.js and Claude Code CLI
-- **build.yaml** — Multi-arch build config (amd64, aarch64) with Renovate-tracked base images
+- **config.yaml** — Add-on configuration (slug: `claude_terminal_prowine`); declares the multi-arch `image:` pull location
+- **Dockerfile** — Alpine container with Node.js and Claude Code CLI; sets the base image (digest-pinned `ghcr.io/home-assistant/base`, Renovate-managed) and the OCI labels formerly in build.yaml
 - **run.sh** — Startup script: health check → environment init → tools → services → terminal
 - **scripts/** — Modular credential management scripts
 - **ha-mcp/** — Home Assistant MCP server with locked dependencies (`pyproject.toml` + `uv.lock`)
@@ -134,6 +133,7 @@ Note: Renovate auto-tracks both `pyproject.toml` + `uv.lock`. Manual updates rar
 - Tracks npm, Docker, GitHub Actions, Python (uv), and Alpine apk (Repology) dependencies
 - All GitHub Actions use SHA256 digest pinning (Renovate auto-updates)
 - Alpine packages in `Dockerfile` are pinned to exact versions; Renovate tracks them via the Repology datasource
+- The HA base image (`ghcr.io/home-assistant/base`) is pinned to a tag + digest in the Dockerfile `BUILD_FROM` ARG and tracked by Renovate's built-in dockerfile manager (digest auto-updated)
 - **IMPORTANT:** When bumping the Alpine base image (e.g., 3.23 → 3.24), you must also update `depNameTemplate` in `renovate.json` from `alpine_3_23/{{package}}` to `alpine_3_24/{{package}}` — otherwise Renovate will look up versions from the wrong Alpine release
 - See `renovate.json` for config
 

@@ -3,7 +3,7 @@
 
 ignored:
   # DL3006: Always tag the version of an image explicitly
-  # Home Assistant Builder provides BUILD_FROM via build.yaml
+  # FROM uses the BUILD_FROM ARG (pinned base tag + digest), which hadolint can't resolve
   - DL3006
 
   # DL3018: Pinning apk versions is not practical for HA apps
