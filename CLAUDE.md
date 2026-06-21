@@ -21,7 +21,9 @@ brew install hadolint shellcheck yamllint actionlint ruff node
 
 ### Build & Test
 ```bash
-# Build the image (replace amd64 with aarch64 for ARM)
+# Build the image. base:3.24 is multi-arch, so buildx picks the arch; pass
+# --platform linux/arm64 to cross-build. The tag (no digest) is fine for local
+# dev — the committed Dockerfile pins base:3.24 by digest (Renovate-managed).
 podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
 # Add --no-cache when npm or Python dependencies change
