@@ -215,12 +215,6 @@ All PRs trigger automated workflows:
 - Uses `--test` flag (no registry push)
 - Validates build configuration before merge
 
-**AI Code Review** (`.github/workflows/claude-code-review.yml`)
-- Claude Code analyzes PR changes
-- Provides inline comments and suggestions
-- Checks for security issues and best practices
-- Also reviews Renovate dependency PRs
-
 Check GitHub Actions results before requesting review
 
 ## Common Issues
