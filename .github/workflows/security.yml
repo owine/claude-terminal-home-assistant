@@ -9,20 +9,79 @@ on:
     # Every Monday at 9am UTC (aligns with Renovate schedule)
     - cron: "0 9 * * 1"
 
+permissions:
+  contents: read
+
 jobs:
   filesystem-scan:
     name: Filesystem scan
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      # Advisory: never blocks merges (vulnerabilities are remediated by Renovate's
+      # grouped, auto-merging security PRs). Findings are surfaced in the job summary,
+      # and non-PR runs (push to main / weekly schedule) open a tracking issue.
       - name: Run Trivy filesystem scan
+        id: trivy
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           trivy-config: .trivy.yaml
           cache: "false"
+          format: table
+          output: trivy-fs-results.txt
+
+      - name: Publish results to job summary
+        if: always()
+        env:
+          TRIVY_OUTCOME: ${{ steps.trivy.outcome }}
+        run: |
+          {
+            echo "## Trivy filesystem scan"
+            if [ "$TRIVY_OUTCOME" = "failure" ]; then
+              echo "### ⚠️ CRITICAL/HIGH fixable findings"
+              echo ""
+              echo '```'
+              cat trivy-fs-results.txt || true
+              echo '```'
+            else
+              echo "✅ No CRITICAL/HIGH fixable vulnerabilities found."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update tracking issue on findings
+        if: steps.trivy.outcome == 'failure' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="🔒 Trivy filesystem scan: fixable vulnerabilities detected"
+          {
+            echo "The Trivy filesystem scan found CRITICAL/HIGH vulnerabilities with fixes available."
+            echo "Renovate opens grouped, auto-merging security PRs to remediate these."
+            echo ""
+            echo "<details><summary>Scan output</summary>"
+            echo ""
+            echo '```'
+            cat trivy-fs-results.txt || true
+            echo '```'
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "_Source run: ${RUN_URL}_"
+          } > issue-body.md
+          gh label create security --color D93F0B --description "Security issues and updates" --force >/dev/null 2>&1 || true
+          existing=$(gh issue list --label security --state open --search "in:title Trivy filesystem scan" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+          else
+            gh issue create --title "$title" --label security --body-file issue-body.md
+          fi
