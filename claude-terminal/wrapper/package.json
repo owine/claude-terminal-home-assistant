@@ -17,7 +17,7 @@
   "license": "MIT",
   "dependencies": {
     "express": "5.2.1",
-    "http-proxy-middleware": "4.1.0",
+    "http-proxy-middleware": "4.1.1",
     "multer": "2.1.1"
   },
   "devDependencies": {
