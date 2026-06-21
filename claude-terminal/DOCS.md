@@ -79,7 +79,7 @@ YOLO Mode provides on-demand access to `--dangerously-skip-permissions` without 
 
 ### Docker Access
 
-The add-on can optionally provide access to the host Docker socket, letting you manage containers directly from the terminal — including the Home Assistant core container, other add-on containers, and any Docker workloads running on the host.
+The app can optionally provide access to the host Docker socket, letting you manage containers directly from the terminal — including the Home Assistant core container, other app containers, and any Docker workloads running on the host.
 
 **What you can do with Docker access:**
 - Run `docker ps`, `docker logs`, `docker exec` against any container on the host
@@ -94,10 +94,10 @@ The add-on can optionally provide access to the host Docker socket, letting you 
 
 Enabling Docker access requires **both** of the following — either alone is not enough:
 
-1. **Set `enable_docker: true`** in the add-on configuration
-2. **Disable Protection Mode** in the add-on's **Info** tab in the Home Assistant UI
+1. **Set `enable_docker: true`** in the app configuration
+2. **Disable Protection Mode** in the app's **Info** tab in the Home Assistant UI
 
-Protection Mode is a per-add-on HA Supervisor toggle (on by default). While it is on, the host Docker socket is never mounted into the container, regardless of the `enable_docker` setting. You must turn it off explicitly.
+Protection Mode is a per-app HA Supervisor toggle (on by default). While it is on, the host Docker socket is never mounted into the container, regardless of the `enable_docker` setting. You must turn it off explicitly.
 
 #### Optional: Buildx support
 
@@ -105,12 +105,12 @@ Set `enable_docker_buildx: true` to also install `docker buildx`, enabling multi
 
 #### Package installation note
 
-When `enable_docker: true`, the add-on installs `docker-cli` and `docker-cli-compose` (and `docker-cli-buildx` if enabled) via `persist-install` into `/data/packages` at startup, so they survive restarts. The version installed floats to whatever Alpine's package repos currently provide — consistent with how all `persist-install` packages behave (not version-pinned, not Renovate-tracked).
+When `enable_docker: true`, the app installs `docker-cli` and `docker-cli-compose` (and `docker-cli-buildx` if enabled) via `persist-install` into `/data/packages` at startup, so they survive restarts. The version installed floats to whatever Alpine's package repos currently provide — consistent with how all `persist-install` packages behave (not version-pinned, not Renovate-tracked).
 
 #### Troubleshooting Docker access
 
-- **`docker: command not found`** — `enable_docker` is off, or package installation failed on the last startup. Check the add-on log for `persist-install` errors and restart the add-on.
-- **`Cannot connect to the Docker daemon` / socket not found** — Protection Mode is still ON. The Docker socket is not mounted into the container until you disable Protection Mode in the add-on's **Info** tab.
+- **`docker: command not found`** — `enable_docker` is off, or package installation failed on the last startup. Check the app log for `persist-install` errors and restart the app.
+- **`Cannot connect to the Docker daemon` / socket not found** — Protection Mode is still ON. The Docker socket is not mounted into the container until you disable Protection Mode in the app's **Info** tab.
 
 **Example Configuration**:
 ```yaml
