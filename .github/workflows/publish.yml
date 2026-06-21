@@ -83,20 +83,26 @@ jobs:
             latest
 
   image-scan:
-    name: Scan published image
+    name: Scan ${{ matrix.platform }} image
     needs: [init, manifest]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ["linux/amd64", "linux/arm64"]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Run Trivy image scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: ${{ matrix.platform }}
         with:
-          image-ref: "ghcr.io/${{ github.repository_owner }}/amd64-claude-terminal-prowine:${{ needs.init.outputs.version }}"
+          image-ref: "ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ needs.init.outputs.version }}"
           scan-type: image
           severity: CRITICAL,HIGH
           exit-code: "1"
