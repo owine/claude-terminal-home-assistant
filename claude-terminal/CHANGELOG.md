@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.5.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.4.5...v2.5.0) (2026-06-21)
+
+
+### Features
+
+* declare multi-arch image: in config.yaml ([e6c4800](https://github.com/owine/claude-terminal-home-assistant/commit/e6c4800ac2b2f886671a95c3c269d7736c1645b9))
+
+
+### Bug Fixes
+
+* update all non-major dependencies ([#201](https://github.com/owine/claude-terminal-home-assistant/issues/201)) ([8d74cda](https://github.com/owine/claude-terminal-home-assistant/commit/8d74cda787fa580354d7344923534a5cbc393fdf))
+* update http-proxy-middleware to 4.1.1 and multer to 2.2.0 [security] ([a419824](https://github.com/owine/claude-terminal-home-assistant/commit/a419824d127fd060016a140c7cec0e725baaaae6))
+
+
+### Dependencies
+
+* lock file maintenance all non-major dependencies ([#204](https://github.com/owine/claude-terminal-home-assistant/issues/204)) ([f1559c9](https://github.com/owine/claude-terminal-home-assistant/commit/f1559c9777ad2360a574f419c54844284d2ac114))
+
 ## [2.4.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.4.4...v2.4.5) (2026-06-16)
 
 
