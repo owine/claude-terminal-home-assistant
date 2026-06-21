@@ -176,7 +176,6 @@ gh run list --workflow=publish.yml --limit 3
 | `test.yml` | Push to main, PRs | Validate builds (2-job: init → per-arch native builds, no QEMU) |
 | `lint.yml` | Push/PR to main | hadolint, shellcheck, yamllint, actionlint |
 | `publish.yml` | Release published | Build + sign + push images (4-job: init → per-arch → manifest → scan) |
-| `claude-code-review.yml` | PR events | AI code review (optional) |
 | `claude.yml` | @claude mentions | Respond to mentions in issues/PRs (optional) |
 
 **Images:** `ghcr.io/owine/{arch}-claude-terminal-prowine:{version|latest}` and multi-arch manifest at `ghcr.io/owine/claude-terminal-prowine`
