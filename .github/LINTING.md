@@ -36,7 +36,7 @@ shellcheck --external-sources claude-terminal/run.sh claude-terminal/scripts/*.s
   claude-terminal/scripts/persist-install test-wrapper-integration.sh
 
 # YAML files
-yamllint -c .yamllint.yml claude-terminal/config.yaml claude-terminal/build.yaml \
+yamllint -c .yamllint.yml claude-terminal/config.yaml \
   .trivy.yaml .github/workflows/
 
 # GitHub Actions
