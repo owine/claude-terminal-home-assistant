@@ -3,6 +3,7 @@ name: "Claude Terminal Prowine"
 description: "Enhanced terminal interface for Anthropic's Claude Code CLI with persistent auth, package management, and image paste support"
 version: "2.4.5" # x-release-please-version
 slug: "claude_terminal_prowine"
+image: "ghcr.io/owine/claude-terminal-prowine"
 init: false
 
 # Supported architectures
