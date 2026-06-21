@@ -10,19 +10,11 @@
   ],
   "packageRules": [
     {
-      "description": "Home Assistant base images — disable digest pinning (tracked via build.yaml as the source of truth)",
+      "description": "Home Assistant base image — pin to a versioned tag with digest; Renovate keeps the digest updated",
       "matchDatasources": ["docker"],
-      "matchPackageNames": [
-        "ghcr.io/home-assistant/amd64-base",
-        "ghcr.io/home-assistant/aarch64-base"
-      ],
-      "pinDigests": false
-    },
-    {
-      "description": "HA amd64-base — disable the Dockerfile manager; build.yaml is the source of truth",
-      "matchManagers": ["dockerfile"],
-      "matchPackageNames": ["ghcr.io/home-assistant/amd64-base"],
-      "enabled": false
+      "matchPackageNames": ["ghcr.io/home-assistant/base"],
+      "pinDigests": true,
+      "versioning": "loose"
     },
     {
       "description": "Auto-merge Claude Code patch updates from the stable channel",
@@ -64,17 +56,6 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+(?:local )?\\w+=\\\"(?<currentValue>[^\\\"]+)\\\""
       ]
-    },
-    {
-      "description": "Update build_from base images in build.yaml",
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^claude-terminal/build\\.yaml$/"
-      ],
-      "matchStrings": [
-        "(?:aarch64|amd64):\\s*(?<depName>ghcr\\.io/[^:]+):(?<currentValue>[^\\s]+)"
-      ],
-      "datasourceTemplate": "docker"
     },
     {
       "description": "Update pinned Alpine apk packages via Repology. IMPORTANT: bump alpine version in depNameTemplate when the base image changes (e.g. alpine_3_23 -> alpine_3_24)",
