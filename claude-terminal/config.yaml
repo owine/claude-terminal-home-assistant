@@ -57,9 +57,7 @@ schema:
 
 # Volume mappings for file access
 map:
-  # Modern object form of the legacy "config:rw". homeassistant_config is HA's
-  # config dir (same source as legacy "config"); path: /config pins the mount to
-  # today's location, so this is a drop-in with no behavior change.
+  # path: /config keeps HA's config dir at today's mount (drop-in for legacy "config:rw")
   - type: homeassistant_config
     read_only: false
     path: /config
