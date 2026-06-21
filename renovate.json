@@ -8,6 +8,11 @@
     "github>owine/renovate-config:alpine",
     "github>owine/renovate-config:node"
   ],
+  "vulnerabilityAlerts": {
+    "groupName": "security updates",
+    "labels": ["security"],
+    "automerge": true
+  },
   "packageRules": [
     {
       "description": "Home Assistant base image — pin to a versioned tag with digest; Renovate keeps the digest updated",
