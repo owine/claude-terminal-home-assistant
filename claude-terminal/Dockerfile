@@ -1,8 +1,13 @@
-# Home Assistant base image (provided by Home Assistant Builder via build.yaml)
-# For local testing, pass --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.24
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24
-# renovate: ignore - base image version managed via build.yaml
+# Home Assistant base image — multi-arch minimal Alpine; buildx selects the arch per build.
+# For local testing, override with --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24
+ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24@sha256:94ff231402a5e7ad2a82e261ad5fa4ffae7d7bb095c3febb2edbdf309c9b6aca
 FROM ${BUILD_FROM}
+
+LABEL \
+  org.opencontainers.image.title="Claude Terminal Prowine" \
+  org.opencontainers.image.description="Enhanced terminal interface for Claude Code CLI" \
+  org.opencontainers.image.source="https://github.com/owine/claude-terminal-home-assistant" \
+  org.opencontainers.image.licenses="MIT"
 
 # Upgrade base packages for security patches, then install dependencies in one layer
 # Node.js and npm kept for wrapper service dependency
