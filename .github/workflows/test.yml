@@ -54,20 +54,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - name: Get build_from
-        id: info
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          BUILD_FROM=$(grep "^  ${ARCH}:" claude-terminal/build.yaml | awk '{print $2}' | tr -d '"')
-          echo "build_from=$BUILD_FROM" >> "$GITHUB_OUTPUT"
-
       - name: Build image
         uses: home-assistant/builder/actions/build-image@62a1597b84b3461abad9816d9cd92862a2b542c3 # 2026.03.2
         with:
           arch: ${{ matrix.arch }}
-          build-args: |
-            BUILD_FROM=${{ steps.info.outputs.build_from }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           context: ./claude-terminal
           cosign: "false"
