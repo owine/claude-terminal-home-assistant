@@ -6,7 +6,8 @@
     "github>owine/renovate-config:python",
     "github>owine/renovate-config:docker",
     "github>owine/renovate-config:alpine",
-    "github>owine/renovate-config:node"
+    "github>owine/renovate-config:node",
+    "github>owine/renovate-config:home-assistant"
   ],
   "vulnerabilityAlerts": {
     "groupName": "security updates",
@@ -15,24 +16,11 @@
   },
   "packageRules": [
     {
-      "description": "Home Assistant base image — pin to a versioned tag with digest; Renovate keeps the digest updated",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["ghcr.io/home-assistant/base"],
-      "pinDigests": true,
-      "versioning": "loose"
-    },
-    {
       "description": "Auto-merge Claude Code patch updates from the stable channel",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["custom.claude-code"],
       "matchUpdateTypes": ["patch"],
       "automerge": true
-    },
-    {
-      "description": "home-assistant/builder uses CalVer (YYYY.MM.PATCH); the default github-actions versioning can't parse it",
-      "matchManagers": ["github-actions"],
-      "matchPackageNames": ["home-assistant/builder"],
-      "versioning": "regex:^(?<major>\\d{4})\\.(?<minor>\\d{2})\\.(?<patch>\\d+)$"
     }
   ],
   "customManagers": [
