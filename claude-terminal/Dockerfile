@@ -29,7 +29,7 @@ RUN apk upgrade --no-cache \
     tmux=3.6b-r0 \
     tree=2.3.2-r0 \
     ttyd=1.7.7-r0 \
-    vim=9.2.0680-r0 \
+    vim=9.2.0699-r0 \
     wget=1.25.0-r3 \
     yq-go=4.53.3-r0
 
