@@ -57,7 +57,10 @@ schema:
 
 # Volume mappings for file access
 map:
-  - config:rw    # Access to Home Assistant configuration files
+  # path: /config keeps HA's config dir at today's mount (drop-in for legacy "config:rw")
+  - type: homeassistant_config
+    read_only: false
+    path: /config
 
 # API access for Home Assistant integration
 hassio_api: true
