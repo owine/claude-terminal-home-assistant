@@ -1,11 +1,14 @@
 # Trivy vulnerability ignore list
-# Review periodically — remove entries when the HA base image ships a rebuilt tempio.
+# Review periodically — remove entries when the upstream binaries below are
+# rebuilt against fixed dependencies (a new HA base image for tempio, a new
+# ha-cli release for ha).
 
+# --- /usr/bin/tempio (Home Assistant base image templating binary) ---
 # Go stdlib + x/crypto CVEs in /usr/bin/tempio, the templating binary baked into
 # the Home Assistant base image (built with Go 1.23.3 / x/crypto 0.26.0).
 # Not fixable here — tempio is not an apk package and is not recompiled by this
 # add-on; only a new HA base image release can resolve these. Re-scan and prune
-# when the base image is bumped. Last verified against amd64-base:3.24.
+# when the base image is bumped. Last verified against base:3.24.1 (2026-07-06).
 CVE-2024-45337
 CVE-2025-22869
 CVE-2025-61726
@@ -18,8 +21,30 @@ CVE-2026-32283
 CVE-2026-33811
 CVE-2026-33814
 CVE-2026-39820
-CVE-2026-39823
-CVE-2026-39825
 CVE-2026-39836
 CVE-2026-42499
 CVE-2026-42504
+# Additional tempio x/crypto (ssh/agent/knownhosts) + stdlib crypto/x509 CVEs,
+# newly disclosed against the same Go 1.23.3 / x/crypto 0.26.0 build.
+CVE-2025-47913
+CVE-2026-27145
+CVE-2026-39827
+CVE-2026-39828
+CVE-2026-39829
+CVE-2026-39830
+CVE-2026-39832
+CVE-2026-39835
+CVE-2026-42508
+CVE-2026-46595
+CVE-2026-46597
+
+# --- /usr/bin/ha (Home Assistant CLI) ---
+# golang.org/x/net v0.43.0 CVEs compiled into the ha-cli binary. We already pin
+# HA_CLI_VERSION to the latest release (5.2.0); the fix (x/net >= 0.55.0)
+# requires an upstream ha-cli rebuild, so this is not fixable by bumping our pin.
+# Prune when a newer ha-cli release links x/net >= 0.55.0. Verified against
+# ha-cli 5.2.0 (2026-07-06).
+CVE-2026-25681
+CVE-2026-27136
+CVE-2026-39821
+CVE-2026-42502
