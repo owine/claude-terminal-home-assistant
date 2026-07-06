@@ -14,11 +14,11 @@ LABEL \
 RUN apk upgrade --no-cache \
     && apk add --no-cache \
     bash=5.3.9-r1 \
-    curl=8.20.0-r1 \
+    curl=8.21.0-r0 \
     git=2.54.0-r0 \
     jq=1.8.1-r0 \
-    nano=9.0-r0 \
-    nodejs=24.16.0-r0 \
+    nano=9.1-r0 \
+    nodejs=24.17.0-r0 \
     npm=11.12.1-r0 \
     py3-aiohttp=3.13.5-r0 \
     py3-beautifulsoup4=4.15.0-r0 \
@@ -29,7 +29,7 @@ RUN apk upgrade --no-cache \
     tmux=3.6b-r0 \
     tree=2.3.2-r0 \
     ttyd=1.7.7-r0 \
-    vim=9.2.0699-r0 \
+    vim=9.2.0747-r0 \
     wget=1.25.0-r3 \
     yq-go=4.53.3-r0
 
