@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.5.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.5.1...v2.5.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* use modern object form for config.yaml map (preserve /config) ([#200](https://github.com/owine/claude-terminal-home-assistant/issues/200)) ([b445560](https://github.com/owine/claude-terminal-home-assistant/commit/b445560a8ab7460d0e4bcbf7d191859090eb2afb))
+
+
+### Dependencies
+
+* lock file maintenance ([#215](https://github.com/owine/claude-terminal-home-assistant/issues/215)) ([6416833](https://github.com/owine/claude-terminal-home-assistant/commit/6416833f9c4898ce26c5a26ca2ae3a9ae97f4f58))
+* lock file maintenance ([#219](https://github.com/owine/claude-terminal-home-assistant/issues/219)) ([00ad9b1](https://github.com/owine/claude-terminal-home-assistant/commit/00ad9b1e8a7b6be1250621e3a5f057428e78d1d4))
+* remove cryptography override now that ha-mcp 7.9.0 dropped the 48.0.0 pin ([#217](https://github.com/owine/claude-terminal-home-assistant/issues/217)) ([d97765a](https://github.com/owine/claude-terminal-home-assistant/commit/d97765af758a3b85bfb4434cda0a22a3b94c1a3a))
+
 ## [2.5.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.5.0...v2.5.1) (2026-07-01)
 
 
