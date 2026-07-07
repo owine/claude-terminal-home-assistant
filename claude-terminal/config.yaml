@@ -38,6 +38,12 @@ options:
   #   When true: Mouse wheel scrolling works, but hold Shift to select text
   #   When false: Normal text selection works, but no mouse scrolling (default)
   tmux_mouse_mode: false
+  # persist_npm_cache: Keep the npm cache in persistent /data storage
+  #   When false: cache lives in ephemeral /tmp, wiped on restart and kept out
+  #     of HA backups (default) - the ~3 GB cache no longer bloats backups
+  #   When true: cache persists at /data/home/.npm across restarts (legacy
+  #     behavior); useful on slow connections to avoid re-downloading packages
+  persist_npm_cache: false
   persistent_apk_packages: []
   persistent_pip_packages: []
   enable_docker: false
@@ -48,6 +54,7 @@ schema:
   dangerously_skip_permissions: bool?
   enable_ha_mcp: bool?
   tmux_mouse_mode: bool?
+  persist_npm_cache: bool?
   persistent_apk_packages:
     - str?
   persistent_pip_packages:

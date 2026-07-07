@@ -62,6 +62,31 @@ init_environment() {
         export IS_SANDBOX=1
     fi
 
+    # Configure npm cache location. By default the cache is ephemeral (/tmp) so
+    # it never accumulates in persistent /data storage, where it would bloat
+    # every HA backup (see issue heytcass/home-assistant-addons#103). Opting into
+    # persist_npm_cache restores the legacy $HOME/.npm behavior.
+    local persist_npm_cache
+    persist_npm_cache=$(bashio::config 'persist_npm_cache' 'false')
+    if [ "$persist_npm_cache" = "true" ]; then
+        # Legacy behavior: npm uses its default cache at $HOME/.npm (persisted).
+        unset npm_config_cache
+        bashio::log.info "  - npm cache: persistent ($data_home/.npm)"
+    else
+        # Ephemeral cache in /tmp keeps it out of /data (and HA backups).
+        export npm_config_cache="/tmp/npm-cache"
+        mkdir -p "$npm_config_cache"
+        # Reclaim any legacy cache accumulated in persistent storage by earlier
+        # versions, shrinking existing backups on the next run. ${data_home:?}
+        # guards against ever running rm against a bare "/.npm" if the path were
+        # somehow unset.
+        if [ -d "$data_home/.npm" ]; then
+            bashio::log.info "  - npm cache: reclaiming legacy cache at $data_home/.npm"
+            rm -rf "${data_home:?}/.npm"
+        fi
+        bashio::log.info "  - npm cache: ephemeral ($npm_config_cache)"
+    fi
+
     # Setup persistent package paths (HIGHEST PRIORITY)
     # Include $HOME/.local/bin for Claude Code native components
     export PATH="$persist_bin:$persist_python/venv/bin:$HOME/.local/bin:$PATH"
@@ -103,6 +128,15 @@ fi
 # Convenience alias to return to menu from bash shell
 alias menu='/usr/local/bin/claude-session-picker'
 PROFILE_EOF
+
+    # Mirror the ephemeral npm cache into interactive shells (ttyd sessions).
+    # The heredoc above rewrites this file with `>` (truncate) on every startup,
+    # so this appends exactly one line to a freshly written file - it never
+    # accumulates across restarts. In persistent mode npm falls back to its
+    # $HOME/.npm default, so nothing extra is needed there.
+    if [ "$persist_npm_cache" != "true" ]; then
+        echo 'export npm_config_cache="/tmp/npm-cache"' >> /etc/profile.d/persistent-packages.sh
+    fi
 
     chmod 644 /etc/profile.d/persistent-packages.sh
     bashio::log.info "  - Profile script created: /etc/profile.d/persistent-packages.sh"
