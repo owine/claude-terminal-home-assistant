@@ -137,10 +137,23 @@ add-on's YAML while wiring up an integration.
 add-on configs — it cannot be toggled off via an option, because Home Assistant
 applies volume mounts statically at container creation. It widens the terminal's
 reach and compounds with `dangerously_skip_permissions` (YOLO mode) and Docker
-socket access. Outside YOLO mode, Claude Code still prompts for permission before
-reading or writing paths outside its working directory, so day-to-day access to
-`/addon_configs` remains gated by those prompts. If this broader access is not
-acceptable for your setup, avoid enabling YOLO mode.
+socket access.
+
+**Why read-write?** The mount is read-write so Claude can actually *edit* other
+add-ons' configs — the primary use case for this feature (fixing YAML, wiring up
+integrations). A read-only mount would only allow inspection, which the Home
+Assistant config UI already provides, so it would add reach without adding
+capability. If you only need to read other configs, treat the mount as read-only
+by convention and avoid asking Claude to modify those paths.
+
+**Residual risk even with YOLO disabled:** Outside YOLO mode, Claude Code prompts
+for permission before reading or writing paths outside its working directory, so
+*interactive* access to `/addon_configs` stays gated by those prompts. But the
+mount itself is always present and writable at the filesystem level — so anything
+running in the container (or any compromise of the terminal add-on) can read and
+modify every add-on's configuration regardless of those prompts. If that blast
+radius is not acceptable for your setup, this add-on is not a good fit; the
+mapping cannot be disabled without forking the add-on.
 
 ### Options
 
