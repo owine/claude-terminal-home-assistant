@@ -38,7 +38,7 @@ http://192.168.1.XXX:7680
 ### 3. Run the Monitor
 
 ```bash
-cd /path/to/claude-code-ha
+cd /path/to/claude-terminal-home-assistant/tools
 python3 mac-clipboard-monitor.py http://homeassistant.local:8123
 ```
 
@@ -47,7 +47,7 @@ python3 mac-clipboard-monitor.py http://homeassistant.local:8123
 Once running, the monitor will:
 
 ```
-✓ Connected to Claude Terminal Prowine at http://homeassistant.local:8123
+✓ Connected to Claude Terminal Pro at http://homeassistant.local:8123
 
 Clipboard monitor started. Press Ctrl+C to stop.
 Monitoring clipboard for images...
@@ -112,7 +112,7 @@ Create `~/Library/LaunchAgents/com.claude.clipboard-monitor.plist`:
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/python3</string>
-        <string>/path/to/claude-code-ha/mac-clipboard-monitor.py</string>
+        <string>/path/to/claude-terminal-home-assistant/tools/mac-clipboard-monitor.py</string>
         <string>http://homeassistant.local:8123</string>
     </array>
     <key>RunAtLoad</key>
@@ -148,7 +148,7 @@ launchctl unload ~/Library/LaunchAgents/com.claude.clipboard-monitor.plist
 # Test with curl
 curl http://homeassistant.local:8123/health
 
-# Should return: {"status":"ok","uploadDir":"/data/images"}
+# Should return: {"status":"ok"}
 ```
 
 **If using ingress**, the path might need `/api/hassio_ingress/<TOKEN>/`:

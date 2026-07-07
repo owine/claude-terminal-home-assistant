@@ -36,12 +36,12 @@ Before submitting changes, always test locally:
 docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.24 \
   -t local/claude-terminal:test ./claude-terminal
 
-# Run locally
-docker run -d --name test-claude-dev -p 7681:7681 \
+# Run locally (7680 = web UI/ingress, 7681 = internal ttyd)
+docker run -d --name test-claude-dev -p 7680:7680 -p 7681:7681 \
   -v $(pwd)/config:/config local/claude-terminal:test
 
 # Test in browser
-open http://localhost:7681
+open http://localhost:7680
 
 # Check logs
 docker logs test-claude-dev
@@ -70,11 +70,9 @@ CI will automatically run these on all PRs.
 
 ### 3. Update Documentation
 
-**CRITICAL:** When making changes, always update:
+When your change affects behavior, update the relevant prose docs (e.g. `CLAUDE.md`, `claude-terminal/DOCS.md`, `README.md`).
 
-1. **Version number** in `claude-terminal/config.yaml`
-2. **Changelog** in `claude-terminal/CHANGELOG.md` (add entry at top)
-3. **Documentation** if behavior changes
+**Do not** manually bump the version in `claude-terminal/config.yaml` or add a `CHANGELOG.md` entry — those are generated automatically. release-please derives the version bump and changelog from your [Conventional Commits](https://www.conventionalcommits.org/) when maintainers merge the Release PR.
 
 See [CLAUDE.md - Release Management](./CLAUDE.md#release-management) for details.
 
@@ -113,8 +111,8 @@ git commit -m "docs: clarify persistent package installation"
 2. **Make your changes** with clear commits
 3. **Test locally** - Verify changes work
 4. **Run linters** - Ensure code passes all checks
-5. **Update docs** - Add CHANGELOG entry, update version
-6. **Push and create PR** with clear description
+5. **Update docs** - Update prose docs if behavior changed (version + CHANGELOG are automated)
+6. **Push and create PR** with clear description using Conventional Commits
 
 **PR Description Should Include:**
 - What changes were made and why
@@ -193,7 +191,7 @@ claude-terminal/
 Before submitting a PR, verify:
 
 - [ ] App builds successfully for both amd64 and aarch64
-- [ ] Web interface loads at http://localhost:7681
+- [ ] Web interface loads at http://localhost:7680
 - [ ] Claude authentication works
 - [ ] Session picker displays correctly (if applicable)
 - [ ] Persistent packages install correctly (if applicable)
@@ -212,7 +210,7 @@ All PRs trigger automated workflows:
 
 **Test Builds** (`.github/workflows/test.yml`)
 - Builds for both amd64 and aarch64
-- Uses `--test` flag (no registry push)
+- Builds each arch with `push: false` and runs a smoke test (no registry push)
 - Validates build configuration before merge
 
 Check GitHub Actions results before requesting review
@@ -226,7 +224,7 @@ Check GitHub Actions results before requesting review
 **Solution:** Use `--no-cache` flag when dependencies change:
 ```bash
 docker build --no-cache \
-  --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.23 \
+  --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.24 \
   -t local/claude-terminal:test ./claude-terminal
 ```
 
@@ -253,14 +251,14 @@ docker build --no-cache \
 
 ## Release Process
 
-**Note:** Only maintainers create releases.
+Releases are fully automated by [release-please](https://github.com/googleapis/release-please) — no manual version bumps, changelog edits, or GitHub release creation.
 
-1. Bump version in `config.yaml`
-2. Add entry to `CHANGELOG.md`
-3. Commit changes
-4. Create GitHub release (triggers automatic build & publish)
+1. Contributors merge Conventional Commits into `main`
+2. release-please opens/updates a "Release PR" with the version bump + generated `CHANGELOG.md`
+3. A maintainer merges the Release PR, which tags the release and triggers `publish.yml`
+4. `publish.yml` builds, signs (cosign), and pushes multi-arch images to GitHub Container Registry
 
-Pre-built images are published to GitHub Container Registry with cosign signatures.
+See [CLAUDE.md - Release Management](./CLAUDE.md#release-management) for details.
 
 ## Code of Conduct
 

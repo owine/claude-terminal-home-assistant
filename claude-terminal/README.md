@@ -6,7 +6,7 @@ An enhanced, web-based terminal with Claude Code CLI and persistent package mana
 
 *Claude Terminal Prowine running in Home Assistant*
 
-> **Fork Attribution:** This is an enhanced fork of [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) by Tom Cassady, maintained by Javier Santos ([@esjavadex](https://github.com/esjavadex)).
+> **Fork Attribution:** A personal fork by [@owine](https://github.com/owine), built on [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) (original by Tom Cassady) and [ESJavadex/claude-code-ha](https://github.com/ESJavadex/claude-code-ha) (enhanced fork by Javier Santos). See the [repository README](https://github.com/owine/claude-terminal-home-assistant#fork-attribution) for full credits.
 
 ## What is Claude Terminal Prowine?
 
@@ -22,8 +22,8 @@ This app provides a web-based terminal interface with Claude Code CLI pre-instal
 ### Core Features
 - **Web Terminal Interface**: Access Claude through a browser-based terminal using ttyd
 - **Auto-Launch**: Claude starts automatically when you open the terminal
-- **Latest Claude Code CLI**: Pre-installed with Anthropic's official CLI (@latest)
-- **No Configuration Needed**: Uses OAuth authentication for easy setup
+- **Pinned Claude Code CLI**: Pre-installed with a specific, integrity-verified version of Anthropic's official CLI (SHA256-checked, not `@latest`)
+- **Zero Configuration to Start**: Works out of the box using OAuth authentication, with optional settings available (see [DOCS.md](DOCS.md))
 - **Direct Config Access**: Terminal starts in your `/config` directory for immediate access to all Home Assistant files
 - **Home Assistant Integration**: Access directly from your dashboard
 - **Install as App (PWA)**: Add to your phone's home screen for quick access without browser chrome
@@ -47,8 +47,8 @@ The terminal automatically starts Claude when you open it. You can immediately s
 # Ask Claude a question directly
 claude "How can I write a Python script to control my lights?"
 
-# Start an interactive session
-claude -i
+# Start an interactive session (run claude with no arguments)
+claude
 
 # Get help with available commands
 claude --help
@@ -73,12 +73,12 @@ claude-logout
 
 ## Configuration
 
-The app requires no configuration. All settings are handled automatically:
+The app works with zero configuration out of the box, with optional settings available (see [DOCS.md](DOCS.md#configuration) for the full list of options):
 
-- **Port**: Web interface runs on port 7681
+- **Port**: Web interface and HA ingress run on port 7680 (the internal ttyd terminal uses 7681)
 - **Authentication**: OAuth with Anthropic (credentials stored securely in `/config/claude-config/`)
 - **Terminal**: Full bash environment with Claude Code CLI pre-installed
-- **Volumes**: Access to both `/config` (Home Assistant) and `/addons` (for development)
+- **Volumes**: Access to your Home Assistant `/config` directory
 
 ## Troubleshooting
 
@@ -100,16 +100,16 @@ For local development and testing:
 # Build and run locally (replace amd64 with aarch64 for ARM)
 docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
-docker run -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
+docker run -p 7680:7680 -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
 
 # Lint and validate
 hadolint claude-terminal/Dockerfile
-curl -X GET http://localhost:7681/
+curl -X GET http://localhost:7680/  # 7680 = web UI/ingress (7681 is internal ttyd)
 ```
 
 ## Architecture
 
-- **Base Image**: Home Assistant Alpine Linux base (3.23)
+- **Base Image**: Home Assistant Alpine Linux base (3.24)
 - **Container Runtime**: Docker
 - **Web Terminal**: ttyd (v1.7.7) for browser-based access
 - **Session Persistence**: tmux for terminal session management
@@ -140,9 +140,7 @@ For detailed usage instructions, see the [documentation](DOCS.md).
 
 ## Version History
 
-**Current Version:** v2.1.0
-
-For complete version history and detailed changelog, see [CHANGELOG.md](CHANGELOG.md).
+This add-on uses automated release management. For the current version and complete changelog, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Useful Links
 
@@ -153,10 +151,7 @@ For complete version history and detailed changelog, see [CHANGELOG.md](CHANGELO
 
 ## Credits
 
-**Original Creator:** Tom Cassady ([@heytcass](https://github.com/heytcass)) - Created the initial Claude Terminal app
-**Fork Maintainer:** Javier Santos ([@esjavadex](https://github.com/esjavadex)) - Added persistent package management and enhancements
-
-This app was created and enhanced with the assistance of Claude Code itself! The development process, debugging, and documentation were all completed using Claude's AI capabilities - a perfect demonstration of what this app can help you accomplish.
+A personal fork by [@owine](https://github.com/owine), built on the original **Claude Terminal** by Tom Cassady ([@heytcass](https://github.com/heytcass)) and the enhanced fork by Javier Santos ([@esjavadex](https://github.com/esjavadex)). For the full credits list, see the [repository README](https://github.com/owine/claude-terminal-home-assistant#credits).
 
 ## License
 

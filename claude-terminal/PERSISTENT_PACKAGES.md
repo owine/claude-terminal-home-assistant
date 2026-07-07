@@ -23,7 +23,7 @@ persist-install curl wget jq sqlite
 
 ### Install Python Packages
 ```bash
-# Install Home Assistant CLI
+# Install a Python package (e.g. the hass-cli client)
 persist-install --python homeassistant-cli
 
 # Install data science tools
@@ -37,6 +37,20 @@ persist-install --python flask fastapi
 ```bash
 persist-install --list
 ```
+
+---
+
+## 🧰 Command Reference
+
+`persist-install` is the single entry point. Every flag has short and word
+aliases (e.g. `--python`, `-p`, and `python` all work).
+
+| Command | Aliases | What it does |
+|---------|---------|--------------|
+| `persist-install <pkg> [pkg...]` | — | Install Alpine **APK system packages** (binaries → `/data/packages/bin`, libraries → `/data/packages/lib`) |
+| `persist-install --python <pkg> [pkg...]` | `-p`, `python` | Install **Python packages** with pip into the persistent venv (`/data/packages/python/venv`) |
+| `persist-install --list` | `-l`, `list` | List installed system binaries, Python packages, and total disk usage |
+| `persist-install --help` | `-h`, `help` | Show usage help (also shown when run with no arguments) |
 
 ---
 
@@ -82,13 +96,22 @@ persist-install --list
 
 ### PATH Priority
 
+At startup the add-on prepends the persistent directories to `PATH` (and sets
+`LD_LIBRARY_PATH`) so persistent packages are always found first. The exact
+export, from `run.sh`, is:
+
 ```bash
-# Persistent packages are checked FIRST
-/data/packages/bin                    # ← persist-install packages
-/data/packages/python/venv/bin        # ← Python packages
-/usr/local/bin                        # System packages
-/usr/bin
-/bin
+export PATH="/data/packages/bin:/data/packages/python/venv/bin:$HOME/.local/bin:$PATH"
+export LD_LIBRARY_PATH="/data/packages/lib:${LD_LIBRARY_PATH:-}"
+```
+
+Resolved order:
+
+```
+/data/packages/bin                # ← persist-install system binaries (checked FIRST)
+/data/packages/python/venv/bin    # ← persist-install Python packages
+$HOME/.local/bin                  # ← Claude Code native components
+$PATH                             # ← base-image system packages (/usr/local/bin, /usr/bin, /bin, ...)
 ```
 
 ---
@@ -121,7 +144,11 @@ persistent_pip_packages:
 
 ### Via config file (Advanced)
 
-Edit `/config/claude-terminal/options.json`:
+The add-on reads its options from `/data/options.json`. This file is **normally
+managed by the Home Assistant UI options** (the Configuration tab above) — the
+Supervisor regenerates it whenever you Save, so hand-editing is rarely needed and
+manual changes can be overwritten. Prefer the UI; inspect `/data/options.json`
+only to confirm what the add-on actually received:
 
 ```json
 {
@@ -351,9 +378,9 @@ du -sh /data/packages/*
 
 | Method | Survives Reboot? | Survives Update? | Speed | Flexibility |
 |--------|------------------|------------------|-------|-------------|
-| `apk add` (old way) | ❌ No | ❌ No | Fast | High |
-| Dockerfile (v1.3.x) | ✅ Yes | ✅ Yes | Slow rebuild | Low |
-| `persist-install` (v1.4.0+) | ✅ Yes | ✅ Yes | Fast | High |
+| `apk add` (directly in the terminal) | ❌ No | ❌ No | Fast | High |
+| Baking into the Dockerfile | ✅ Yes | ✅ Yes | Slow rebuild | Low |
+| `persist-install` | ✅ Yes | ✅ Yes | Fast | High |
 
 ---
 

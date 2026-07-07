@@ -32,6 +32,8 @@ Run each from the repo root:
 hadolint -c .hadolint.yaml claude-terminal/Dockerfile
 
 # Shell scripts
+# Note: CI runs this with `--severity=error` (see .github/workflows/lint.yml),
+# so CI only fails on errors while a bare local run also surfaces warnings.
 shellcheck --external-sources claude-terminal/run.sh claude-terminal/scripts/*.sh \
   claude-terminal/scripts/persist-install test-wrapper-integration.sh
 

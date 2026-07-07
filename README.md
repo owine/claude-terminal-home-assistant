@@ -51,6 +51,8 @@ To add this repository to your Home Assistant instance:
 4. Add the URL: `https://github.com/owine/claude-terminal-home-assistant`
 5. Click **Add**
 
+Then install the **Claude Terminal Prowine** app and start it. See [DOCS.md](claude-terminal/DOCS.md#installation) for the full step-by-step install and first-run guide.
+
 ## Apps
 
 ### Claude Terminal Prowine
@@ -60,8 +62,8 @@ A web-based terminal interface with Claude Code CLI pre-installed and enhanced p
 #### Core Features
 - Web terminal access through your Home Assistant UI
 - Pre-installed Claude Code CLI that launches automatically
-- Direct access to your Home Assistant config directory
-- No configuration needed (uses OAuth)
+- Direct access to your Home Assistant config directory (`/config`)
+- Works with zero configuration out of the box (uses OAuth), with optional settings available
 - **Install as App (PWA)**: Add to your iOS/Android home screen for quick access
 - Access to Claude's complete capabilities including:
   - Code generation and explanation
@@ -82,10 +84,8 @@ A web-based terminal interface with Claude Code CLI pre-installed and enhanced p
 - **Unrestricted Mode**: Option to run Claude with `--dangerously-skip-permissions` for full file access
 
 #### Configuration Options
-- `auto_launch_claude`: Auto-start Claude or show session picker (default: true)
-- `dangerously_skip_permissions`: Enable unrestricted file access (default: false)
-- `persistent_apk_packages`: System packages to auto-install
-- `persistent_pip_packages`: Python packages to auto-install
+
+The app works with zero configuration out of the box. Eight optional settings are available (auto-launch, unrestricted mode, HA MCP, tmux mouse mode, persistent APK/pip packages, and Docker access). See the [full options reference in DOCS.md](claude-terminal/DOCS.md#options).
 
 [Documentation](claude-terminal/DOCS.md)
 
