@@ -187,7 +187,6 @@ gh run list --workflow=publish.yml --limit 3
 ```bash
 persist-install python3 py3-pip git    # System packages
 persist-install --python requests      # Python packages
-persist-install --ha-cli               # Home Assistant CLI
 persist-install --list                 # Show installed
 ```
 
