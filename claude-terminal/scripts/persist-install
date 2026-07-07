@@ -48,14 +48,12 @@ Install packages that survive container restarts!
 USAGE:
     persist-install <package1> [package2] [...]
     persist-install --python <package1> [package2] [...]
-    persist-install --ha-cli
     persist-install --list
     persist-install --help
 
 EXAMPLES:
     persist-install git vim htop          # Install system packages
     persist-install --python requests pandas  # Install Python packages
-    persist-install --ha-cli              # Install Home Assistant CLI
     persist-install --list                # Show installed packages
 
 NOTES:
@@ -63,12 +61,10 @@ NOTES:
     • Survives container restarts and reboots
     • System packages copied from Alpine APK
     • Python packages installed to virtual environment
-    • Home Assistant CLI downloaded from official GitHub releases
 
 QUICK START:
     1. persist-install python3 py3-pip    # Install Python (first time)
-    2. persist-install --ha-cli           # Install official HA CLI
-    3. Reboot and enjoy! Packages will still be there!
+    2. Reboot and enjoy! Packages will still be there!
 
 EOF
 }
@@ -191,93 +187,6 @@ install_python_packages() {
     echo "💡 Use 'source $PERSIST_PYTHON/venv/bin/activate' to activate venv"
 }
 
-install_ha_cli() {
-    # renovate: datasource=github-releases depName=home-assistant/cli
-    local HA_VERSION="5.2.0"
-    local BASE_URL="https://github.com/home-assistant/cli/releases/download/${HA_VERSION}"
-
-    # Detect architecture
-    local machine arch=""
-    machine=$(uname -m)
-
-    case "$machine" in
-        x86_64)     arch="amd64" ;;
-        aarch64)    arch="aarch64" ;;
-        armv7l)     arch="armv7" ;;
-        armv6l)     arch="armhf" ;;
-        i386|i686)  arch="i386" ;;
-        *)
-            echo "❌ Unsupported architecture: $machine"
-            return 1
-            ;;
-    esac
-
-    local download_url="${BASE_URL}/ha_${arch}"
-    local target_path="${PERSIST_BIN}/ha"
-
-    echo "🏠 Installing Home Assistant CLI v${HA_VERSION}"
-    echo "📦 Architecture: ${arch}"
-    echo ""
-
-    # Check if already installed
-    if [ -x "${target_path}" ]; then
-        echo "ℹ️  Home Assistant CLI is already installed"
-        "${target_path}" --version
-        return 0
-    fi
-
-    # Create directory
-    mkdir -p "$PERSIST_BIN"
-
-    # Download
-    echo "⏳ Downloading from GitHub..."
-    if ! curl -fsSL -o "${target_path}" "${download_url}"; then
-        echo "❌ Failed to download ha CLI binary"
-        return 1
-    fi
-
-    # Make executable
-    chmod +x "${target_path}"
-
-    # Verify file was downloaded and is executable
-    if [ ! -x "${target_path}" ]; then
-        echo "❌ Binary is not executable"
-        rm -f "${target_path}"
-        return 1
-    fi
-
-    # Check file size (should be > 1MB)
-    local size
-    size=$(stat -f%z "${target_path}" 2>/dev/null || stat -c%s "${target_path}" 2>/dev/null || echo "0")
-    if [ "$size" -lt 1000000 ]; then
-        echo "❌ Downloaded file is too small (${size} bytes)"
-        rm -f "${target_path}"
-        return 1
-    fi
-
-    echo ""
-    echo "✅ Home Assistant CLI installed successfully!"
-    echo "📦 Binary size: $((size / 1024 / 1024)) MB"
-    echo "📍 Location: ${target_path}"
-    echo ""
-
-    # Try to get version (may fail if supervisor not accessible, but that's OK)
-    echo "🔍 Testing ha command..."
-    if "${target_path}" --version 2>&1 | head -5; then
-        echo ""
-    else
-        echo "⚠️  Note: 'ha --version' returned an error, but the binary is installed."
-        echo "   This is normal if supervisor API is not accessible yet."
-        echo "   Try: ha core info"
-    fi
-
-    echo ""
-    echo "💡 Try these commands:"
-    echo "   ha core info"
-    echo "   ha addons list"
-    echo "   ha supervisor info"
-}
-
 # Main execution
 main() {
     # Check if running in the app
@@ -302,9 +211,6 @@ main() {
                 exit 1
             fi
             install_python_packages "$@"
-            ;;
-        --ha-cli|ha-cli|ha)
-            install_ha_cli
             ;;
         "")
             show_help
