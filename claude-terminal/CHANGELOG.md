@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.6.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.5.3...v2.6.0) (2026-07-07)
+
+
+### Features
+
+* login link assistant for Claude Code auth in the terminal ([#224](https://github.com/owine/claude-terminal-home-assistant/issues/224)) ([63b08c1](https://github.com/owine/claude-terminal-home-assistant/commit/63b08c173c6e1568e46e17dbfecd1b5ebd59c98e))
+* make npm cache ephemeral by default to keep it out of HA backups ([#226](https://github.com/owine/claude-terminal-home-assistant/issues/226)) ([499874b](https://github.com/owine/claude-terminal-home-assistant/commit/499874ba977523f360d0fce1270039d96c000178))
+* mount all add-on configs for cross-add-on access ([#227](https://github.com/owine/claude-terminal-home-assistant/issues/227)) ([bbaf1df](https://github.com/owine/claude-terminal-home-assistant/commit/bbaf1df8fe6e3e353a3788f0e63d13cbf5bffb73))
+
+
+### Bug Fixes
+
+* remove redundant --ha-cli flag from persist-install ([#228](https://github.com/owine/claude-terminal-home-assistant/issues/228)) ([1525c1c](https://github.com/owine/claude-terminal-home-assistant/commit/1525c1ceffb0ff756c0f5964d017ddcf2ec661c7))
+
 ## [2.5.3](https://github.com/owine/claude-terminal-home-assistant/compare/v2.5.2...v2.5.3) (2026-07-07)
 
 
