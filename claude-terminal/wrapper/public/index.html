@@ -374,6 +374,31 @@
         #send-btn:active {
             background: #004578;
         }
+
+        #login-banner {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: #252526;
+            border-bottom: 1px solid #007acc;
+            flex-wrap: wrap;
+        }
+        #login-banner[hidden] { display: none; }
+        #login-banner-msg { color: #cccccc; font-size: 13px; margin-right: 4px; }
+        .login-btn {
+            background: #007acc; color: #fff; border: none; border-radius: 4px;
+            padding: 4px 12px; font-size: 13px; cursor: pointer; text-decoration: none;
+            display: inline-flex; align-items: center;
+        }
+        .login-btn:hover { background: #005a9e; }
+        .login-btn-subtle { background: #3c3c3c; }
+        .login-btn-subtle:hover { background: #4a4a4a; }
+        .login-paste {
+            flex: 1 1 200px; min-width: 140px; padding: 4px 8px;
+            background: #1e1e1e; color: #d4d4d4; border: 1px solid #3c3c3c; border-radius: 4px;
+        }
+        .login-paste[hidden], .login-btn[hidden] { display: none; }
     </style>
 </head>
 <body>
@@ -404,6 +429,21 @@
                 <span>&#128206;</span>
             </button>
         </div>
+        <div id="login-banner" hidden>
+            <span id="login-banner-icon">&#128273;</span>
+            <span id="login-banner-msg">Login link ready</span>
+            <a id="login-open" class="login-btn" target="_blank" rel="noopener">Open</a>
+            <button id="login-copy" class="login-btn" type="button">Copy</button>
+            <input id="login-paste" class="login-paste" type="text"
+                   placeholder="Paste your authentication code"
+                   autocomplete="off" autocorrect="off" autocapitalize="off"
+                   spellcheck="false" enterkeyhint="send" hidden>
+            <button id="login-send" class="login-btn" type="button" hidden>Send</button>
+            <button id="login-rescan" class="login-btn login-btn-subtle" type="button"
+                    title="Scan the terminal for a login link">Scan</button>
+            <button id="login-dismiss" class="login-btn login-btn-subtle" type="button"
+                    title="Dismiss">&times;</button>
+        </div>
         <div id="terminal-container">
             <iframe id="terminal-frame" src="about:blank"></iframe>
             <div id="touch-scroll-overlay"></div>
@@ -429,6 +469,7 @@
         </div>
     </div>
 
+    <script src="login-link.js"></script>
     <script>
         let ttydPort = 7681;
         let uploadDir = '/data/images';
@@ -793,6 +834,136 @@
                 return false;
             }
         }
+
+        // ========================================
+        // Login Link Assistant (see login-link.js)
+        // ========================================
+        (function () {
+            const banner = document.getElementById('login-banner');
+            const msgEl = document.getElementById('login-banner-msg');
+            const openEl = document.getElementById('login-open');
+            const copyEl = document.getElementById('login-copy');
+            const pasteEl = document.getElementById('login-paste');
+            const sendEl = document.getElementById('login-send');
+            const dismissEl = document.getElementById('login-dismiss');
+            const rescanEl = document.getElementById('login-rescan');
+
+            let currentUrl = null;      // URL shown in the banner
+            let dismissedUrl = null;    // URL the user dismissed (don't re-nag)
+            let pasteArmed = false;     // leg-2 prompt seen → focus the field
+
+            function getTerm() {
+                const iframe = document.getElementById('terminal-frame');
+                try { return iframe.contentWindow?.term || null; } catch { return null; }
+            }
+
+            // Read the visible rows + a bounded slice of scrollback (~200 rows).
+            function readRows(term) {
+                const buf = term.buffer?.active;
+                if (!buf) return [];
+                const end = buf.baseY + term.rows;          // exclusive
+                const start = Math.max(0, end - 200);
+                const rows = [];
+                for (let y = start; y < end; y++) {
+                    const line = buf.getLine(y);
+                    rows.push(line ? line.translateToString(true) : '');
+                }
+                return rows;
+            }
+
+            function showLink(url) {
+                currentUrl = url;
+                pasteArmed = false;       // re-arm paste messaging/focus for this flow
+                openEl.href = url;
+                msgEl.textContent = 'Login link ready';
+                pasteEl.hidden = false;   // available as soon as the link appears
+                sendEl.hidden = false;
+                banner.hidden = false;
+            }
+
+            function armPaste() {
+                if (banner.hidden) return;
+                if (!pasteArmed) {
+                    pasteArmed = true;
+                    msgEl.textContent = 'Paste your authentication code below';
+                    try { pasteEl.focus(); } catch { /* focus may fail; non-fatal */ }
+                }
+            }
+
+            function scan() {
+                const term = getTerm();
+                if (!term || !window.LoginLink) return;
+                const rows = readRows(term);
+                // Pass term.cols so the reconstructor can tell a genuine wrap
+                // (row filled to the terminal width) from a complete short URL.
+                const url = window.LoginLink.reconstructLoginUrl(rows, term.cols);
+                if (url && url !== dismissedUrl && url !== currentUrl) {
+                    showLink(url);
+                }
+                if (window.LoginLink.isPasteBackPrompt(rows.join('\n'))) {
+                    armPaste();
+                }
+            }
+
+            // Debounce so bursts of output trigger one scan.
+            let scanTimer = null;
+            function scheduleScan() {
+                if (scanTimer) return;
+                scanTimer = setTimeout(() => { scanTimer = null; scan(); }, 150);
+            }
+
+            // Hook onWriteParsed once term is ready; fall back to polling.
+            let hooked = false;
+            const readyPoll = setInterval(() => {
+                const term = getTerm();
+                if (!term) return;
+                if (term.onWriteParsed && !hooked) {
+                    term.onWriteParsed(scheduleScan);
+                    hooked = true;
+                    clearInterval(readyPoll);
+                }
+            }, 500);
+            // Safety-net poll regardless of hook (cheap; bounded row read).
+            setInterval(scan, 1500);
+
+            copyEl.addEventListener('click', async () => {
+                if (!currentUrl) return;
+                const ok = await copyToClipboard(currentUrl);
+                setStatus(ok ? 'Login link copied' : 'Copy failed', ok ? 'success' : 'error');
+            });
+            sendEl.addEventListener('click', () => {
+                const val = pasteEl.value.trim();
+                if (!val) return;
+                // SECURITY: token-bearing — use sendInput() directly, NOT
+                // injectIntoTerminal() (which echoes the text into the status line).
+                // Never log `val`.
+                if (sendInput(val)) {
+                    // Submit Enter as a SEPARATE, slightly delayed keystroke.
+                    // Sending "code\r" in one burst lets the terminal's paste
+                    // handling treat the newline as pasted text rather than a
+                    // submit — so the code lands but never submits. A distinct,
+                    // delayed \r reads as a real Enter/Return.
+                    setTimeout(() => sendInput('\r'), 60);
+                    pasteEl.value = '';   // clear only on success so the user can retry
+                    setStatus('Code sent', 'success');
+                }
+                // On failure sendInput() already set an error status; leave the field intact.
+            });
+            pasteEl.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); sendEl.click(); }
+            });
+            dismissEl.addEventListener('click', () => {
+                dismissedUrl = currentUrl;
+                currentUrl = null;
+                pasteArmed = false;
+                banner.hidden = true;
+            });
+            rescanEl.addEventListener('click', () => {
+                dismissedUrl = null; // allow re-surfacing after a manual scan
+                scan();
+                if (banner.hidden) setStatus('No login link found on screen', 'error');
+            });
+        })();
 
         // Prevent default drag behavior on iframe
         window.addEventListener('load', () => {
