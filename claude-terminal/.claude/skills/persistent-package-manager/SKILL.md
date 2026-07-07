@@ -11,7 +11,19 @@ description: |
 
 ## Purpose
 
-This skill helps you install packages in the Claude Terminal Home Assistant add-on that will **persist across container restarts and reboots**. You must NEVER use `apk add` or `pip install` directly, as those install to ephemeral storage that disappears on restart.
+This skill governs **how you behave** when a user in the Claude Terminal Home
+Assistant add-on needs a package installed. Its job is to make sure packages
+**persist across container restarts and reboots**. You must NEVER use `apk add`
+or `pip install` directly — those write to ephemeral storage that disappears on
+restart.
+
+> **Reference material lives in one place.** The complete command table, storage
+> paths, auto-install configuration, common-package lists, and troubleshooting
+> steps are maintained in
+> [`PERSISTENT_PACKAGES.md`](../../../PERSISTENT_PACKAGES.md) (the human-facing
+> guide). This skill intentionally does **not** duplicate those tables — consult
+> that guide for exact syntax and edge cases, and keep this file focused on
+> *when and how you should act*.
 
 ## Core Concept: Container Architecture
 
@@ -44,45 +56,16 @@ Activate this skill when users:
 
 **ALWAYS use `persist-install` - NEVER use `apk add` or `pip install` directly!**
 
-## Commands Available
+## Commands You Will Use
 
-### 1. Install System Packages (Alpine APK)
+`persist-install` is the single entry point. You only need these three modes;
+see `PERSISTENT_PACKAGES.md` for the full table, aliases, and options.
 
-```bash
-persist-install <package1> [package2] [...]
-```
-
-**Examples**:
-```bash
-persist-install python3 py3-pip
-persist-install git vim htop
-persist-install curl wget jq sqlite
-```
-
-### 2. Install Python Packages
-
-```bash
-persist-install --python <package1> [package2] [...]
-```
-
-**Examples**:
-```bash
-persist-install --python homeassistant-cli
-persist-install --python requests pandas numpy
-persist-install --python flask fastapi uvicorn
-```
-
-### 3. List Installed Packages
-
-```bash
-persist-install --list
-```
-
-### 4. Get Help
-
-```bash
-persist-install --help
-```
+| Mode | Command | Use when the user wants... |
+|------|---------|----------------------------|
+| System package | `persist-install <pkg>...` | An Alpine/APK tool: git, vim, htop, python3 |
+| Python package | `persist-install --python <pkg>...` | A pip/PyPI package: requests, pandas, homeassistant-cli |
+| List | `persist-install --list` | To see what's installed |
 
 ## Your Workflow When User Asks to Install
 
@@ -153,34 +136,12 @@ You: "I'll install Python using persist-install so it survives reboots."
 
 [Verify]: python3 --version
 
-You: "Python 3.11.x installed successfully! It's stored in /data/packages
+You: "Python 3.x installed successfully! It's stored in /data/packages
      and will persist across all restarts. You can now install Python
      packages with: persist-install --python <package>"
 ```
 
-### Example 2: Installing Home Assistant CLI
-
-```
-User: "Install homeassistant-cli"
-
-You: "I'll install the Home Assistant CLI using the persistent package manager."
-
-[Check Python]: python3 --version
-[If not found]: persist-install python3 py3-pip
-
-[Execute]: persist-install --python homeassistant-cli
-
-[Verify]: hass-cli --version
-
-You: "Home Assistant CLI installed! You can now use commands like:
-     - hass-cli entity list
-     - hass-cli state get sensor.temperature
-     - hass-cli service call light.turn_on
-
-     It's stored in the persistent Python virtual environment."
-```
-
-### Example 3: Data Science Setup
+### Example 2: Data Science Setup
 
 ```
 User: "Set me up for data science work"
@@ -193,7 +154,7 @@ You: "I'll set up a complete data science environment with persistent packages."
 [Verify]: python3 -c "import pandas; import numpy; print('All packages ready!')"
 
 You: "Data science environment ready! Installed:
-     - Python 3.11.x
+     - Python 3.x
      - pandas - Data analysis
      - numpy - Numerical computing
      - scipy - Scientific computing
@@ -203,7 +164,7 @@ You: "Data science environment ready! Installed:
      All packages are persistent and will survive reboots."
 ```
 
-### Example 4: Development Tools
+### Example 3: Development Tools
 
 ```
 User: "I want git and vim"
@@ -223,88 +184,22 @@ You: "Development tools installed:
      Both are persistent and available in PATH."
 ```
 
-## Common Packages
+## Auto-Install Configuration (behavioral note)
 
-### System Tools
-- `python3 py3-pip` - Python and package manager
-- `git` - Version control
-- `vim` - Text editor (nano already installed)
-- `htop` - Process monitor
-- `sqlite` - Database
-- `wget` - Download tool
-- `tree` - Directory viewer
-- `tmux` - Terminal multiplexer
+When users want packages installed automatically on every startup, point them at
+the **Home Assistant UI**: **Settings → Apps → Claude Terminal → Configuration**,
+then add entries under `persistent_apk_packages` / `persistent_pip_packages` and
+Save + Restart. The add-on reads these from `/data/options.json`, which the
+Supervisor manages — do not tell users to hand-edit it. Full details and a config
+example are in `PERSISTENT_PACKAGES.md`.
 
-### Python Packages
-- `homeassistant-cli` - Home Assistant management
-- `requests` - HTTP library
-- `pyyaml` - YAML parser
-- `pandas` - Data analysis
-- `numpy` - Numerical computing
-- `flask` - Web framework
-- `fastapi` - Modern web framework
-- `jupyter` - Notebooks
-- `black` - Code formatter
-- `pytest` - Testing framework
+## Troubleshooting (behavioral note)
 
-## Auto-Install Configuration
-
-When users ask about automatic installation on startup, guide them:
-
-1. Go to **Settings** → **Add-ons** → **Claude Terminal**
-2. Click **Configuration** tab
-3. Add packages to configuration:
-
-```yaml
-persistent_apk_packages:
-  - python3
-  - py3-pip
-  - git
-  - vim
-
-persistent_pip_packages:
-  - homeassistant-cli
-  - requests
-```
-
-4. **Save** and **Restart** the add-on
-
-These packages will auto-install every time the container starts!
-
-## Troubleshooting
-
-### Package not found after installation
-
-```bash
-# Check if in persistent storage
-ls -la /data/packages/bin/
-
-# Check PATH
-echo $PATH | grep /data/packages
-```
-
-### Python import errors
-
-```bash
-# Activate venv manually
-source /data/packages/python/venv/bin/activate
-
-# List installed packages
-pip list
-```
-
-### Check disk usage
-
-```bash
-du -sh /data/packages
-```
-
-### Re-install package
-
-```bash
-# Just run persist-install again
-persist-install <package>
-```
+If a freshly installed package isn't found, confirm it landed in
+`/data/packages/bin` (or the venv) and that `/data/packages` is on `PATH`, then
+re-run `persist-install`. The complete troubleshooting playbook (PATH checks,
+Python import errors, shared-library issues, clean slate) is in
+`PERSISTENT_PACKAGES.md` — refer users there rather than restating it.
 
 ## Important Reminders
 
@@ -314,14 +209,6 @@ persist-install <package>
 4. **ALWAYS explain** that packages will persist across reboots
 5. **BE PROACTIVE** - Install packages when you detect the need
 6. **CHECK FIRST** - See if package is already installed before installing
-
-## Storage Details
-
-- **Location**: `/data/packages/`
-- **Binaries**: `/data/packages/bin/` (in PATH)
-- **Libraries**: `/data/packages/lib/` (in LD_LIBRARY_PATH)
-- **Python venv**: `/data/packages/python/venv/`
-- **Persistence**: Survives all reboots, restarts, and updates
 
 ## What NOT to Do
 
@@ -354,8 +241,10 @@ persist-install <package>
 
 When users ask to install anything:
 1. ✅ Use `persist-install` (NOT apk/pip)
-2. ✅ Verify it works
-3. ✅ Explain it persists
-4. ✅ Suggest auto-install if appropriate
+2. ✅ Pick the right mode (system / `--python`)
+3. ✅ Verify it works
+4. ✅ Explain it persists
+5. ✅ Suggest auto-install if appropriate
 
-This ensures packages survive reboots and provides a great user experience!
+For any exact syntax, paths, or troubleshooting detail, consult
+`PERSISTENT_PACKAGES.md` — the single source of truth for reference material.

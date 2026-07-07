@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Install the toolchain locally (macOS via Homebrew):
 ```bash
 brew install hadolint shellcheck yamllint actionlint ruff node
-# Plus a container runtime: podman (or docker) and curl/jq
+# Plus Docker (container runtime) and curl/jq
 ```
 
 ### Build & Test
@@ -24,13 +24,13 @@ brew install hadolint shellcheck yamllint actionlint ruff node
 # Build the image. base:3.24 is multi-arch, so buildx picks the arch; pass
 # --platform linux/arm64 to cross-build. The tag (no digest) is fine for local
 # dev — the committed Dockerfile pins base:3.24 by digest (Renovate-managed).
-podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
+docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
 # Add --no-cache when npm or Python dependencies change
 
-# Run locally on port 7681, then test the endpoint
-podman run -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
-curl -X GET http://localhost:7681/
+# Run locally (7680 = web UI/ingress, 7681 = internal ttyd), then test the web UI
+docker run -p 7680:7680 -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
+curl -X GET http://localhost:7680/
 ```
 
 ### Linting (run from repo root)
@@ -89,7 +89,7 @@ ruff check                                                # Python (tools/)
 - `XDG_CONFIG_HOME=/data/.config`, `XDG_CACHE_HOME=/data/.cache`, `XDG_STATE_HOME=/data/.local/state`, `XDG_DATA_HOME=/data/.local/share`
 
 ### Important Constraints
-- No sudo in dev environment; targets Alpine Linux 3.23
+- No sudo in dev environment; targets Alpine Linux 3.24
 - Multi-architecture: amd64 + aarch64
 - **CRITICAL:** `wrapper/package-lock.json` must be committed (deterministic npm builds)
 - **CRITICAL:** `ha-mcp/uv.lock` must be committed (deterministic Python builds)
@@ -121,7 +121,7 @@ Note: `.gitignore` has a specific exception for `!claude-terminal/wrapper/packag
 ```bash
 docker run --rm --entrypoint bash \
   -v $(pwd)/claude-terminal/ha-mcp:/opt/ha-mcp \
-  ghcr.io/home-assistant/aarch64-base:3.23 -c \
+  ghcr.io/home-assistant/aarch64-base:3.24 -c \
   'apk add --no-cache curl > /dev/null 2>&1 && \
    curl -fsSL https://astral.sh/uv/install.sh | sh > /dev/null 2>&1 && \
    export PATH="$HOME/.local/bin:$PATH" && \
@@ -176,6 +176,7 @@ gh run list --workflow=publish.yml --limit 3
 | `test.yml` | Push to main, PRs | Validate builds (2-job: init → per-arch native builds, no QEMU) |
 | `lint.yml` | Push/PR to main | hadolint, shellcheck, yamllint, actionlint |
 | `publish.yml` | Release published | Build + sign + push images (4-job: init → per-arch → manifest → scan) |
+| `security.yml` | Push/PR to main + weekly cron | Trivy filesystem security scan; opens tracking issue on findings |
 | `claude.yml` | @claude mentions | Respond to mentions in issues/PRs (optional) |
 
 **Images:** `ghcr.io/owine/{arch}-claude-terminal-prowine:{version|latest}` and multi-arch manifest at `ghcr.io/owine/claude-terminal-prowine`
@@ -187,7 +188,6 @@ gh run list --workflow=publish.yml --limit 3
 ```bash
 persist-install python3 py3-pip git    # System packages
 persist-install --python requests      # Python packages
-persist-install --ha-cli               # Home Assistant CLI
 persist-install --list                 # Show installed
 ```
 

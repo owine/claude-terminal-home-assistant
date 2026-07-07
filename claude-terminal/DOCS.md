@@ -4,7 +4,7 @@ An enhanced terminal interface for Anthropic's Claude Code CLI in Home Assistant
 
 ## About
 
-Claude Terminal Prowine is an enhanced fork of the original Claude Terminal app, providing a web-based terminal with Claude Code CLI pre-installed plus persistent package management capabilities. Access Claude's powerful AI capabilities directly from your Home Assistant dashboard with the added benefit of installing and persisting custom packages across restarts.
+Claude Terminal Prowine is a personal fork by [@owine](https://github.com/owine), built on the original **Claude Terminal** by Tom Cassady ([@heytcass](https://github.com/heytcass)) and the enhanced **claude-code-ha** fork by Javier Santos ([@esjavadex](https://github.com/esjavadex)). It provides a web-based terminal with Claude Code CLI pre-installed plus persistent package management capabilities. Access Claude's powerful AI capabilities directly from your Home Assistant dashboard with the added benefit of installing and persisting custom packages across restarts. For full credits, see the [repository README](https://github.com/owine/claude-terminal-home-assistant#credits).
 
 ## Installation
 
@@ -42,16 +42,21 @@ The app offers several configuration options:
 
 ### YOLO Mode (Session Picker Option 9)
 
-YOLO Mode provides on-demand access to `--dangerously-skip-permissions` without enabling it globally in your configuration.
+YOLO Mode is a **per-session confirmation gate** for `--dangerously-skip-permissions`. It only appears when you have already enabled `dangerously_skip_permissions: true` in the app configuration (that setting is what exports `ALLOW_YOLO_MODE=1`, which makes option 9 visible in the session picker). It is **not** a way to get unrestricted access while keeping the global setting off.
+
+Its purpose is to let you decide **per session** when the dangerous flag is applied, rather than having every session launch with it automatically. With the global setting enabled, you launch individual sessions with `--dangerously-skip-permissions` on demand after a typed confirmation.
+
+**Requirements:**
+- `dangerously_skip_permissions: true` must be set in the app configuration
+- Without it, option 9 does not appear and YOLO Mode is unavailable
 
 **When to Use:**
-- You need unrestricted file access for a single session
-- You want to test automation scripts without permission prompts
-- You prefer keeping the global setting disabled for safety
+- You have enabled the global dangerous-permissions setting but want each unrestricted session to be an explicit, confirmed choice
+- You want to test automation scripts without permission prompts for a single session
 - You understand the security implications and accept the risks
 
 **How It Works:**
-1. Select option 9 from the session picker menu
+1. Select option 9 from the session picker menu (only shown when `dangerously_skip_permissions: true`)
 2. Read the warning screen explaining the risks
 3. Type "YOLO" (case-sensitive) to confirm
 4. Choose your session type (New/Continue/Resume)
@@ -60,18 +65,19 @@ YOLO Mode provides on-demand access to `--dangerously-skip-permissions` without 
 
 **Security Notes:**
 - `IS_SANDBOX=1` is set automatically during YOLO sessions
-- The flag only applies to the current session (not persistent)
 - Must type "YOLO" exactly - any other input cancels
 - Invalid sub-menu choices safely return to menu
 
-**YOLO Mode vs Global Config:**
+**YOLO Mode (Option 9) vs. Auto-Launch with the Global Flag:**
 
-| Aspect | YOLO Mode (Option 9) | Global Config Setting |
+Both require `dangerously_skip_permissions: true`. The difference is how the flag is applied:
+
+| Aspect | YOLO Mode (Option 9) | Auto-applied to every session |
 |--------|---------------------|---------------------|
-| Scope | Single session | All sessions |
-| Persistence | None | Survives restarts |
+| Availability | Requires `dangerously_skip_permissions: true` | Requires `dangerously_skip_permissions: true` |
+| Applied per session | Only after a typed "YOLO" confirmation | Automatically to every session |
 | Requires confirmation | Yes ("YOLO" typing) | No |
-| Use case | Occasional need | Always unrestricted |
+| Use case | Explicit, confirmed unrestricted sessions | Always unrestricted |
 
 ### Persistent Packages
 - Configure APK and pip packages to auto-install on startup
@@ -144,7 +150,7 @@ Claude launches automatically when you open the terminal (if `auto_launch_claude
 
 ### Session Picker Menu
 
-When the menu is enabled (`auto_launch_claude: false`), you'll see a numbered menu with these options:
+When the menu is enabled (`auto_launch_claude: false`), you'll see a numbered menu. Options 1-8 are always shown; option 9 appears **only** when `dangerously_skip_permissions: true` is set in the app configuration:
 
 1. **New interactive session** - Start a fresh Claude conversation
 2. **Continue most recent** - Resume your last conversation (`-c` flag)
@@ -154,7 +160,7 @@ When the menu is enabled (`auto_launch_claude: false`), you'll see a numbered me
 6. **GitHub CLI login** - Authenticate `gh` for repository access
 7. **Drop to bash** - Exit to shell (type `menu` to return)
 8. **Clear & restart** - Reset tmux scrollback and restart menu
-9. **YOLO Mode** - Launch with `--dangerously-skip-permissions` (requires "YOLO" confirmation)
+9. **YOLO Mode** - Launch with `--dangerously-skip-permissions` (requires "YOLO" confirmation; shown only when `dangerously_skip_permissions: true`)
 
 **Tips:**
 - If you drop to bash shell, type `menu` to return to the session picker
@@ -164,11 +170,8 @@ When the menu is enabled (`auto_launch_claude: false`), you'll see a numbered me
 ### Manual Claude Commands
 
 ```bash
-# Start Claude
+# Start Claude (running claude with no arguments starts an interactive session)
 claude
-
-# Interactive session
-claude -i
 
 # Continue most recent conversation
 claude -c
@@ -228,7 +231,7 @@ This app includes the [homeassistant-ai/ha-mcp](https://github.com/homeassistant
 
 The MCP (Model Context Protocol) server automatically connects to your Home Assistant using the Supervisor API. No manual configuration or token setup is required - it just works!
 
-The integration provides 97+ tools for:
+The integration provides dozens of tools for:
 - Entity search and control
 - Automation and script management
 - Dashboard configuration
@@ -337,7 +340,7 @@ compare /data/images/pasted-123.png and /data/images/pasted-456.png
 
 **Dependencies:**
 - Express v5.2.1 (HTTP server with security improvements)
-- Multer v2.0.2 (multipart/form-data handling, fixes 4 critical CVEs)
+- Multer v2.2.0 (multipart/form-data handling, fixes critical CVEs)
 - ARM-compatible for Raspberry Pi
 
 **Resource Usage:**
@@ -392,7 +395,7 @@ See [PERSISTENT_PACKAGES.md](PERSISTENT_PACKAGES.md) for complete guide.
 
 ## Troubleshooting
 
-- If Claude doesn't start automatically, try running `claude -i` manually
+- If Claude doesn't start automatically, try running `claude` manually
 - If you see permission errors, try restarting the app
 - If you have authentication issues, try logging out and back in
 - Check the app logs for any error messages
