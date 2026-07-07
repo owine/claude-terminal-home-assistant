@@ -133,6 +133,7 @@ Your OAuth credentials are stored in the `/config/claude-config` directory and w
 | `dangerously_skip_permissions` | `false` | Run Claude with unrestricted file access ⚠️ |
 | `enable_ha_mcp` | `true` | Enable Home Assistant MCP server integration |
 | `tmux_mouse_mode` | `false` | Enable mouse support in tmux (use Shift+select to copy) |
+| `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |
 | `enable_docker` | `false` | Install the Docker CLI and enable host Docker socket access (requires Protection Mode disabled) ⚠️ |
