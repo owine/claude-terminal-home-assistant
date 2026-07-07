@@ -6,6 +6,7 @@
 ### Dependencies
 
 * lock file maintenance ([#222](https://github.com/owine/claude-terminal-home-assistant/issues/222)) ([ce6f312](https://github.com/owine/claude-terminal-home-assistant/commit/ce6f312cbb510521591d249c2a51c64f5e7ec1fc))
+* update alpine_3_24/vim to v9.2.0747-r0 ([#209](https://github.com/owine/claude-terminal-home-assistant/issues/209)) ([50659b7](https://github.com/owine/claude-terminal-home-assistant/commit/50659b78452b373f0a93c233413b71c76da8d491))
 * update all non-major dependencies ([#221](https://github.com/owine/claude-terminal-home-assistant/issues/221)) ([5b387f9](https://github.com/owine/claude-terminal-home-assistant/commit/5b387f990e2ae6ee9bdbe5854edb1ae9e525515f))
 
 ## [2.5.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.5.1...v2.5.2) (2026-07-06)
@@ -33,6 +34,7 @@
 ### Dependencies
 
 * lock file maintenance ([#212](https://github.com/owine/claude-terminal-home-assistant/issues/212)) ([ddef23f](https://github.com/owine/claude-terminal-home-assistant/commit/ddef23fb13ad62df33353b15cc7e4ec471155aa3))
+* update alpine packages to v9.2.0699-r0 ([#192](https://github.com/owine/claude-terminal-home-assistant/issues/192)) ([a3f229f](https://github.com/owine/claude-terminal-home-assistant/commit/a3f229f40836c02b09efd062d4342d6e9466378d))
 
 ## [2.5.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.4.5...v2.5.0) (2026-06-21)
 
@@ -50,6 +52,7 @@
 
 ### Dependencies
 
+* bump vim apk pin to 9.2.0680-r0 ([93cce59](https://github.com/owine/claude-terminal-home-assistant/commit/93cce59440f69d85561661f086e7bc74c72a46ff))
 * lock file maintenance all non-major dependencies ([#204](https://github.com/owine/claude-terminal-home-assistant/issues/204)) ([f1559c9](https://github.com/owine/claude-terminal-home-assistant/commit/f1559c9777ad2360a574f419c54844284d2ac114))
 
 ## [2.4.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.4.4...v2.4.5) (2026-06-16)
