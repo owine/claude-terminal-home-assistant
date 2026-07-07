@@ -77,10 +77,12 @@ init_environment() {
         export npm_config_cache="/tmp/npm-cache"
         mkdir -p "$npm_config_cache"
         # Reclaim any legacy cache accumulated in persistent storage by earlier
-        # versions, shrinking existing backups on the next run.
+        # versions, shrinking existing backups on the next run. ${data_home:?}
+        # guards against ever running rm against a bare "/.npm" if the path were
+        # somehow unset.
         if [ -d "$data_home/.npm" ]; then
             bashio::log.info "  - npm cache: reclaiming legacy cache at $data_home/.npm"
-            rm -rf "$data_home/.npm"
+            rm -rf "${data_home:?}/.npm"
         fi
         bashio::log.info "  - npm cache: ephemeral ($npm_config_cache)"
     fi
@@ -128,8 +130,10 @@ alias menu='/usr/local/bin/claude-session-picker'
 PROFILE_EOF
 
     # Mirror the ephemeral npm cache into interactive shells (ttyd sessions).
-    # In persistent mode npm falls back to its $HOME/.npm default, so nothing
-    # extra is needed there.
+    # The heredoc above rewrites this file with `>` (truncate) on every startup,
+    # so this appends exactly one line to a freshly written file - it never
+    # accumulates across restarts. In persistent mode npm falls back to its
+    # $HOME/.npm default, so nothing extra is needed there.
     if [ "$persist_npm_cache" != "true" ]; then
         echo 'export npm_config_cache="/tmp/npm-cache"' >> /etc/profile.d/persistent-packages.sh
     fi
