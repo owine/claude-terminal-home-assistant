@@ -68,6 +68,10 @@ map:
   - type: homeassistant_config
     read_only: false
     path: /config
+  # all_addon_configs exposes every add-on's config dir at /addon_configs/<repo>_<slug>/
+  # (HA default mount). Always-on read-write; see DOCS.md "Add-on Config Access".
+  - type: all_addon_configs
+    read_only: false
 
 # API access for Home Assistant integration
 hassio_api: true
