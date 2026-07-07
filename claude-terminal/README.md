@@ -98,9 +98,9 @@ claude-logout        # Clear credentials and re-authenticate
 For local development and testing:
 ```bash
 # Build and run locally (replace amd64 with aarch64 for ARM)
-podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24 \
+docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
-podman run -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
+docker run -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
 
 # Lint and validate
 hadolint claude-terminal/Dockerfile
@@ -110,7 +110,7 @@ curl -X GET http://localhost:7681/
 ## Architecture
 
 - **Base Image**: Home Assistant Alpine Linux base (3.23)
-- **Container Runtime**: Compatible with Docker/Podman
+- **Container Runtime**: Docker
 - **Web Terminal**: ttyd (v1.7.7) for browser-based access
 - **Session Persistence**: tmux for terminal session management
 - **Wrapper Service**: Express.js server for UI, terminal proxy, image uploads, and mouse mode toggle
@@ -129,7 +129,7 @@ Security features and improvements:
 ## Development Environment
 
 **Requirements for development:**
-- A container runtime: Podman or Docker
+- Docker (container runtime)
 - Linters: `hadolint`, `shellcheck`, `yamllint`, `actionlint`, `ruff`, and Node.js (`brew install hadolint shellcheck yamllint actionlint ruff node`)
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) and [.github/LINTING.md](../.github/LINTING.md) for the full build, run, and lint commands.

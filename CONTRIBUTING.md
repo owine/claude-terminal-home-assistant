@@ -7,7 +7,7 @@ Thank you for your interest in contributing! This guide will help you get starte
 ### Prerequisites
 
 - **Git** - Version control
-- **Docker or Podman** - Container runtime for testing
+- **Docker** - Container runtime for testing
 - **Nix** (optional) - For development environment with all tools
 - **Home Assistant** (optional) - For integration testing
 
@@ -20,7 +20,7 @@ cd claude-terminal-home-assistant
 
 # Install the toolchain (macOS via Homebrew)
 brew install hadolint shellcheck yamllint actionlint ruff node
-# Plus a container runtime: podman (or docker)
+# Plus Docker (container runtime)
 ```
 
 See [CLAUDE.md](./CLAUDE.md) for comprehensive development documentation.

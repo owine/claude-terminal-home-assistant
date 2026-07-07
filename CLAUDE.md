@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Install the toolchain locally (macOS via Homebrew):
 ```bash
 brew install hadolint shellcheck yamllint actionlint ruff node
-# Plus a container runtime: podman (or docker) and curl/jq
+# Plus Docker (container runtime) and curl/jq
 ```
 
 ### Build & Test
@@ -24,12 +24,12 @@ brew install hadolint shellcheck yamllint actionlint ruff node
 # Build the image. base:3.24 is multi-arch, so buildx picks the arch; pass
 # --platform linux/arm64 to cross-build. The tag (no digest) is fine for local
 # dev — the committed Dockerfile pins base:3.24 by digest (Renovate-managed).
-podman build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
+docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
 # Add --no-cache when npm or Python dependencies change
 
 # Run locally on port 7681, then test the endpoint
-podman run -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
+docker run -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
 curl -X GET http://localhost:7681/
 ```
 
