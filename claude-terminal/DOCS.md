@@ -125,6 +125,23 @@ persistent_pip_packages:
 
 Your OAuth credentials are stored in the `/config/claude-config` directory and will persist across app updates and restarts, so you won't need to log in again.
 
+### Add-on Config Access
+
+In addition to your Home Assistant config at `/config`, the terminal mounts every
+installed add-on's configuration directory under `/addon_configs/<repo>_<slug>/`
+(Home Assistant's standard mount for `all_addon_configs`). This lets Claude read
+and edit other add-ons' configs from one place — for example inspecting another
+add-on's YAML while wiring up an integration.
+
+⚠️ **Security note:** This mapping is **always on** and **read-write** to *all*
+add-on configs — it cannot be toggled off via an option, because Home Assistant
+applies volume mounts statically at container creation. It widens the terminal's
+reach and compounds with `dangerously_skip_permissions` (YOLO mode) and Docker
+socket access. Outside YOLO mode, Claude Code still prompts for permission before
+reading or writing paths outside its working directory, so day-to-day access to
+`/addon_configs` remains gated by those prompts. If this broader access is not
+acceptable for your setup, avoid enabling YOLO mode.
+
 ### Options
 
 | Option | Default | Description |
