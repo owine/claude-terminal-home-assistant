@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.6.0...v2.6.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* update dependency ha-mcp to v7.10.0 [security] ([#231](https://github.com/owine/claude-terminal-home-assistant/issues/231)) ([6f30031](https://github.com/owine/claude-terminal-home-assistant/commit/6f30031f9e7912372599a5320bcade30883c6efd))
+
 ## [2.6.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.5.3...v2.6.0) (2026-07-07)
 
 
