@@ -3,7 +3,7 @@ name = "ha-mcp-wrapper"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
-    "ha-mcp==7.10.0",
+    "ha-mcp==7.12.0",
 ]
 
 [tool.uv]
