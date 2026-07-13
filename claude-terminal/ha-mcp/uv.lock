@@ -389,7 +389,7 @@ wheels = [
 
 [[package]]
 name = "ha-mcp"
-version = "7.12.0"
+version = "7.12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
@@ -403,9 +403,9 @@ dependencies = [
     { name = "tzdata" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fe/bc/d3a180c4b26119e5e8a5c5da539ba3c38a776dbdf9ff086cdb3df32793fa/ha_mcp-7.12.0.tar.gz", hash = "sha256:f8d6e78bb577b183f370f59456d3fc7ddd51305d15812e26e168c830a916947c", size = 960567, upload-time = "2026-07-09T20:03:33.403Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/3d/5287686ede5a39776c891c50426e0ee5408293a3fabc8b30bb39e446a5e5/ha_mcp-7.12.1.tar.gz", hash = "sha256:d7314c8d0692871589aeb6e91afad0a6f5bdf29f14b38515459f91f359bda802", size = 965866, upload-time = "2026-07-10T18:25:06.248Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/81/44e39f41bef271accf9b3479c6e368670354bd887973bd1f27e6fa9b0baf/ha_mcp-7.12.0-py3-none-any.whl", hash = "sha256:ddb1ce82f7f4f7779e8c9e63a46c1a96c64a3ee77802f77fbee1fc8b65c44711", size = 1023948, upload-time = "2026-07-09T20:03:31.634Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/96/43dd892d027e9befed965437b537cf199cb0d42280c77ec43dc8fafe41a6/ha_mcp-7.12.1-py3-none-any.whl", hash = "sha256:07e1033cf026036ff59fc285284204e50ae2fed7243469232f2227b1e9653ac1", size = 1028736, upload-time = "2026-07-10T18:25:04.742Z" },
 ]
 
 [[package]]
@@ -417,7 +417,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ha-mcp", specifier = "==7.12.0" }]
+requires-dist = [{ name = "ha-mcp", specifier = "==7.12.1" }]
 
 [[package]]
 name = "httpcore"
