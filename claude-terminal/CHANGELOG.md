@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.6.4](https://github.com/owine/claude-terminal-home-assistant/compare/v2.6.3...v2.6.4) (2026-07-28)
+
+
+### Dependencies
+
+* update all non-major dependencies ([#255](https://github.com/owine/claude-terminal-home-assistant/issues/255)) ([9614ec4](https://github.com/owine/claude-terminal-home-assistant/commit/9614ec4f69d1d03c586744052ee8f440ae8359e9))
+* update dependency alpine_3_24/vim to v9.2.0843-r0 ([#250](https://github.com/owine/claude-terminal-home-assistant/issues/250)) ([b2c7821](https://github.com/owine/claude-terminal-home-assistant/commit/b2c782115121b44eab0337553f45f20efc57fa44))
+* update dependency alpine_3_24/vim to v9.2.0854-r0 ([#252](https://github.com/owine/claude-terminal-home-assistant/issues/252)) ([4647e9d](https://github.com/owine/claude-terminal-home-assistant/commit/4647e9dd0728269f3bca0451323b62477e95fe7e))
+* update dependency eslint to v10.8.0 ([#257](https://github.com/owine/claude-terminal-home-assistant/issues/257)) ([896bb6d](https://github.com/owine/claude-terminal-home-assistant/commit/896bb6d277203c52915129af9be8ce685a492298))
+
 ## [2.6.3](https://github.com/owine/claude-terminal-home-assistant/compare/v2.6.2...v2.6.3) (2026-07-21)
 
 
