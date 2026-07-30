@@ -18,7 +18,7 @@ RUN apk upgrade --no-cache \
     git=2.54.0-r0 \
     jq=1.8.1-r0 \
     nano=9.1-r0 \
-    nodejs=24.17.0-r0 \
+    nodejs=24.18.1-r0 \
     npm=11.12.1-r0 \
     py3-aiohttp=3.13.5-r0 \
     py3-beautifulsoup4=4.15.0-r0 \
