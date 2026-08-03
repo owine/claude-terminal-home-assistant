@@ -39,7 +39,7 @@ jobs:
           cache-dependency-path: claude-terminal/wrapper/package-lock.json
 
       - name: Hadolint
-        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
+        uses: hadolint/hadolint-action@2a66e89f53d0771bb131a7fa31f3136336094aa6 # v3.4.0
         with:
           dockerfile: claude-terminal/Dockerfile
           config: .hadolint.yaml
@@ -75,5 +75,5 @@ jobs:
       - name: Ruff
         uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
         with:
-          version: '0.16.0' # renovate: datasource=pypi depName=ruff
+          version: '0.16.1' # renovate: datasource=pypi depName=ruff
           args: check
