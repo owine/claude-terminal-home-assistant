@@ -158,10 +158,19 @@ All commits to `main` must use [Conventional Commits](https://www.conventionalco
 
 Releases are managed by [release-please](https://github.com/googleapis/release-please). Do **not** manually bump `config.yaml` version or edit `CHANGELOG.md` — release-please handles both.
 
-1. Push commits to `main` using Conventional Commits format
+1. Open a PR with commits in Conventional Commits format, and squash-merge it into `main`
 2. release-please automatically creates/updates a Release PR with version bump + changelog
 3. Merge the Release PR when ready to release
 4. `publish.yml` triggers automatically → builds, signs, and pushes Docker images
+
+**`main` does not accept direct pushes.** The `main protection` ruleset requires a pull
+request plus 3 passing status checks (`Lint all`, `Test build amd64`, `Test build aarch64`),
+and enforces linear history — so merge commits are disabled and only squash or rebase merges
+are available. Branch before committing; an admin override will not bypass the ruleset.
+
+Squash-merging means the **squash commit subject** is what release-please parses, so it is
+the one that must carry the Conventional Commits prefix. GitHub defaults it to the PR title —
+keep the PR title in `type: description` form and the default is correct.
 
 ```bash
 # Verify release
