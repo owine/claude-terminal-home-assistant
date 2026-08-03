@@ -1,0 +1,17 @@
+# Build context excludes for the add-on image.
+#
+# Patterns are matched against the whole path relative to this directory (the
+# build context root per config.yaml), so a bare `node_modules` would only ever
+# match ./node_modules. `**` matches zero or more directories, covering both the
+# root case and wrapper/node_modules.
+#
+# wrapper/node_modules is the load-bearing one: the Dockerfile runs `npm ci`
+# (COPY wrapper/package*.json -> npm ci -> COPY wrapper/) and a host-built
+# node_modules would overwrite the image's linux install on the second COPY.
+# CI never hits this because it builds from a fresh checkout.
+**/node_modules
+
+# Python build/test artifacts (ha-mcp deps are installed from uv.lock in-image)
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
