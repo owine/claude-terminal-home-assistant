@@ -86,7 +86,7 @@ RUN set -eux; \
 # Install uv for running ha-mcp (Python package manager/runner) with SHA256 verification
 # ha-mcp requires Python 3.13+, uv handles this automatically
 # renovate: datasource=github-releases depName=astral-sh/uv
-ARG UV_VERSION=0.11.32
+ARG UV_VERSION=0.12.0
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -160,7 +160,7 @@ RUN case "${TARGETARCH}" in \
 # Install GitHub CLI (gh command) with SHA256 verification
 # Download appropriate binary based on build architecture
 # renovate: datasource=github-releases depName=cli/cli
-ARG GH_CLI_VERSION=2.96.0
+ARG GH_CLI_VERSION=2.97.0
 RUN set -eux; \
     # Determine architecture
     case "${TARGETARCH}" in \
