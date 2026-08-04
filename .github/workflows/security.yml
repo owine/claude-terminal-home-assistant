@@ -21,9 +21,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Advisory: never blocks merges (vulnerabilities are remediated by Renovate's
-      # grouped, auto-merging security PRs). Findings are surfaced in the job summary,
-      # and non-PR runs (push to main / weekly schedule) open a tracking issue.
+      # Advisory: never blocks merges. Findings are surfaced in the job summary, and
+      # non-PR runs (push to main / weekly schedule) open a tracking issue. Renovate
+      # remediates most direct-dependency findings on its own, but not all of them —
+      # transitive deps held back by an upstream version cap need a manual decision,
+      # so triage the issue rather than assuming it self-resolves.
       - name: Run Trivy filesystem scan
         id: trivy
         continue-on-error: true
@@ -81,7 +83,15 @@ jobs:
           title="🔒 Trivy filesystem scan: fixable vulnerabilities detected"
           {
             echo "The Trivy filesystem scan found CRITICAL/HIGH vulnerabilities with fixes available."
-            echo "Renovate opens grouped, auto-merging security PRs to remediate these."
+            echo ""
+            echo "**This needs triage — it does not always resolve on its own.** Renovate opens"
+            echo "security PRs for most direct-dependency findings, and this issue clears once such"
+            echo "a PR merges. But it cannot fix a transitive dependency that an upstream package"
+            echo "caps below the fixed version: the lockfile simply resolves back to the vulnerable"
+            echo "release. Those need an upstream release, or a scoped and documented entry in"
+            echo "\`.trivyignore.yaml\` recording why the CVE is unfixable here and when to prune it."
+            echo ""
+            echo "Nothing closes this issue automatically — close it once the finding is resolved."
             echo ""
             echo "<details><summary>Scan output</summary>"
             echo ""
