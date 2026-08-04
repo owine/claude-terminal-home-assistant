@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.6.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.6.4...v2.6.5) (2026-08-04)
+
+
+### Bug Fixes
+
+* add .dockerignore to stop host node_modules leaking into image ([#267](https://github.com/owine/claude-terminal-home-assistant/issues/267)) ([db3bbfb](https://github.com/owine/claude-terminal-home-assistant/commit/db3bbfb478051d6e5d753a34ea98d7f9f16eea77))
+
+
+### Dependencies
+
+* update all non-major dependencies ([#266](https://github.com/owine/claude-terminal-home-assistant/issues/266)) ([32c4b93](https://github.com/owine/claude-terminal-home-assistant/commit/32c4b930ee22490e2bdbf811697edff5d295fed1))
+* update dependency alpine_3_24/nano to v9.2-r0 ([#262](https://github.com/owine/claude-terminal-home-assistant/issues/262)) ([071686a](https://github.com/owine/claude-terminal-home-assistant/commit/071686a06014147d7c48f98ce623871b86aa690a))
+* update dependency alpine_3_24/nodejs to v24.18.1-r0 ([#260](https://github.com/owine/claude-terminal-home-assistant/issues/260)) ([7a1ab63](https://github.com/owine/claude-terminal-home-assistant/commit/7a1ab63a4dc13491a377a9d672a974a902a28026))
+* update dependency astral-sh/uv to v0.12.1 ([#269](https://github.com/owine/claude-terminal-home-assistant/issues/269)) ([b62394f](https://github.com/owine/claude-terminal-home-assistant/commit/b62394fafd782fc426d302f3c6c02e959bc4d23b))
+* update dependency claude-code to v2.1.220 ([#271](https://github.com/owine/claude-terminal-home-assistant/issues/271)) ([7353f62](https://github.com/owine/claude-terminal-home-assistant/commit/7353f62e27e029191ad07a81e935b43217db2d6c))
+
 ## [2.6.4](https://github.com/owine/claude-terminal-home-assistant/compare/v2.6.3...v2.6.4) (2026-07-28)
 
 
