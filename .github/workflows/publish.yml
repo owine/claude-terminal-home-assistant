@@ -109,5 +109,5 @@ jobs:
           exit-code: "1"
           scanners: vuln
           ignore-unfixed: true
-          trivyignores: .trivyignore
+          trivyignores: .trivyignore.yaml
           cache: "false"

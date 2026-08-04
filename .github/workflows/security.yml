@@ -32,6 +32,10 @@ jobs:
           scan-type: fs
           scan-ref: .
           trivy-config: .trivy.yaml
+          # Required: Trivy only auto-discovers the plain `.trivyignore` name, so
+          # the scoped YAML ignore list must be passed explicitly or it is ignored
+          # silently and every suppressed CVE comes back.
+          trivyignores: .trivyignore.yaml
           cache: "false"
           format: table
           output: trivy-fs-results.txt
