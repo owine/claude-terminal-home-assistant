@@ -48,3 +48,14 @@ CVE-2026-25681
 CVE-2026-27136
 CVE-2026-39821
 CVE-2026-42502
+
+# --- claude-terminal/ha-mcp/uv.lock (cryptography) ---
+# CVE-2026-69247: Bleichenbacher oracle in cryptography's PKCS#7 EnvelopedData
+# decryption, fixed in 50.0.0. Not fixable here — ha-mcp caps the dependency at
+# `cryptography<50,>=48.0.0` (both the pinned 7.14.2 and the current 8.0.0), so
+# `uv lock --upgrade-package cryptography` resolves straight back to 49.0.0.
+# Not reachable either: cryptography reaches us via ha-mcp/authlib/joserfc, which
+# use JWS/JWE/JWT and X.509 — none of them call the PKCS#7 decrypt path, and the
+# add-on never decrypts attacker-supplied PKCS#7 blobs.
+# Prune when ha-mcp relaxes the <50 cap and uv.lock picks up cryptography 50.
+CVE-2026-69247
