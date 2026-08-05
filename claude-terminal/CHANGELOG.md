@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.7.1...v2.7.2) (2026-08-05)
+
+
+### Bug Fixes
+
+* make the browser revalidate shell assets ([#279](https://github.com/owine/claude-terminal-home-assistant/issues/279)) ([67dd7e5](https://github.com/owine/claude-terminal-home-assistant/commit/67dd7e55583881b3af841dd156247ed003c2afdc))
+
 ## [2.7.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.7.0...v2.7.1) (2026-08-05)
 
 
