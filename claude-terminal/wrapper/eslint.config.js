@@ -6,8 +6,8 @@ const globals = require('globals');
 module.exports = [
     js.configs.recommended,
     {
-        // Node-side Express service and this config file.
-        files: ['server.js', 'eslint.config.js'],
+        // Node-side Express service, its helper modules, and this config file.
+        files: ['server.js', 'cache-policy.js', 'eslint.config.js'],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: 'commonjs',
