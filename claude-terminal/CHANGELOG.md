@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.6.5...v2.7.0) (2026-08-05)
+
+
+### Features
+
+* give the browser sole authority over terminal mouse tracking ([#275](https://github.com/owine/claude-terminal-home-assistant/issues/275)) ([533a7bc](https://github.com/owine/claude-terminal-home-assistant/commit/533a7bcfd8b82e1de14a211a5c490bced05381c0))
+
 ## [2.6.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.6.4...v2.6.5) (2026-08-04)
 
 
