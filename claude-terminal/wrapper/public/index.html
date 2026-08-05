@@ -705,6 +705,65 @@
             }
         }
 
+        // ========================================
+        // Clipboard delivery (OSC 52)
+        // ========================================
+
+        // Text staged by putOnClipboard() when no automated path was allowed;
+        // completed by the click handler below, on a real user gesture.
+        let pendingClipboardText = null;
+
+        // Put text on the user's clipboard, degrading through three strategies.
+        // The bug this whole change fixes was a clipboard path that silently did
+        // nothing for years, so the last step must always be user-visible.
+        async function putOnClipboard(text) {
+            if (!text) return;
+
+            // 1. Async Clipboard API — needs HTTPS (ingress) and often a gesture.
+            try {
+                await navigator.clipboard.writeText(text);
+                setStatus('Copied to clipboard', 'success');
+                return;
+            } catch { /* fall through */ }
+
+            // 2. execCommand fallback — works on plain HTTP (the :7680 port).
+            try {
+                const onCopy = (ev) => {
+                    ev.clipboardData.setData('text/plain', text);
+                    ev.preventDefault();
+                };
+                document.addEventListener('copy', onCopy);
+                const ok = document.execCommand('copy');
+                document.removeEventListener('copy', onCopy);
+                if (ok) {
+                    setStatus('Copied to clipboard', 'success');
+                    return;
+                }
+            } catch { /* fall through */ }
+
+            // 3. Neither worked (no user activation). Stage it behind a tap.
+            // The `persistent` argument is load-bearing: setStatus auto-clears
+            // after 5s otherwise, and the affordance would disappear while
+            // pendingClipboardText is still set — an invisible staged copy,
+            // exactly the silent-failure class this change exists to remove.
+            pendingClipboardText = text;
+            setStatus('Copied — tap here to place on clipboard', 'success', true);
+        }
+
+        // Clearing pendingClipboardText before awaiting means a double-tap
+        // cannot fire two writes.
+        status.addEventListener('click', async () => {
+            if (!pendingClipboardText) return;
+            const text = pendingClipboardText;
+            pendingClipboardText = null;
+            try {
+                await navigator.clipboard.writeText(text);
+                setStatus('Copied to clipboard', 'success');
+            } catch {
+                setStatus('Clipboard unavailable — use Select mode to copy', 'error');
+            }
+        });
+
         async function uploadImage(file) {
             if (!file || !file.type.startsWith('image/')) {
                 setStatus('Please select an image file', 'error');
