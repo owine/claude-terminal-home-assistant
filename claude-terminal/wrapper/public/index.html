@@ -835,6 +835,13 @@
         // port navigator.clipboard does not exist, so a tap that only tried it
         // would fail for the same reason the automatic attempt did, leaving the
         // "always works" last resort unable to ever succeed there.
+        //
+        // VERIFICATION GAP: the ingress (HTTPS) path is verified end to end in a
+        // real browser; the plain-HTTP path is NOT. http://localhost counts as a
+        // secure origin, so a local container cannot reproduce an insecure one —
+        // testing it needs the add-on reached over the LAN by IP. Accepted and
+        // documented (see DOCS.md "Clipboard (OSC 52)"). If you change this
+        // chain, re-check it over http://<host-ip>:7680, not localhost.
         async function tryClipboardWrite(text) {
             // 1. Async Clipboard API — needs HTTPS (ingress) and often a gesture.
             // On an insecure origin navigator.clipboard is undefined, so this
