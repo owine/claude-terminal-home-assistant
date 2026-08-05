@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { planDecset, decodeOsc52 } = require('../public/terminal-mouse.js');
+const { planDecset, planEnforce, decodeOsc52 } = require('../public/terminal-mouse.js');
 
 let passed = 0;
 function test(name, fn) {
@@ -200,6 +200,55 @@ test('accepts a payload exactly at the size cap', () => {
 // app clearing the clipboard via OSC 52 is a legitimate use case.
 test('treats an empty payload as an empty clipboard write', () => {
     assert.deepStrictEqual(decodeOsc52('c;'), { kind: 'write', text: '' });
+});
+
+// --- planEnforce: converge xterm's real tracking state onto the chosen mode ---
+//
+// planDecset alone cannot keep the two in sync. It is fed `selectModeActive`,
+// which flips when the /mouse-mode HTTP response lands, while tmux emits its
+// DECSET down the PTY the instant `tmux set -g mouse on` runs. Those two
+// transports are unordered, so tmux's `CSI ? 1000 h` regularly arrives while
+// the flag still says Select — and gets vetoed. tmux caches its tty mode and
+// never re-sends, so Scroll mode stays dead for the rest of the session.
+//
+// planEnforce is the recovery path: it compares what xterm ACTUALLY has
+// against what the user chose and names the correction. Because it reads real
+// state rather than remembering a decision, it converges no matter which side
+// of the race won.
+
+test('asserts tracking when Scroll mode is chosen but xterm has none', () => {
+    // The regression guard for the vetoed-DECSET race described above.
+    assert.strictEqual(planEnforce('none', false), 'assert');
+});
+
+test('withdraws tracking granted while Select mode is active', () => {
+    assert.strictEqual(planEnforce('drag', true), 'withdraw');
+});
+
+test('does nothing when Select mode already has no tracking', () => {
+    assert.strictEqual(planEnforce('none', true), null);
+});
+
+test('does nothing when Scroll mode already has tracking', () => {
+    assert.strictEqual(planEnforce('drag', false), null);
+});
+
+test('treats every non-none tracking mode as active', () => {
+    for (const mode of ['x10', 'vt200', 'drag', 'any']) {
+        assert.strictEqual(planEnforce(mode, true), 'withdraw', mode);
+        assert.strictEqual(planEnforce(mode, false), null, mode);
+    }
+});
+
+// Infinite-loop guard, and the reason this returns null rather than picking a
+// safe default: the caller runs planEnforce after every parsed write, and acts
+// by writing to the same terminal. If an unreadable state produced an action,
+// that write would re-enter the loop, still read an unreadable state, and act
+// again — forever. Declining to act is the only stable answer.
+test('takes no action on an unrecognized tracking mode', () => {
+    assert.strictEqual(planEnforce(undefined, false), null);
+    assert.strictEqual(planEnforce(undefined, true), null);
+    assert.strictEqual(planEnforce('bogus', true), null);
 });
 
 console.log(`\n${passed} passed`);

@@ -544,44 +544,82 @@
         // key so it cannot collide with xterm.js internals or another add-on.
         const HANDLERS_REGISTERED = Symbol('wrapperMouseHandlers');
 
-        // Every mode change goes through here. Flipping the flag alone only
-        // filters FUTURE requests, so an application that was already granted
-        // tracking (vim launched in Scroll mode) would keep it and selection
-        // would stay broken while the button claimed success. Entering Select
-        // mode therefore actively withdraws tracking. term.write() mutates
-        // xterm's own state only — nothing is sent to the PTY.
-        // ...and leaving Select mode must put back exactly what was withdrawn.
-        // The withdrawal is invisible to tmux: tmux caches which modes it has
-        // already set on the terminal, so after our DECRST it still believes
-        // reporting is on and never re-sends it. Scroll mode would then be dead
-        // — tmux receiving no wheel events — until a page reload. Verified in a
-        // live browser; re-asserting restores tracking (none -> drag).
-        //
-        // Restoring tmux's own request (1002 button-drag + 1006 SGR) rather than
-        // whatever mode happened to be active at withdrawal time: in Scroll mode
-        // the consumer IS tmux, this is exactly what it asks for on a fresh
-        // attach, and reading the live value races with tmux reacting to the
-        // option flip (observed restoring 1000, losing drag reporting).
-        // Encoding modes are never withdrawn, so 1006 is belt-and-braces.
+        // Asserting Scroll mode means asking for tmux's own request (1002
+        // button-drag + 1006 SGR) rather than whatever mode happened to be
+        // active earlier: in Scroll mode the consumer IS tmux, and this is
+        // exactly what it asks for on a fresh attach. Encoding modes are never
+        // withdrawn, so 1006 is belt-and-braces.
+        // term.write() mutates xterm's own state only — nothing reaches the PTY.
         const TMUX_TRACKING_REQUEST = '\x1b[?1002h\x1b[?1006h';
         const WITHDRAW_TRACKING = '\x1b[?9l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l';
-        let trackingWithdrawn = false;
 
-        function setSelectMode(active) {
-            selectModeActive = active;
+        // Consecutive identical corrections that never take effect. Converging
+        // normally alternates correction -> agreement, so repeating the SAME
+        // correction means the write is not landing; keep writing and we spin
+        // on every parsed chunk forever.
+        let lastAction = null;
+        let repeats = 0;
+
+        // Reconcile xterm's ACTUAL tracking state with the selected mode.
+        //
+        // This runs after EVERY parsed write, not just on mode changes, and
+        // that is the whole point. The previous design decided once, at flip
+        // time, and remembered the decision in a `trackingWithdrawn` latch.
+        // It could not work: `selectModeActive` flips when the /mouse-mode HTTP
+        // response lands, while tmux emits its DECSET down the PTY the instant
+        // `tmux set -g mouse on` runs, and nothing orders those two transports.
+        // Driving a real browser showed tmux's `CSI ? 1000 h` and `CSI ? 1002 h`
+        // arriving while the flag still read Select, so the DECSET filter below
+        // vetoed the very sequences that enable Scroll mode — and tmux, which
+        // caches its tty mode, never re-sent them. Scroll mode was dead from the
+        // first toggle, and the latch (sampled after tmux's own DECRSTs had
+        // already landed) recorded 'nothing withdrawn', so the restore path
+        // never fired either.
+        //
+        // Reading real state instead of remembering a decision converges
+        // whichever side of the race wins, and equally repairs divergence
+        // caused by an application rather than by the filter.
+        function enforceTracking() {
             const term = document.getElementById('terminal-frame').contentWindow?.term;
-            if (!term) return;
+            if (!term || !window.TerminalMouse) return;
+
+            let action;
             try {
-                if (active) {
-                    trackingWithdrawn = term.modes.mouseTrackingMode !== 'none';
-                    term.write(WITHDRAW_TRACKING);
-                } else if (trackingWithdrawn) {
-                    trackingWithdrawn = false;
-                    term.write(TMUX_TRACKING_REQUEST);
+                action = window.TerminalMouse.planEnforce(
+                    term.modes?.mouseTrackingMode, selectModeActive);
+            } catch (e) {
+                console.warn('[wrapper] could not read mouse tracking state:', e);
+                return;
+            }
+
+            if (!action) {                  // agreed — the normal resting state
+                lastAction = null;
+                repeats = 0;
+                return;
+            }
+
+            repeats = action === lastAction ? repeats + 1 : 1;
+            lastAction = action;
+            if (repeats > 3) {
+                // Say so once, then stop. A wedged terminal is better than a
+                // write loop firing on every chunk of output.
+                if (repeats === 4) {
+                    console.error(`[wrapper] mouse tracking will not ${action}; giving up`);
+                    setStatus('Mouse mode is stuck — reload the page', 'error');
                 }
+                return;
+            }
+
+            try {
+                term.write(action === 'withdraw' ? WITHDRAW_TRACKING : TMUX_TRACKING_REQUEST);
             } catch (e) {
                 console.warn('[wrapper] could not change mouse tracking:', e);
             }
+        }
+
+        function setSelectMode(active) {
+            selectModeActive = active;
+            enforceTracking();
         }
 
         function registerTerminalHandlers(term) {
@@ -649,6 +687,18 @@
                     }
                     return true;    // consumed either way; xterm has no handler
                 });
+
+                // The convergence loop. onWriteParsed fires once per parsed
+                // write chunk, so any DECSET/DECRST — from tmux, from an
+                // application, or vetoed by the filter above — is reconciled
+                // within the same chunk that carried it.
+                term.onWriteParsed(enforceTracking);
+
+                // And once now: a fresh iframe (ttyd reconnect, PWA update)
+                // arrives with tracking off while selectModeActive may already
+                // be false, and tmux will not re-announce a mode it thinks the
+                // terminal already has.
+                enforceTracking();
 
                 term[HANDLERS_REGISTERED] = true;
             } catch (e) {
