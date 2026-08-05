@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.7.0...v2.7.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* converge mouse tracking instead of deciding once ([#277](https://github.com/owine/claude-terminal-home-assistant/issues/277)) ([faeb728](https://github.com/owine/claude-terminal-home-assistant/commit/faeb7281346021c9c5a26143492fd7074feec12a))
+
 ## [2.7.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.6.5...v2.7.0) (2026-08-05)
 
 
