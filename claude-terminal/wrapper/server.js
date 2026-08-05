@@ -21,6 +21,7 @@ const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const { cacheControlFor } = require('./cache-policy');
 
 const app = express();
 const PORT = process.env.WRAPPER_PORT || 7680;
@@ -225,8 +226,18 @@ const terminalProxy = createProxyMiddleware({
 
 app.use('/terminal', terminalProxy);
 
-// Serve static files (HTML interface) - MUST be after API routes
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve static files (HTML interface) - MUST be after API routes.
+//
+// setHeaders is load-bearing, not a tweak. express.static's default
+// `Cache-Control: public, max-age=0` only invites revalidation; Safari
+// declined it and served a user 2.7.0's terminal-mouse.js against 2.7.1's
+// index.html for a whole release. See cache-policy.js for why bumping
+// CACHE_NAME in sw.js does not cover this.
+app.use(express.static(path.join(__dirname, 'public'), {
+    setHeaders: (res, filePath) => {
+        res.setHeader('Cache-Control', cacheControlFor(filePath));
+    }
+}));
 
 // Multer error handling middleware
 app.use((err, req, res, next) => {
