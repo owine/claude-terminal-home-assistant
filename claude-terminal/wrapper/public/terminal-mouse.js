@@ -73,6 +73,42 @@
         };
     }
 
+    // The tracking modes xterm.js can report via `term.modes.mouseTrackingMode`.
+    // Deliberately a separate list from MOUSE_TRACKING above: that one holds
+    // DECSET numbers seen on the wire, this one holds xterm's collapsed names,
+    // and 'none' is the only value meaning "not tracking".
+    const TRACKING_STATES = new Set(['none', 'x10', 'vt200', 'drag', 'any']);
+
+    // Decide the correction needed to make xterm's ACTUAL mouse tracking match
+    // the mode the user chose. Returns 'withdraw' | 'assert' | null.
+    //
+    // Why this exists, and why planDecset is not enough on its own:
+    // planDecset is fed `selectModeActive`, which flips when the /mouse-mode
+    // HTTP response lands. tmux emits its DECSET down the PTY the moment
+    // `tmux set -g mouse on` runs. Nothing orders those two transports, so
+    // tmux's `CSI ? 1000 h` frequently arrives while the flag still reads
+    // Select — and planDecset vetoes the very sequence that enables Scroll
+    // mode. tmux caches its tty mode (tty_update_mode diffs against it), so it
+    // never re-sends, and Scroll mode stays dead until a page reload.
+    //
+    // The fix is not better timing — it is not deciding once. This function
+    // reads the terminal's real state and names the correction, so the caller
+    // can re-run it after every parsed write and converge regardless of which
+    // side of the race won, and regardless of whether a veto or an application
+    // caused the divergence.
+    //
+    // Returns null for any tracking value it does not recognize. That is a
+    // hard requirement, not caution: the caller acts by writing to the same
+    // terminal it just read, so an action on an unreadable state would
+    // re-enter the loop and act again forever.
+    function planEnforce(mouseTrackingMode, selectMode) {
+        if (!TRACKING_STATES.has(mouseTrackingMode)) return null;
+        const tracking = mouseTrackingMode !== 'none';
+        if (selectMode && tracking) return 'withdraw';
+        if (!selectMode && !tracking) return 'assert';
+        return null;
+    }
+
     // Cap on the size of a single clipboard write, in base64 characters. This
     // bounds one payload only — it is not a rate limit, so a program issuing
     // many under-cap writes in quick succession is unbounded here; throttling
@@ -128,7 +164,7 @@
         }
     }
 
-    const api = { planDecset, decodeOsc52 };
+    const api = { planDecset, planEnforce, decodeOsc52 };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.TerminalMouse = api;
 })(typeof self !== 'undefined' ? self : this);

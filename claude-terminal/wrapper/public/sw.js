@@ -1,4 +1,4 @@
-const CACHE_NAME = 'claude-ha-v3';
+const CACHE_NAME = 'claude-ha-v4';
 const OFFLINE_URL = './offline.html';
 const SHELL_ASSETS = [
     './',
