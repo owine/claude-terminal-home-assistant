@@ -3,7 +3,13 @@
 // Terminal mouse ownership + clipboard decoding — pure logic (no DOM, no xterm,
 // no clipboard access). Shipped to the browser (attaches to window.TerminalMouse)
 // AND required by the Node test harness (module.exports).
-// See docs/superpowers/specs/2026-08-05-terminal-mouse-clipboard-design.md
+//
+// Why this exists: applications request mouse reporting via DECSET, and once
+// xterm.js grants it, native browser text selection stops working. tmux passes
+// an inner application's request straight through, so tmux's own `mouse` option
+// cannot prevent it — the decision has to be made in the browser. Separately,
+// ttyd 1.7.7 registers no OSC 52 handler, so clipboard sequences were silently
+// discarded; decodeOsc52 gives the wrapper one to register.
 (function (root) {
     // DEC private modes that make the terminal report mouse events to the
     // application. 9 = X10 compatibility, 1000 = normal (press/release),
@@ -14,10 +20,24 @@
 
     // Decide what to do with a `CSI ? ... h` (DECSET) sequence.
     //
-    // Returns { veto, replay }:
-    //   veto   - true means suppress xterm.js's default handler
-    //   replay - modes to re-emit because they were batched alongside tracking
-    //            modes and are none of our business (null if there are none)
+    // Returns { veto, replay, tracking } — all three fields are always present:
+    //   veto     - true means this sequence needs handling; see below
+    //   replay   - the NON-tracking modes batched alongside tracking ones, or
+    //              null when the batch was purely tracking modes
+    //   tracking - the tracking modes found, or null when nothing was vetoed
+    //
+    // The caller's two cases, and why they differ:
+    //
+    //   replay === null (pure tracking batch) — suppress the sequence outright.
+    //   replay !== null (mixed batch)         — let the ORIGINAL sequence apply
+    //     unchanged and queue a DECRST for `tracking` instead.
+    //
+    // The mixed case cannot be handled by suppress-and-re-emit. A parser
+    // handler's term.write() ENQUEUES, it does not apply inline, so re-emitting
+    // `1049` (alt screen) after suppressing `1000;1049h` applies the screen
+    // switch AFTER the application's following output has already landed on the
+    // primary buffer. Turning tracking off afterwards is not render-order
+    // sensitive, so the DECRST can safely be queued.
     //
     // Filtering rather than gating all-or-nothing is load-bearing: apps batch
     // modes, e.g. `CSI ? 1000;1002;1006 h`. See the regression guard in
@@ -29,7 +49,7 @@
     // deliberate, on the principle of never vetoing a sequence we don't
     // confidently understand.
     function planDecset(params, selectMode) {
-        const none = { veto: false, replay: null };
+        const none = { veto: false, replay: null, tracking: null };
         if (!selectMode || !Array.isArray(params) || params.length === 0) return none;
 
         const flat = params
@@ -40,11 +60,15 @@
         const rest = flat.filter((p) => !MOUSE_TRACKING.has(p));
         if (rest.length === flat.length) return none;   // nothing to veto
 
-        // Sub-parameters (the `p[0]` flattening above) are discarded on the
-        // replay path too: none of the DEC private modes that can appear
-        // here take sub-parameters, so `[[1049, 2], 1000]` replays as
-        // `[1049]`, not `[[1049, 2]]`.
-        return { veto: true, replay: rest.length > 0 ? rest : null };
+        // Sub-parameters (the `p[0]` flattening above) are discarded on both
+        // returned lists: none of the DEC private modes that can appear here
+        // take sub-parameters, so `[[1049, 2], 1000]` reports `replay: [1049]`,
+        // not `[[1049, 2]]`.
+        return {
+            veto: true,
+            replay: rest.length > 0 ? rest : null,
+            tracking: flat.filter((p) => MOUSE_TRACKING.has(p)),
+        };
     }
 
     // Cap on the size of a single clipboard write, in base64 characters. This
