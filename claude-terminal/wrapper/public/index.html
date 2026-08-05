@@ -550,14 +550,37 @@
         // would stay broken while the button claimed success. Entering Select
         // mode therefore actively withdraws tracking. term.write() mutates
         // xterm's own state only — nothing is sent to the PTY.
+        // ...and leaving Select mode must put back exactly what was withdrawn.
+        // The withdrawal is invisible to tmux: tmux caches which modes it has
+        // already set on the terminal, so after our DECRST it still believes
+        // reporting is on and never re-sends it. Scroll mode would then be dead
+        // — tmux receiving no wheel events — until a page reload. Verified in a
+        // live browser; re-asserting restores tracking (none -> drag).
+        //
+        // Restoring tmux's own request (1002 button-drag + 1006 SGR) rather than
+        // whatever mode happened to be active at withdrawal time: in Scroll mode
+        // the consumer IS tmux, this is exactly what it asks for on a fresh
+        // attach, and reading the live value races with tmux reacting to the
+        // option flip (observed restoring 1000, losing drag reporting).
+        // Encoding modes are never withdrawn, so 1006 is belt-and-braces.
+        const TMUX_TRACKING_REQUEST = '\x1b[?1002h\x1b[?1006h';
+        const WITHDRAW_TRACKING = '\x1b[?9l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l';
+        let trackingWithdrawn = false;
+
         function setSelectMode(active) {
             selectModeActive = active;
-            if (!active) return;
+            const term = document.getElementById('terminal-frame').contentWindow?.term;
+            if (!term) return;
             try {
-                const term = document.getElementById('terminal-frame').contentWindow?.term;
-                term?.write('\x1b[?9l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l');
+                if (active) {
+                    trackingWithdrawn = term.modes.mouseTrackingMode !== 'none';
+                    term.write(WITHDRAW_TRACKING);
+                } else if (trackingWithdrawn) {
+                    trackingWithdrawn = false;
+                    term.write(TMUX_TRACKING_REQUEST);
+                }
             } catch (e) {
-                console.warn('[wrapper] could not withdraw mouse tracking:', e);
+                console.warn('[wrapper] could not change mouse tracking:', e);
             }
         }
 
