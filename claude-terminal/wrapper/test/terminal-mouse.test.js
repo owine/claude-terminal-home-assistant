@@ -30,6 +30,10 @@ test('vetoes any-motion tracking (1003)', () => {
     assert.deepStrictEqual(planDecset([1003], true), { veto: true, replay: null });
 });
 
+test('vetoes X10 tracking (9)', () => {
+    assert.deepStrictEqual(planDecset([9], true), { veto: true, replay: null });
+});
+
 // THE REGRESSION GUARD. An all-or-nothing `params.every(isTracking)` check
 // leaks here, because 1006 (SGR encoding) is not itself a tracking mode.
 // Claude Code sends its modes separately, so a Claude-only manual test passes
@@ -128,6 +132,37 @@ test('rejects non-base64 payloads', () => {
 
 test('rejects non-string input', () => {
     assert.deepStrictEqual(decodeOsc52(null), { kind: 'invalid' });
+});
+
+// Node's Buffer.from(s, 'base64') silently truncates malformed base64
+// (wrong length mod 4, mismatched padding) instead of rejecting it, while
+// the browser's atob() throws. The regex must be the single source of
+// strictness so both environments agree on every accepted input — these
+// would previously decode successfully under Node and diverge from the
+// browser, which is exactly the bug being guarded against here.
+test('rejects base64 whose length is not a multiple of 4', () => {
+    assert.deepStrictEqual(decodeOsc52('c;A'), { kind: 'invalid' });
+    assert.deepStrictEqual(decodeOsc52('c;AAAAA'), { kind: 'invalid' });
+});
+
+test('rejects base64 with padding that does not match the data length', () => {
+    assert.deepStrictEqual(decodeOsc52('c;A='), { kind: 'invalid' });
+    assert.deepStrictEqual(decodeOsc52('c;=='), { kind: 'invalid' });
+});
+
+// Boundary: exactly at the cap must still decode (only strictly-over is
+// rejected). Length must itself be valid base64 (a multiple of 4).
+test('accepts a payload exactly at the size cap', () => {
+    const payload = 'A'.repeat(1000000);
+    const result = decodeOsc52(`c;${payload}`);
+    assert.strictEqual(result.kind, 'write');
+});
+
+// Empty selection payload: deliberately treated as a valid (empty)
+// clipboard write, not 'invalid' — an empty string is valid base64 and an
+// app clearing the clipboard via OSC 52 is a legitimate use case.
+test('treats an empty payload as an empty clipboard write', () => {
+    assert.deepStrictEqual(decodeOsc52('c;'), { kind: 'write', text: '' });
 });
 
 console.log(`\n${passed} passed`);
