@@ -582,10 +582,10 @@
                 // Our own bug must never be able to do that.
                 term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
                     try {
-                        const { veto, replay, tracking } =
+                        const { veto, others, tracking } =
                             window.TerminalMouse.planDecset(params, selectModeActive);
                         if (!veto) return false;           // fall through to xterm.js
-                        if (replay) {
+                        if (others) {
                             // Mixed batch: the other modes are order-sensitive
                             // (1049 switches buffers), and a handler's
                             // term.write() enqueues rather than applying inline.

@@ -20,24 +20,26 @@
 
     // Decide what to do with a `CSI ? ... h` (DECSET) sequence.
     //
-    // Returns { veto, replay, tracking } — all three fields are always present:
+    // Returns { veto, others, tracking } — all three fields are always present:
     //   veto     - true means this sequence needs handling; see below
-    //   replay   - the NON-tracking modes batched alongside tracking ones, or
+    //   others   - the NON-tracking modes batched alongside tracking ones, or
     //              null when the batch was purely tracking modes
     //   tracking - the tracking modes found, or null when nothing was vetoed
     //
     // The caller's two cases, and why they differ:
     //
-    //   replay === null (pure tracking batch) — suppress the sequence outright.
-    //   replay !== null (mixed batch)         — let the ORIGINAL sequence apply
+    //   others === null (pure tracking batch) — suppress the sequence outright.
+    //   others !== null (mixed batch)         — let the ORIGINAL sequence apply
     //     unchanged and queue a DECRST for `tracking` instead.
     //
-    // The mixed case cannot be handled by suppress-and-re-emit. A parser
-    // handler's term.write() ENQUEUES, it does not apply inline, so re-emitting
-    // `1049` (alt screen) after suppressing `1000;1049h` applies the screen
+    // The mixed case cannot be handled by suppressing the sequence and
+    // re-emitting `others`. A parser handler's term.write() ENQUEUES, it does
+    // not apply inline, so a re-emitted `1049` (alt screen) applies the screen
     // switch AFTER the application's following output has already landed on the
-    // primary buffer. Turning tracking off afterwards is not render-order
-    // sensitive, so the DECRST can safely be queued.
+    // primary buffer — verified against the real xterm parser. Hence `others`
+    // is only a signal that the batch is mixed; it is never written back.
+    // Turning tracking off afterwards is not render-order sensitive, so the
+    // DECRST built from `tracking` can safely be queued.
     //
     // Filtering rather than gating all-or-nothing is load-bearing: apps batch
     // modes, e.g. `CSI ? 1000;1002;1006 h`. See the regression guard in
@@ -49,7 +51,7 @@
     // deliberate, on the principle of never vetoing a sequence we don't
     // confidently understand.
     function planDecset(params, selectMode) {
-        const none = { veto: false, replay: null, tracking: null };
+        const none = { veto: false, others: null, tracking: null };
         if (!selectMode || !Array.isArray(params) || params.length === 0) return none;
 
         const flat = params
@@ -62,11 +64,11 @@
 
         // Sub-parameters (the `p[0]` flattening above) are discarded on both
         // returned lists: none of the DEC private modes that can appear here
-        // take sub-parameters, so `[[1049, 2], 1000]` reports `replay: [1049]`,
+        // take sub-parameters, so `[[1049, 2], 1000]` reports `others: [1049]`,
         // not `[[1049, 2]]`.
         return {
             veto: true,
-            replay: rest.length > 0 ? rest : null,
+            others: rest.length > 0 ? rest : null,
             tracking: flat.filter((p) => MOUSE_TRACKING.has(p)),
         };
     }
