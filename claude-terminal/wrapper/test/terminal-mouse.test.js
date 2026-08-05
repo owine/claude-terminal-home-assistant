@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { planDecset } = require('../public/terminal-mouse.js');
+const { planDecset, decodeOsc52 } = require('../public/terminal-mouse.js');
 
 let passed = 0;
 function test(name, fn) {
@@ -89,6 +89,45 @@ test('empty params do not veto', () => {
 
 test('non-numeric params do not veto', () => {
     assert.deepStrictEqual(planDecset(['x'], true), { veto: false, replay: null });
+});
+
+// --- decodeOsc52 ---
+
+test('decodes a base64 clipboard write', () => {
+    const b64 = Buffer.from('hello world').toString('base64');
+    assert.deepStrictEqual(decodeOsc52(`c;${b64}`), { kind: 'write', text: 'hello world' });
+});
+
+test('decodes UTF-8 correctly', () => {
+    const b64 = Buffer.from('café — ünicode ✂').toString('base64');
+    assert.deepStrictEqual(decodeOsc52(`c;${b64}`), { kind: 'write', text: 'café — ünicode ✂' });
+});
+
+test('handles an empty selection parameter', () => {
+    const b64 = Buffer.from('x').toString('base64');
+    assert.deepStrictEqual(decodeOsc52(`;${b64}`), { kind: 'write', text: 'x' });
+});
+
+// SECURITY: honoring a read request would let any process that can write to
+// the terminal exfiltrate the user's system clipboard over the PTY.
+test('refuses clipboard READ requests', () => {
+    assert.deepStrictEqual(decodeOsc52('c;?'), { kind: 'read' });
+});
+
+test('rejects oversized payloads', () => {
+    assert.deepStrictEqual(decodeOsc52('c;' + 'A'.repeat(1000001)), { kind: 'oversize' });
+});
+
+test('rejects a payload with no separator', () => {
+    assert.deepStrictEqual(decodeOsc52('garbage'), { kind: 'invalid' });
+});
+
+test('rejects non-base64 payloads', () => {
+    assert.deepStrictEqual(decodeOsc52('c;not!valid!base64'), { kind: 'invalid' });
+});
+
+test('rejects non-string input', () => {
+    assert.deepStrictEqual(decodeOsc52(null), { kind: 'invalid' });
 });
 
 console.log(`\n${passed} passed`);

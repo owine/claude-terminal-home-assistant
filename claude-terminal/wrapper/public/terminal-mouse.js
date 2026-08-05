@@ -37,7 +37,40 @@
         return { veto: true, replay: rest.length > 0 ? rest : null };
     }
 
-    const api = { planDecset, MOUSE_TRACKING };
+    // Cap on a single clipboard write, in base64 characters. Bounds a runaway
+    // or hostile program hammering the clipboard.
+    const OSC52_MAX = 1000000;
+    const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+    function b64ToBytes(b64) {
+        if (typeof Buffer !== 'undefined') return Uint8Array.from(Buffer.from(b64, 'base64'));
+        return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    }
+
+    // Decode an OSC 52 payload of the form `<selection>;<base64 | '?'>`.
+    // Returns { kind: 'write', text } | { kind: 'read' } | { kind: 'oversize' }
+    //       | { kind: 'invalid' }
+    //
+    // 'read' is reported separately so the caller can refuse it explicitly
+    // rather than by omission — see the security note in the spec.
+    function decodeOsc52(data) {
+        if (typeof data !== 'string') return { kind: 'invalid' };
+        const i = data.indexOf(';');
+        if (i === -1) return { kind: 'invalid' };
+
+        const payload = data.slice(i + 1);
+        if (payload === '?') return { kind: 'read' };
+        if (payload.length > OSC52_MAX) return { kind: 'oversize' };
+        if (!BASE64.test(payload)) return { kind: 'invalid' };
+
+        try {
+            return { kind: 'write', text: new TextDecoder().decode(b64ToBytes(payload)) };
+        } catch {
+            return { kind: 'invalid' };
+        }
+    }
+
+    const api = { planDecset, decodeOsc52, MOUSE_TRACKING };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.TerminalMouse = api;
 })(typeof self !== 'undefined' ? self : this);

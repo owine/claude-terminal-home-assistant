@@ -29,7 +29,7 @@ module.exports = [
         // this adds the CommonJS globals they need for `module.exports`.
         files: ['public/login-link.js', 'public/terminal-mouse.js'],
         languageOptions: {
-            globals: { module: 'writable', exports: 'writable' },
+            globals: { module: 'writable', exports: 'writable', Buffer: 'readonly' },
         },
     },
     {
