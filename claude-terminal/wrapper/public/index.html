@@ -540,6 +540,10 @@
 
         let selectModeActive = true;   // kept in sync with tmux via /mouse-mode
 
+        // Marks a term instance as already wired. A Symbol rather than a string
+        // key so it cannot collide with xterm.js internals or another add-on.
+        const HANDLERS_REGISTERED = Symbol('wrapperMouseHandlers');
+
         // Every mode change goes through here. Flipping the flag alone only
         // filters FUTURE requests, so an application that was already granted
         // tracking (vim launched in Scroll mode) would keep it and selection
@@ -564,7 +568,7 @@
             // would silently leave the veto disabled for the rest of the
             // session. Parser handlers do survive terminal.reset(), so one
             // registration per instance is enough.
-            if (term.__wrapperMouseHandlers) return;
+            if (term[HANDLERS_REGISTERED]) return;
 
             // terminal-mouse.js can fail to load (404 mid-rollout, wrapper
             // restart). Check here rather than discovering it inside a handler.
@@ -623,7 +627,7 @@
                     return true;    // consumed either way; xterm has no handler
                 });
 
-                term.__wrapperMouseHandlers = true;
+                term[HANDLERS_REGISTERED] = true;
             } catch (e) {
                 // No silent no-ops. If we cannot enforce Select mode, say so —
                 // CLAUDE_CODE_DISABLE_MOUSE=1 in run.sh still covers Claude Code.
@@ -802,15 +806,19 @@
         // An EMPTY string is honored rather than discarded: OSC 52 uses it to
         // mean "clear the clipboard", which is a legitimate request. Only a
         // non-string (which decodeOsc52 never produces for a write) is ignored.
-        async function putOnClipboard(text) {
-            if (typeof text !== 'string') return;
-            const done = text === '' ? 'Clipboard cleared' : 'Copied to clipboard';
-
+        // Both write strategies, in order. Shared by the OSC 52 path (no user
+        // activation) and the tap-to-copy path (real activation) — the tap MUST
+        // run this whole chain, not just strategy 1: on the plain HTTP :7680
+        // port navigator.clipboard does not exist, so a tap that only tried it
+        // would fail for the same reason the automatic attempt did, leaving the
+        // "always works" last resort unable to ever succeed there.
+        async function tryClipboardWrite(text) {
             // 1. Async Clipboard API — needs HTTPS (ingress) and often a gesture.
+            // On an insecure origin navigator.clipboard is undefined, so this
+            // throws synchronously and consumes no user activation.
             try {
                 await navigator.clipboard.writeText(text);
-                setStatus(done, 'success');
-                return;
+                return true;
             } catch { /* fall through */ }
 
             // 2. execCommand fallback — the only path that can work on the plain
@@ -827,14 +835,23 @@
                     ta.select();
                     const ok = document.execCommand('copy');
                     ta.remove();
-                    if (ok) {
-                        setStatus(done, 'success');
-                        return;
-                    }
+                    if (ok) return true;
                 } catch { /* fall through */ }
             }
 
-            // 3. Neither worked (no user activation). Stage it behind a tap.
+            return false;
+        }
+
+        async function putOnClipboard(text) {
+            if (typeof text !== 'string') return;
+            const done = text === '' ? 'Clipboard cleared' : 'Copied to clipboard';
+
+            if (await tryClipboardWrite(text)) {
+                setStatus(done, 'success');
+                return;
+            }
+
+            // Neither strategy worked (no user activation). Stage it behind a tap.
             // The `persistent` argument is load-bearing: setStatus auto-clears
             // after 5s otherwise, and the affordance would disappear while
             // pendingClipboardText is still set — an invisible staged copy,
@@ -856,10 +873,9 @@
             if (pendingClipboardText === null) return;
             const text = pendingClipboardText;
             pendingClipboardText = null;
-            try {
-                await navigator.clipboard.writeText(text);
+            if (await tryClipboardWrite(text)) {
                 setStatus(text === '' ? 'Clipboard cleared' : 'Copied to clipboard', 'success');
-            } catch {
+            } else {
                 setStatus('Clipboard unavailable — use Select mode to copy', 'error');
             }
         });
