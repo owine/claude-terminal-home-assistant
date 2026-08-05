@@ -66,6 +66,23 @@ test('lets icons be cached for a day, and never immutably', () => {
     }
 });
 
+// Matching by extension alone would hand a day-long cache to any image added
+// later — a screenshot, a diagram, a logo — purely because it ends in .png.
+// The cacheable set is the icons specifically, so anything else falls through
+// to revalidation and a new asset cannot inherit a cacheable policy by
+// accident. This is the fail-safe direction: unrecognized means correct but
+// slower, never stale.
+test('caches icons specifically, not every image', () => {
+    assert.strictEqual(cacheControlFor('/opt/wrapper/public/screenshot.png'), 'no-cache');
+    assert.strictEqual(cacheControlFor('/opt/wrapper/public/logo.svg'), 'no-cache');
+    assert.strictEqual(cacheControlFor('/opt/wrapper/public/diagram.webp'), 'no-cache');
+});
+
+// A name that merely contains "icon" is not an icon.
+test('requires the icon prefix rather than a substring match', () => {
+    assert.strictEqual(cacheControlFor('/opt/wrapper/public/favicon-fallback.png'), 'no-cache');
+});
+
 // Anything unrecognized revalidates too. New shell assets get added over time
 // and the safe default for an unknown file is correctness, not speed.
 test('defaults unknown file types to revalidation', () => {

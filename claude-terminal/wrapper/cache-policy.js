@@ -33,15 +33,26 @@ const ICON_CACHE = 'public, max-age=86400';
 // these filenames carry no content hash, so a long or immutable policy would
 // leave an updated icon permanently unable to reach anyone already holding the
 // old one.
-const CACHEABLE_EXTENSIONS = new Set(['.png', '.svg', '.ico', '.webp']);
+const IMAGE_EXTENSIONS = new Set(['.png', '.svg', '.ico', '.webp']);
 
-// Everything else — HTML, JS, JSON, and anything unrecognized — revalidates.
-// Defaulting unknown types to correctness rather than speed matters because
-// shell assets get added over time and a new one must not silently inherit a
-// cacheable policy.
+// Matching on extension alone is not enough. It would hand the same day-long
+// cache to any image added later — a screenshot, a diagram, a logo — purely
+// because of how it is named, which is the opposite of the fail-safe default
+// this module is built around. Requiring the `icon` prefix as well means the
+// cacheable set is the PWA icons specifically (icon.svg, icon-192.png,
+// icon-maskable-512.png, ...), and every future asset falls through to
+// revalidation until someone deliberately decides otherwise.
+const ICON_PREFIX = 'icon';
+
+// Everything else — HTML, JS, JSON, non-icon images, and anything
+// unrecognized — revalidates. Defaulting to correctness rather than speed
+// matters because shell assets get added over time, and the failure mode of
+// guessing wrong is a user silently running stale code.
 function cacheControlFor(filePath) {
-    const ext = path.extname(String(filePath)).toLowerCase();
-    return CACHEABLE_EXTENSIONS.has(ext) ? ICON_CACHE : REVALIDATE;
+    const name = path.basename(String(filePath)).toLowerCase();
+    const ext = path.extname(name);
+    const isIcon = IMAGE_EXTENSIONS.has(ext) && name.startsWith(ICON_PREFIX);
+    return isIcon ? ICON_CACHE : REVALIDATE;
 }
 
 module.exports = { cacheControlFor };
