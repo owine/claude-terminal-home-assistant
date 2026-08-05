@@ -470,6 +470,7 @@
     </div>
 
     <script src="login-link.js"></script>
+    <script src="terminal-mouse.js"></script>
     <script>
         let ttydPort = 7681;
         let uploadDir = '/data/images';
@@ -498,21 +499,164 @@
 
             // Poll for xterm.js term instance to be ready in the iframe
             iframe.addEventListener('load', () => {
+                let termFound = false;
                 const checkTerm = setInterval(() => {
                     try {
                         if (iframe.contentWindow?.term) {
                             clearInterval(checkTerm);
+                            termFound = true;
                             const indicator = document.getElementById('term-indicator');
                             indicator.style.background = '#4ec9b0';
                             indicator.title = 'Terminal ready';
+                            registerTerminalHandlers(iframe.contentWindow.term);
                         }
                     } catch (e) {
                         // iframe not accessible yet
                     }
                 }, 500);
-                // Stop polling after 30s
-                setTimeout(() => clearInterval(checkTerm), 30000);
+                // Stop polling after 30s. Say so if we gave up: without the
+                // terminal instance the mouse handlers were never registered,
+                // so text selection in full-screen apps is unprotected.
+                setTimeout(() => {
+                    clearInterval(checkTerm);
+                    if (!termFound) {
+                        console.error('[wrapper] terminal instance never appeared; handlers not registered');
+                        setStatus('Terminal did not finish loading — reload the page', 'error');
+                    }
+                }, 30000);
             });
+        }
+
+        // ========================================
+        // Mouse ownership — the browser decides
+        // ========================================
+        //
+        // Applications (Claude Code, vim, htop, ...) request mouse reporting via
+        // DECSET. Once granted, xterm.js forwards mouse events to the PTY and
+        // native browser text selection stops working. tmux passes an inner
+        // app's request straight through, so tmux's own `mouse` option cannot
+        // prevent this. We decline at the terminal instead of negotiating with
+        // every application.
+
+        let selectModeActive = true;   // kept in sync with tmux via /mouse-mode
+
+        // Marks a term instance as already wired. A Symbol rather than a string
+        // key so it cannot collide with xterm.js internals or another add-on.
+        const HANDLERS_REGISTERED = Symbol('wrapperMouseHandlers');
+
+        // Every mode change goes through here. Flipping the flag alone only
+        // filters FUTURE requests, so an application that was already granted
+        // tracking (vim launched in Scroll mode) would keep it and selection
+        // would stay broken while the button claimed success. Entering Select
+        // mode therefore actively withdraws tracking. term.write() mutates
+        // xterm's own state only — nothing is sent to the PTY.
+        // ...and leaving Select mode must put back exactly what was withdrawn.
+        // The withdrawal is invisible to tmux: tmux caches which modes it has
+        // already set on the terminal, so after our DECRST it still believes
+        // reporting is on and never re-sends it. Scroll mode would then be dead
+        // — tmux receiving no wheel events — until a page reload. Verified in a
+        // live browser; re-asserting restores tracking (none -> drag).
+        //
+        // Restoring tmux's own request (1002 button-drag + 1006 SGR) rather than
+        // whatever mode happened to be active at withdrawal time: in Scroll mode
+        // the consumer IS tmux, this is exactly what it asks for on a fresh
+        // attach, and reading the live value races with tmux reacting to the
+        // option flip (observed restoring 1000, losing drag reporting).
+        // Encoding modes are never withdrawn, so 1006 is belt-and-braces.
+        const TMUX_TRACKING_REQUEST = '\x1b[?1002h\x1b[?1006h';
+        const WITHDRAW_TRACKING = '\x1b[?9l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l';
+        let trackingWithdrawn = false;
+
+        function setSelectMode(active) {
+            selectModeActive = active;
+            const term = document.getElementById('terminal-frame').contentWindow?.term;
+            if (!term) return;
+            try {
+                if (active) {
+                    trackingWithdrawn = term.modes.mouseTrackingMode !== 'none';
+                    term.write(WITHDRAW_TRACKING);
+                } else if (trackingWithdrawn) {
+                    trackingWithdrawn = false;
+                    term.write(TMUX_TRACKING_REQUEST);
+                }
+            } catch (e) {
+                console.warn('[wrapper] could not change mouse tracking:', e);
+            }
+        }
+
+        function registerTerminalHandlers(term) {
+            // The guard lives on the terminal INSTANCE, not on this page. The
+            // iframe reloads (ttyd reconnect, PWA update) and hands us a fresh
+            // `term` with no handlers; a page-scoped flag would still be set and
+            // would silently leave the veto disabled for the rest of the
+            // session. Parser handlers do survive terminal.reset(), so one
+            // registration per instance is enough.
+            if (term[HANDLERS_REGISTERED]) return;
+
+            // terminal-mouse.js can fail to load (404 mid-rollout, wrapper
+            // restart). Check here rather than discovering it inside a handler.
+            if (!window.TerminalMouse) {
+                console.error('[wrapper] terminal-mouse.js did not load');
+                setStatus('Text selection may not work in full-screen apps', 'error');
+                return;
+            }
+
+            try {
+                // Both handler bodies are individually guarded. An exception
+                // thrown out of a parser handler escapes xterm's write pipeline
+                // from a timer callback — it cannot be caught by the
+                // term.write() caller and it stops terminal output entirely.
+                // Our own bug must never be able to do that.
+                term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
+                    try {
+                        const { veto, others, tracking } =
+                            window.TerminalMouse.planDecset(params, selectModeActive);
+                        if (!veto) return false;           // fall through to xterm.js
+                        if (others) {
+                            // Mixed batch: the other modes are order-sensitive
+                            // (1049 switches buffers), and a handler's
+                            // term.write() enqueues rather than applying inline.
+                            // So let the original sequence apply in order and
+                            // queue a DECRST for just the tracking subset —
+                            // turning tracking off is not order-sensitive.
+                            term.write(`\x1b[?${tracking.join(';')}l`);
+                            return false;
+                        }
+                        return true;                       // pure tracking: suppress
+                    } catch (e) {
+                        console.error('[wrapper] DECSET filter failed:', e);
+                        return false;   // never swallow a sequence over our own bug
+                    }
+                });
+
+                term.parser.registerOscHandler(52, (data) => {
+                    try {
+                        const result = window.TerminalMouse.decodeOsc52(data);
+                        if (result.kind === 'write') {
+                            putOnClipboard(result.text)
+                                .catch((e) => console.error('[wrapper] clipboard:', e));
+                        } else if (result.kind === 'oversize') {
+                            setStatus('Copy too large for the browser clipboard', 'error');
+                        } else if (result.kind === 'invalid') {
+                            console.warn('[wrapper] malformed OSC 52 payload');
+                        }
+                        // 'read' stays silent deliberately — it is refused
+                        // because proxying it would leak the user's clipboard to
+                        // any process on the PTY, and advertising the refusal
+                        // just spams the status bar.
+                    } catch (e) {
+                        console.error('[wrapper] OSC 52 handling failed:', e);
+                    }
+                    return true;    // consumed either way; xterm has no handler
+                });
+
+                term[HANDLERS_REGISTERED] = true;
+            } catch (e) {
+                // No silent no-ops. If we cannot enforce Select mode, say so —
+                // CLAUDE_CODE_DISABLE_MOUSE=1 in run.sh still covers Claude Code.
+                console.error('[wrapper] mouse handler registration failed:', e);
+                setStatus('Text selection may not work in full-screen apps', 'error');
+            }
         }
 
         // ========================================
@@ -586,9 +730,12 @@
                 const res = await fetch('mouse-mode');
                 const data = await res.json();
                 mouseMode = data.enabled;
+                setSelectMode(!mouseMode);
                 updateMouseButton();
             } catch (e) {
-                console.log('Could not sync mouse mode:', e);
+                // Not cosmetic: selectModeActive governs the DECSET veto, so a
+                // failed sync leaves the browser's idea of the mode guessing.
+                console.warn('Could not sync mouse mode:', e);
             }
         }
 
@@ -610,6 +757,7 @@
                 const res = await fetch('mouse-mode', { method: 'POST' });
                 const data = await res.json();
                 mouseMode = data.enabled;
+                setSelectMode(!mouseMode);
                 updateMouseButton();
                 setStatus(mouseMode ? 'Mouse: scroll mode (select text disabled)' : 'Mouse: select mode (scroll with Ctrl+B, [)', 'success');
             } catch (err) {
@@ -649,13 +797,118 @@
         const fileInput = document.getElementById('file-input');
         const dropZone = document.getElementById('drop-zone');
 
+        // Text staged by putOnClipboard() when no automated path was allowed;
+        // completed by the status-bar click handler below, on a real user
+        // gesture. Declared here because setStatus() clears it.
+        let pendingClipboardText = null;
+
         function setStatus(message, type = '', persistent = false) {
+            // Any new message replaces a staged clipboard copy. Otherwise an
+            // unrelated message (an upload, say) would hide the "tap here"
+            // affordance while the staged text survived, and a later click on
+            // ordinary status text would paste stale content. Callers that
+            // stage a copy set these two AFTER calling setStatus.
+            pendingClipboardText = null;
+            status.style.cursor = '';
+
             status.textContent = message;
             status.className = type;
             if (message && !persistent) {
                 setTimeout(() => setStatus(''), 5000);
             }
         }
+
+        // ========================================
+        // Clipboard delivery (OSC 52)
+        // ========================================
+
+        // Put text on the user's clipboard, degrading through three strategies.
+        // The bug this whole change fixes was a clipboard path that silently did
+        // nothing for years, so the last step must always be user-visible.
+        //
+        // An EMPTY string is honored rather than discarded: OSC 52 uses it to
+        // mean "clear the clipboard", which is a legitimate request. Only a
+        // non-string (which decodeOsc52 never produces for a write) is ignored.
+        // Both write strategies, in order. Shared by the OSC 52 path (no user
+        // activation) and the tap-to-copy path (real activation) — the tap MUST
+        // run this whole chain, not just strategy 1: on the plain HTTP :7680
+        // port navigator.clipboard does not exist, so a tap that only tried it
+        // would fail for the same reason the automatic attempt did, leaving the
+        // "always works" last resort unable to ever succeed there.
+        //
+        // VERIFICATION GAP: the ingress (HTTPS) path is verified end to end in a
+        // real browser; the plain-HTTP path is NOT. http://localhost counts as a
+        // secure origin, so a local container cannot reproduce an insecure one —
+        // testing it needs the add-on reached over the LAN by IP. Accepted and
+        // documented (see DOCS.md "Clipboard (OSC 52)"). If you change this
+        // chain, re-check it over http://<host-ip>:7680, not localhost.
+        async function tryClipboardWrite(text) {
+            // 1. Async Clipboard API — needs HTTPS (ingress) and often a gesture.
+            // On an insecure origin navigator.clipboard is undefined, so this
+            // throws synchronously and consumes no user activation.
+            try {
+                await navigator.clipboard.writeText(text);
+                return true;
+            } catch { /* fall through */ }
+
+            // 2. execCommand fallback — the only path that can work on the plain
+            // HTTP :7680 port. It copies the current SELECTION, so it needs a
+            // selection to exist: hence the offscreen textarea. Skipped for an
+            // empty write, which execCommand cannot express.
+            if (text !== '') {
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.cssText = 'position:fixed;top:-9999px;opacity:0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    const ok = document.execCommand('copy');
+                    ta.remove();
+                    if (ok) return true;
+                } catch { /* fall through */ }
+            }
+
+            return false;
+        }
+
+        async function putOnClipboard(text) {
+            if (typeof text !== 'string') return;
+            const done = text === '' ? 'Clipboard cleared' : 'Copied to clipboard';
+
+            if (await tryClipboardWrite(text)) {
+                setStatus(done, 'success');
+                return;
+            }
+
+            // Neither strategy worked (no user activation). Stage it behind a tap.
+            // The `persistent` argument is load-bearing: setStatus auto-clears
+            // after 5s otherwise, and the affordance would disappear while
+            // pendingClipboardText is still set — an invisible staged copy,
+            // exactly the silent-failure class this change exists to remove.
+            // Order matters: setStatus() clears the staging fields, so they are
+            // set after it. The cursor makes the text read as a control (see
+            // the #status[style*="cursor: pointer"] rule).
+            setStatus(text === ''
+                ? 'Tap here to clear the clipboard'
+                : 'Copied — tap here to place on clipboard', 'success', true);
+            pendingClipboardText = text;
+            status.style.cursor = 'pointer';
+        }
+
+        // Clearing pendingClipboardText before awaiting means a double-tap
+        // cannot fire two writes. The null check (rather than a truthiness
+        // check) keeps a staged empty "clear the clipboard" write working.
+        status.addEventListener('click', async () => {
+            if (pendingClipboardText === null) return;
+            const text = pendingClipboardText;
+            pendingClipboardText = null;
+            if (await tryClipboardWrite(text)) {
+                setStatus(text === '' ? 'Clipboard cleared' : 'Copied to clipboard', 'success');
+            } else {
+                setStatus('Clipboard unavailable — use Select mode to copy', 'error');
+            }
+        });
 
         async function uploadImage(file) {
             if (!file || !file.type.startsWith('image/')) {

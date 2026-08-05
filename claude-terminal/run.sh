@@ -114,6 +114,13 @@ export ANTHROPIC_HOME="/data"
 # GitHub CLI persistent configuration
 export GH_CONFIG_DIR="/data/.config/gh"
 
+# Claude Code enables terminal mouse tracking for its own click/drag selection,
+# which suppresses native browser text selection. The wrapper vetoes tracking at
+# the terminal layer (see wrapper/public/terminal-mouse.js); this is defense in
+# depth for the case where that registration fails. Undocumented upstream env
+# var - verified against the 2.1.222 binary, deliberately NOT load-bearing.
+export CLAUDE_CODE_DISABLE_MOUSE=1
+
 # Persistent package paths (HIGHEST PRIORITY)
 # Include $HOME/.local/bin for Claude Code native components
 export PATH="/data/packages/bin:/data/packages/python/venv/bin:$HOME/.local/bin:$PATH"

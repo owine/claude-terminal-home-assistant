@@ -422,7 +422,11 @@ See [PERSISTENT_PACKAGES.md](PERSISTENT_PACKAGES.md) for complete guide.
 - **Interactive menu**: Choose between new, continue, or resume sessions
 - **GitHub CLI**: Pre-installed with persistent authentication
 - **tmux integration**: Sessions persist across browser refreshes
-- **Mouse support**: Optional tmux mouse mode (configurable)
+- **Mouse modes**: Toggle with the header button
+  - **Select (default)**: mouse drag selects text in the browser, in every app including Claude Code and vim; selected text is copied to the clipboard automatically. Scroll history with the terminal's scrollbar or `Ctrl+B, [`
+  - **Scroll**: the mouse wheel scrolls tmux history and apps receive mouse events; browser selection is disabled. Text copied in tmux copy-mode reaches the browser clipboard via OSC 52
+- **Clipboard (OSC 52)**: tmux runs with `set-clipboard on`, so any process on the terminal can place text on your system clipboard. This was always the intent of that setting, but the sequence was inert until the wrapper gained a handler — it is now live. Every such copy shows a "Copied to clipboard" message in the header, so it is always visible. Clipboard *read* requests are refused, so no process can exfiltrate your clipboard through the terminal
+  - **Over the direct `:7680` port, expect an extra tap.** Browsers only expose the clipboard API on a secure origin, so on plain HTTP the header shows **"Copied — tap here to place on clipboard"** and the copy completes when you click it. Through Home Assistant ingress (HTTPS) copies land automatically. Selecting text with the mouse is unaffected either way — that path copies through the terminal itself, not the clipboard API
 
 ## Troubleshooting
 
