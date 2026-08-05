@@ -422,7 +422,9 @@ See [PERSISTENT_PACKAGES.md](PERSISTENT_PACKAGES.md) for complete guide.
 - **Interactive menu**: Choose between new, continue, or resume sessions
 - **GitHub CLI**: Pre-installed with persistent authentication
 - **tmux integration**: Sessions persist across browser refreshes
-- **Mouse support**: Optional tmux mouse mode (configurable)
+- **Mouse modes**: Toggle with the header button
+  - **Select (default)**: mouse drag selects text in the browser, in every app including Claude Code and vim; selected text is copied to the clipboard automatically. Scroll history with the terminal's scrollbar or `Ctrl+B, [`
+  - **Scroll**: the mouse wheel scrolls tmux history and apps receive mouse events; browser selection is disabled. Text copied in tmux copy-mode reaches the browser clipboard via OSC 52
 
 ## Troubleshooting
 
