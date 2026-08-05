@@ -470,6 +470,7 @@
     </div>
 
     <script src="login-link.js"></script>
+    <script src="terminal-mouse.js"></script>
     <script>
         let ttydPort = 7681;
         let uploadDir = '/data/images';
@@ -505,6 +506,7 @@
                             const indicator = document.getElementById('term-indicator');
                             indicator.style.background = '#4ec9b0';
                             indicator.title = 'Terminal ready';
+                            registerTerminalHandlers(iframe.contentWindow.term);
                         }
                     } catch (e) {
                         // iframe not accessible yet
@@ -513,6 +515,50 @@
                 // Stop polling after 30s
                 setTimeout(() => clearInterval(checkTerm), 30000);
             });
+        }
+
+        // ========================================
+        // Mouse ownership — the browser decides
+        // ========================================
+        //
+        // Applications (Claude Code, vim, htop, ...) request mouse reporting via
+        // DECSET. Once granted, xterm.js forwards mouse events to the PTY and
+        // native browser text selection stops working. tmux passes an inner
+        // app's request straight through, so tmux's own `mouse` option cannot
+        // prevent this. We decline at the terminal instead of negotiating with
+        // every application.
+
+        let selectModeActive = true;   // kept in sync with tmux via /mouse-mode
+        let handlersRegistered = false;
+
+        function registerTerminalHandlers(term) {
+            // Parser handlers survive terminal.reset() (ttyd's reconnect path),
+            // so this only needs to run once per iframe load.
+            if (handlersRegistered) return;
+
+            try {
+                term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
+                    const { veto, replay } = window.TerminalMouse.planDecset(params, selectModeActive);
+                    if (!veto) return false;               // fall through to xterm.js
+                    if (replay) term.write(`\x1b[?${replay.join(';')}h`);
+                    return true;                           // suppress
+                });
+
+                term.parser.registerOscHandler(52, (data) => {
+                    const result = window.TerminalMouse.decodeOsc52(data);
+                    if (result.kind === 'write') putOnClipboard(result.text);
+                    // 'read' is consumed and dropped on purpose: proxying it
+                    // would leak the user's clipboard to any process on the PTY.
+                    return true;
+                });
+
+                handlersRegistered = true;
+            } catch (e) {
+                // No silent no-ops. If we cannot enforce Select mode, say so —
+                // CLAUDE_CODE_DISABLE_MOUSE=1 in run.sh still covers Claude Code.
+                console.error('[wrapper] mouse handler registration failed:', e);
+                setStatus('Text selection may not work in full-screen apps', 'error');
+            }
         }
 
         // ========================================
@@ -586,6 +632,7 @@
                 const res = await fetch('mouse-mode');
                 const data = await res.json();
                 mouseMode = data.enabled;
+                selectModeActive = !mouseMode;
                 updateMouseButton();
             } catch (e) {
                 console.log('Could not sync mouse mode:', e);
@@ -610,6 +657,7 @@
                 const res = await fetch('mouse-mode', { method: 'POST' });
                 const data = await res.json();
                 mouseMode = data.enabled;
+                selectModeActive = !mouseMode;
                 updateMouseButton();
                 setStatus(mouseMode ? 'Mouse: scroll mode (select text disabled)' : 'Mouse: select mode (scroll with Ctrl+B, [)', 'success');
             } catch (err) {
