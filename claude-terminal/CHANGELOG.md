@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.7.3](https://github.com/owine/claude-terminal-home-assistant/compare/v2.7.2...v2.7.3) (2026-08-06)
+
+
+### Bug Fixes
+
+* let tmux own the mouse instead of negotiating with it ([#281](https://github.com/owine/claude-terminal-home-assistant/issues/281)) ([a49819f](https://github.com/owine/claude-terminal-home-assistant/commit/a49819f6b447b4a4f5c3e79d9346a35ab683001b))
+
 ## [2.7.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.7.1...v2.7.2) (2026-08-05)
 
 
