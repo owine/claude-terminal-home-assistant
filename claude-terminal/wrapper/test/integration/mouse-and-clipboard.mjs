@@ -146,6 +146,36 @@ async function run(engine, mode, url) {
     cancelCopyMode();
     await sleep(500);
 
+    // 2b. When an APPLICATION holds the mouse, tmux must hand the wheel to it
+    //     rather than taking it for copy-mode. This is what makes the wheel
+    //     scroll the Claude Code session instead of the shell output from
+    //     before Claude Code started, and it is why no CLAUDE_CODE_DISABLE_MOUSE
+    //     is set. Simulated with a bare DECSET rather than by running Claude
+    //     Code, which would need credentials; what is being pinned here is
+    //     tmux's routing, not any one application's behaviour.
+    typeLine(String.raw`printf '\033[?1000h\033[?1006h'`);
+    await sleep(1000);
+    check('an application can take the mouse from tmux', tmux('#{mouse_any_flag}'), '1');
+    const posBefore = Number(tmux('#{scroll_position}') || 0);
+    await page.mouse.move(400, 300);
+    for (let i = 0; i < 3; i++) {
+        await page.mouse.wheel(0, -120);
+        await sleep(150);
+    }
+    await sleep(500);
+    check('tmux forwards the wheel to the application instead of scrolling itself',
+        { inMode: tmux('#{pane_in_mode}'), moved: Number(tmux('#{scroll_position}') || 0) !== posBefore },
+        (v) => v.inMode === '0' && v.moved === false);
+    // The stand-in "application" is a bash prompt, so the wheel reports tmux
+    // just forwarded arrived as keystrokes and are sitting in its input buffer.
+    // Clear the line before typing, or the release command is appended to
+    // escape-sequence garbage and never runs.
+    sendKeys('C-c');
+    await sleep(300);
+    typeLine(String.raw`printf '\033[?1000l\033[?1006l'`);
+    await sleep(800);
+    check('releasing the mouse gives tmux the wheel back', tmux('#{mouse_any_flag}'), '0');
+
     // 3. Selection must still be possible WHILE mouse reporting is on. This is
     //    the capability the deleted DECSET veto existed to provide, now handled
     //    by xterm's own force-selection modifier: Option on macOS (which needs

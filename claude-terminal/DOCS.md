@@ -422,7 +422,7 @@ See [PERSISTENT_PACKAGES.md](PERSISTENT_PACKAGES.md) for complete guide.
 - **Interactive menu**: Choose between new, continue, or resume sessions
 - **GitHub CLI**: Pre-installed with persistent authentication
 - **tmux integration**: Sessions persist across browser refreshes
-- **Mouse and selection**: mouse reporting is on by default, so the wheel (and a touch swipe) scrolls tmux history in every app, including Claude Code and vim
+- **Mouse and selection**: mouse reporting is on by default, so the wheel (and a touch swipe) always scrolls something sensible. Inside a full-screen program that wants the mouse - Claude Code, vim, htop - the wheel scrolls *that program's* view, the same content `PgUp`/`PgDn` moves through. At a shell prompt, where nothing has claimed the mouse, it scrolls tmux history instead. Nothing detects which program is running; tmux routes the wheel to whoever asked for it
   - **Drag to select**: a plain drag selects in tmux and copies to your clipboard automatically when you release
   - **Shift+drag** (**Option+drag** on macOS) selects using the terminal's own selection instead, which reaches into the full scrollback and also copies automatically. Use it when a full-screen app wants the mouse for itself
   - Turn reporting off with the `tmux_mouse_mode` option, or live with **Prefix + m**. With it off the wheel sends arrow keys to full-screen apps; scroll with `Ctrl+B, [`
