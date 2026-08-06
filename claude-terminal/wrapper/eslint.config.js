@@ -27,9 +27,18 @@ module.exports = [
         // Dual-target UMD modules: shipped to the browser AND required by the Node test harness.
         // The public/**/*.js block above already grants browser + serviceworker globals;
         // this adds the CommonJS globals they need for `module.exports`.
-        files: ['public/login-link.js', 'public/terminal-mouse.js'],
+        files: ['public/login-link.js', 'public/terminal-clipboard.js'],
         languageOptions: {
             globals: { module: 'writable', exports: 'writable', Buffer: 'readonly' },
+        },
+    },
+    {
+        // Browser-driving integration test: ESM, Node globals, not run by CI.
+        files: ['test/integration/**/*.mjs'],
+        languageOptions: {
+            ecmaVersion: 2022,
+            sourceType: 'module',
+            globals: { ...globals.node },
         },
     },
     {
