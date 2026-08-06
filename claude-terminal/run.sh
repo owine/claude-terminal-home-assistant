@@ -114,11 +114,13 @@ export ANTHROPIC_HOME="/data"
 # GitHub CLI persistent configuration
 export GH_CONFIG_DIR="/data/.config/gh"
 
-# Claude Code enables terminal mouse tracking for its own click/drag selection,
-# which suppresses native browser text selection. The wrapper vetoes tracking at
-# the terminal layer (see wrapper/public/terminal-mouse.js); this is defense in
-# depth for the case where that registration fails. Undocumented upstream env
-# var - verified against the 2.1.222 binary, deliberately NOT load-bearing.
+# Keep Claude Code from requesting mouse tracking of its own. This is now
+# LOAD-BEARING, not defense in depth: tmux ORs an inner application's request
+# into the outer terminal's mode, and its WheelUpPane binding forwards the wheel
+# to the application whenever mouse_any_flag is set. If Claude Code took the
+# mouse, the wheel would stop scrolling tmux history in exactly the application
+# this add-on exists to run. Undocumented upstream env var - verified against
+# the 2.1.222 binary.
 export CLAUDE_CODE_DISABLE_MOUSE=1
 
 # Persistent package paths (HIGHEST PRIORITY)
@@ -158,14 +160,19 @@ PROFILE_EOF
 
         # Apply tmux mouse mode setting from configuration
         local tmux_mouse_mode
-        tmux_mouse_mode=$(bashio::config 'tmux_mouse_mode' 'false')
+        tmux_mouse_mode=$(bashio::config 'tmux_mouse_mode' 'true')
 
-        if [ "$tmux_mouse_mode" = "true" ]; then
-            sed -i 's/set -g mouse off/set -g mouse on/' "$data_home/.tmux.conf"
-            bashio::log.info "  - tmux mouse mode: enabled (use Shift+select to copy text)"
-        else
+        # Only an explicit "false" disables it. Testing for "true" instead would
+        # silently disable the mouse whenever bashio::config returns nothing --
+        # which is exactly what happens when the Supervisor API is unreachable,
+        # and it produced a container with mouse off despite the default being
+        # on. The safe direction for a missing value is the documented default.
+        if [ "$tmux_mouse_mode" = "false" ]; then
             sed -i 's/set -g mouse on/set -g mouse off/' "$data_home/.tmux.conf"
-            bashio::log.info "  - tmux mouse mode: disabled (normal text selection enabled)"
+            bashio::log.info "  - tmux mouse mode: disabled (no wheel scrolling; Ctrl+B, [ to scroll)"
+        else
+            sed -i 's/set -g mouse off/set -g mouse on/' "$data_home/.tmux.conf"
+            bashio::log.info "  - tmux mouse mode: enabled (wheel scrolls, drag copies; Shift/Option+drag for terminal selection)"
         fi
 
         bashio::log.info "  - tmux configuration installed"

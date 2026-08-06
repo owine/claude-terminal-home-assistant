@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "lint": "eslint .",
-    "test": "node test/login-link.test.js && node test/terminal-mouse.test.js && node test/cache-policy.test.js"
+    "test": "node test/login-link.test.js && node test/terminal-clipboard.test.js && node test/cache-policy.test.js"
   },
   "keywords": [
     "claude",

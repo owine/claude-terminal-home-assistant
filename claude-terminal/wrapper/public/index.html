@@ -329,11 +329,6 @@
             color: white;
         }
 
-        .ctrl-btn.mouse-active {
-            background: #007acc;
-            border-color: #007acc;
-            color: white;
-        }
 
         #paste-input {
             background: #1e1e1e;
@@ -413,7 +408,6 @@
             <button class="ctrl-btn" data-input="\x1b[B" title="Down Arrow">&darr;</button>
             <button class="ctrl-btn" data-input="\x1b[C" title="Right Arrow">&rarr;</button>
             <button class="ctrl-btn" data-input="\r" title="Enter / Return">Enter</button>
-            <button class="ctrl-btn" id="mouse-toggle" title="Toggle mouse mode: OFF = select text, ON = scroll history">&#x1f5b1; Select</button>
 
             <!-- Paste input bar -->
             <input type="text" id="paste-input" placeholder="Type or paste here..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send">
@@ -470,7 +464,7 @@
     </div>
 
     <script src="login-link.js"></script>
-    <script src="terminal-mouse.js"></script>
+    <script src="terminal-clipboard.js"></script>
     <script>
         let ttydPort = 7681;
         let uploadDir = '/data/images';
@@ -528,148 +522,59 @@
         }
 
         // ========================================
-        // Mouse ownership — the browser decides
+        // Terminal wiring — tmux owns the mouse
         // ========================================
         //
-        // Applications (Claude Code, vim, htop, ...) request mouse reporting via
-        // DECSET. Once granted, xterm.js forwards mouse events to the PTY and
-        // native browser text selection stops working. tmux passes an inner
-        // app's request straight through, so tmux's own `mouse` option cannot
-        // prevent this. We decline at the terminal instead of negotiating with
-        // every application.
-
-        let selectModeActive = true;   // kept in sync with tmux via /mouse-mode
+        // The browser makes no decision about mouse reporting. tmux does,
+        // via its `mouse` option, and xterm simply honours the DECSET that
+        // arrives on the PTY.
+        //
+        // This used to be a negotiation: the wrapper vetoed applications'
+        // DECSET requests so text selection kept working, then reconciled the
+        // result against a flag driven by an HTTP endpoint. Those two inputs
+        // travelled over unordered transports and raced, which wedged mouse
+        // mode until a page reload across three releases. Selection while
+        // reporting is on is now xterm's own job — see FORCE_SELECTION below.
+        //
+        // All that is left here is registering the OSC 52 handler, because
+        // ttyd 1.7.7 has none and would otherwise discard clipboard writes.
 
         // Marks a term instance as already wired. A Symbol rather than a string
         // key so it cannot collide with xterm.js internals or another add-on.
-        const HANDLERS_REGISTERED = Symbol('wrapperMouseHandlers');
-
-        // Asserting Scroll mode means asking for tmux's own request (1002
-        // button-drag + 1006 SGR) rather than whatever mode happened to be
-        // active earlier: in Scroll mode the consumer IS tmux, and this is
-        // exactly what it asks for on a fresh attach. Encoding modes are never
-        // withdrawn, so 1006 is belt-and-braces.
-        // term.write() mutates xterm's own state only — nothing reaches the PTY.
-        const TMUX_TRACKING_REQUEST = '\x1b[?1002h\x1b[?1006h';
-        const WITHDRAW_TRACKING = '\x1b[?9l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l';
-
-        // Consecutive identical corrections that never take effect. Converging
-        // normally alternates correction -> agreement, so repeating the SAME
-        // correction means the write is not landing; keep writing and we spin
-        // on every parsed chunk forever.
-        let lastAction = null;
-        let repeats = 0;
-
-        // Reconcile xterm's ACTUAL tracking state with the selected mode.
-        //
-        // This runs after EVERY parsed write, not just on mode changes, and
-        // that is the whole point. The previous design decided once, at flip
-        // time, and remembered the decision in a `trackingWithdrawn` latch.
-        // It could not work: `selectModeActive` flips when the /mouse-mode HTTP
-        // response lands, while tmux emits its DECSET down the PTY the instant
-        // `tmux set -g mouse on` runs, and nothing orders those two transports.
-        // Driving a real browser showed tmux's `CSI ? 1000 h` and `CSI ? 1002 h`
-        // arriving while the flag still read Select, so the DECSET filter below
-        // vetoed the very sequences that enable Scroll mode — and tmux, which
-        // caches its tty mode, never re-sent them. Scroll mode was dead from the
-        // first toggle, and the latch (sampled after tmux's own DECRSTs had
-        // already landed) recorded 'nothing withdrawn', so the restore path
-        // never fired either.
-        //
-        // Reading real state instead of remembering a decision converges
-        // whichever side of the race wins, and equally repairs divergence
-        // caused by an application rather than by the filter.
-        function enforceTracking() {
-            const term = document.getElementById('terminal-frame').contentWindow?.term;
-            if (!term || !window.TerminalMouse) return;
-
-            let action;
-            try {
-                action = window.TerminalMouse.planEnforce(
-                    term.modes?.mouseTrackingMode, selectModeActive);
-            } catch (e) {
-                console.warn('[wrapper] could not read mouse tracking state:', e);
-                return;
-            }
-
-            if (!action) {                  // agreed — the normal resting state
-                lastAction = null;
-                repeats = 0;
-                return;
-            }
-
-            repeats = action === lastAction ? repeats + 1 : 1;
-            lastAction = action;
-            if (repeats > 3) {
-                // Say so once, then stop. A wedged terminal is better than a
-                // write loop firing on every chunk of output.
-                if (repeats === 4) {
-                    console.error(`[wrapper] mouse tracking will not ${action}; giving up`);
-                    setStatus('Mouse mode is stuck — reload the page', 'error');
-                }
-                return;
-            }
-
-            try {
-                term.write(action === 'withdraw' ? WITHDRAW_TRACKING : TMUX_TRACKING_REQUEST);
-            } catch (e) {
-                console.warn('[wrapper] could not change mouse tracking:', e);
-            }
-        }
-
-        function setSelectMode(active) {
-            selectModeActive = active;
-            enforceTracking();
-        }
+        const HANDLERS_REGISTERED = Symbol('wrapperTerminalHandlers');
 
         function registerTerminalHandlers(term) {
             // The guard lives on the terminal INSTANCE, not on this page. The
             // iframe reloads (ttyd reconnect, PWA update) and hands us a fresh
             // `term` with no handlers; a page-scoped flag would still be set and
-            // would silently leave the veto disabled for the rest of the
-            // session. Parser handlers do survive terminal.reset(), so one
+            // would silently leave clipboard writes unhandled for the rest of
+            // the session. Parser handlers survive terminal.reset(), so one
             // registration per instance is enough.
             if (term[HANDLERS_REGISTERED]) return;
 
-            // terminal-mouse.js can fail to load (404 mid-rollout, wrapper
+            // terminal-clipboard.js can fail to load (404 mid-rollout, wrapper
             // restart). Check here rather than discovering it inside a handler.
-            if (!window.TerminalMouse) {
-                console.error('[wrapper] terminal-mouse.js did not load');
-                setStatus('Text selection may not work in full-screen apps', 'error');
+            if (!window.TerminalClipboard) {
+                console.error('[wrapper] terminal-clipboard.js did not load');
+                setStatus('Clipboard copies from the terminal will not work', 'error');
                 return;
             }
 
             try {
-                // Both handler bodies are individually guarded. An exception
-                // thrown out of a parser handler escapes xterm's write pipeline
-                // from a timer callback — it cannot be caught by the
-                // term.write() caller and it stops terminal output entirely.
-                // Our own bug must never be able to do that.
-                term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
-                    try {
-                        const { veto, others, tracking } =
-                            window.TerminalMouse.planDecset(params, selectModeActive);
-                        if (!veto) return false;           // fall through to xterm.js
-                        if (others) {
-                            // Mixed batch: the other modes are order-sensitive
-                            // (1049 switches buffers), and a handler's
-                            // term.write() enqueues rather than applying inline.
-                            // So let the original sequence apply in order and
-                            // queue a DECRST for just the tracking subset —
-                            // turning tracking off is not order-sensitive.
-                            term.write(`\x1b[?${tracking.join(';')}l`);
-                            return false;
-                        }
-                        return true;                       // pure tracking: suppress
-                    } catch (e) {
-                        console.error('[wrapper] DECSET filter failed:', e);
-                        return false;   // never swallow a sequence over our own bug
-                    }
-                });
+                // Let a held modifier force xterm's own selection even while an
+                // application has mouse reporting on. On macOS that is Option
+                // and it requires this option; every other platform uses Shift
+                // and gets it unconditionally. This single line replaces the
+                // entire DECSET veto that used to live here.
+                term.options.macOptionClickForcesSelection = true;
 
+                // Guarded because an exception thrown out of a parser handler
+                // escapes xterm's write pipeline from a timer callback — it
+                // cannot be caught by the term.write() caller and it stops
+                // terminal output entirely. Our own bug must never do that.
                 term.parser.registerOscHandler(52, (data) => {
                     try {
-                        const result = window.TerminalMouse.decodeOsc52(data);
+                        const result = window.TerminalClipboard.decodeOsc52(data);
                         if (result.kind === 'write') {
                             putOnClipboard(result.text)
                                 .catch((e) => console.error('[wrapper] clipboard:', e));
@@ -688,24 +593,12 @@
                     return true;    // consumed either way; xterm has no handler
                 });
 
-                // The convergence loop. onWriteParsed fires once per parsed
-                // write chunk, so any DECSET/DECRST — from tmux, from an
-                // application, or vetoed by the filter above — is reconciled
-                // within the same chunk that carried it.
-                term.onWriteParsed(enforceTracking);
-
-                // And once now: a fresh iframe (ttyd reconnect, PWA update)
-                // arrives with tracking off while selectModeActive may already
-                // be false, and tmux will not re-announce a mode it thinks the
-                // terminal already has.
-                enforceTracking();
-
                 term[HANDLERS_REGISTERED] = true;
             } catch (e) {
-                // No silent no-ops. If we cannot enforce Select mode, say so —
-                // CLAUDE_CODE_DISABLE_MOUSE=1 in run.sh still covers Claude Code.
-                console.error('[wrapper] mouse handler registration failed:', e);
-                setStatus('Text selection may not work in full-screen apps', 'error');
+                // No silent no-ops: if clipboard delivery is not wired up, a
+                // copy inside the terminal will vanish with no explanation.
+                console.error('[wrapper] terminal handler registration failed:', e);
+                setStatus('Clipboard copies from the terminal will not work', 'error');
             }
         }
 
@@ -767,56 +660,6 @@
                 }
             });
         });
-
-        // ========================================
-        // Mouse Mode Toggle
-        // ========================================
-
-        const mouseToggle = document.getElementById('mouse-toggle');
-        let mouseMode = false; // Start assuming off, will sync on load
-
-        async function syncMouseMode() {
-            try {
-                const res = await fetch('mouse-mode');
-                const data = await res.json();
-                mouseMode = data.enabled;
-                setSelectMode(!mouseMode);
-                updateMouseButton();
-            } catch (e) {
-                // Not cosmetic: selectModeActive governs the DECSET veto, so a
-                // failed sync leaves the browser's idea of the mode guessing.
-                console.warn('Could not sync mouse mode:', e);
-            }
-        }
-
-        function updateMouseButton() {
-            if (mouseMode) {
-                mouseToggle.textContent = '\u{1F5B1} Scroll';
-                mouseToggle.title = 'Mouse mode: ON (scroll history) — click to switch to text selection';
-                mouseToggle.classList.add('mouse-active');
-            } else {
-                mouseToggle.textContent = '\u{1F5B1} Select';
-                mouseToggle.title = 'Mouse mode: OFF (select text) — click to switch to scroll history';
-                mouseToggle.classList.remove('mouse-active');
-            }
-        }
-
-        mouseToggle.addEventListener('pointerdown', async (e) => {
-            e.preventDefault();
-            try {
-                const res = await fetch('mouse-mode', { method: 'POST' });
-                const data = await res.json();
-                mouseMode = data.enabled;
-                setSelectMode(!mouseMode);
-                updateMouseButton();
-                setStatus(mouseMode ? 'Mouse: scroll mode (select text disabled)' : 'Mouse: select mode (scroll with Ctrl+B, [)', 'success');
-            } catch (err) {
-                setStatus('Failed to toggle mouse mode', 'error');
-            }
-        });
-
-        // Sync initial state after terminal loads
-        syncMouseMode();
 
         // Paste input bar
         const pasteInput = document.getElementById('paste-input');

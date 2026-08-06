@@ -1,9 +1,9 @@
-const CACHE_NAME = 'claude-ha-v4';
+const CACHE_NAME = 'claude-ha-v5';
 const OFFLINE_URL = './offline.html';
 const SHELL_ASSETS = [
     './',
     './login-link.js',
-    './terminal-mouse.js',
+    './terminal-clipboard.js',
     OFFLINE_URL,
     './manifest.json',
     './icon-192.png',
