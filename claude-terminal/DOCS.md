@@ -168,7 +168,7 @@ mapping cannot be disabled without forking the add-on.
 | `auto_launch_claude` | `true` | Automatically start Claude when opening the terminal |
 | `dangerously_skip_permissions` | `false` | Run Claude with unrestricted file access ⚠️ |
 | `enable_ha_mcp` | `true` | Enable Home Assistant MCP server integration |
-| `tmux_mouse_mode` | `true` | Mouse reporting: the wheel scrolls and a drag selects. Set `false` to disable it entirely (the wheel then sends arrow keys to full-screen apps). Flip it live with **Prefix + m** |
+| `tmux_mouse_mode` | `true` | Mouse reporting: the wheel scrolls and a drag selects. Set `false` to disable it entirely (the wheel then sends arrow keys to full-screen apps). Flip it live with **Prefix + m**. **Changed in 2.7.3** — this defaulted to `false` before, so if you never set it, the mouse became active on upgrade |
 | `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |

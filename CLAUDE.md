@@ -81,21 +81,30 @@ ruff check                                                # Python (tools/)
 - **Bumping `CACHE_NAME` is not enough on its own.** It invalidates the *service worker* cache only; the browser's HTTP cache sits underneath and is untouched by it. `cache-policy.js` sends `no-cache` for the shell so assets revalidate. Without that, Safari served a user 2.7.0 JavaScript against 2.7.1 HTML for an entire release
 
 ### Mouse ownership — do not re-litigate
-**tmux is the sole authority over mouse reporting. The browser must not arbitrate it.**
 
-An earlier design had the wrapper veto applications' DECSET requests to keep text
-selection working, reconciled against a flag driven by an HTTP endpoint. The flag
-arrives on a `fetch` response and tmux's DECSET on the PTY — unordered transports —
-so the veto regularly ate the sequences that enabled scrolling, and tmux caches its
-tty mode and never re-sends. It shipped broken through three releases.
+**Rule: tmux is the sole authority over mouse reporting. The browser must not arbitrate it.**
 
-- Selection while reporting is on is xterm's job: `macOptionClickForcesSelection`
-  (Option on macOS, Shift elsewhere). Set on the terminal in `index.html`
-- The wheel goes to whoever asked for the mouse. **Do not** set
-  `CLAUDE_CODE_DISABLE_MOUSE` — that suppresses Claude Code's request, so tmux takes
-  the wheel and scrolls pane history instead of the Claude Code session
-- `tmux_mouse_mode` and `Prefix + m` are the only controls. Both are tmux-side, where
-  nothing can race them
+Why the obvious alternative fails:
+
+1. An application asks for the mouse with a DECSET on the PTY
+2. To keep text selection working, the wrapper used to veto that request
+3. The veto was gated on a flag set by the `/mouse-mode` HTTP response
+4. Nothing orders an HTTP response against PTY bytes, so the veto ate the sequences that enabled scrolling
+5. tmux caches its tty mode, so it never re-sent them — leaving mouse mode dead until a page reload
+6. It shipped broken through three releases before the design was replaced
+
+What replaced it, and what not to undo:
+
+| do | instead of |
+|---|---|
+| let xterm's `macOptionClickForcesSelection` handle selection while reporting is on (Option on macOS, Shift elsewhere) | vetoing applications' DECSET |
+| let tmux route the wheel to whoever asked for the mouse | detecting which program is running |
+| change `tmux_mouse_mode`, or `Prefix + m` for a live flip | adding a browser-side control |
+
+Never set `CLAUDE_CODE_DISABLE_MOUSE`. It suppresses Claude Code's mouse request,
+which is exactly what routes the wheel to the session — with it set, tmux takes the
+wheel and scrolls pane history instead. This was a real regression in 2.7.3, fixed
+in 2.7.4.
 
 ## Conventions
 
