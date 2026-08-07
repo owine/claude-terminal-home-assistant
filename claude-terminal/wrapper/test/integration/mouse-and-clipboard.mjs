@@ -300,22 +300,31 @@ async function run(engine, mode, url) {
     const delivered = await waitFor(unreadNow);
     check('a plain drag copies through tmux and reaches the browser', delivered, true);
 
+    await wrapper.evaluate('document.getElementById("clipboard-btn").click()');
+
     if (engine === chromium) {
-        await wrapper.evaluate('document.getElementById("clipboard-btn").click()');
-        await sleep(400);
+        // Poll the clipboard rather than sleeping. The click handler clears the
+        // indicator SYNCHRONOUSLY and then awaits the write, so a cleared
+        // indicator is not evidence the write finished -- waiting on it would
+        // just be a sleep with extra steps.
+        //
         // Gated on `delivered`, and that gate is load-bearing. With tmux's mouse
         // off the same drag becomes an xterm selection, which ttyd auto-copies
         // to the clipboard -- so an ungated readback saw digits and passed while
         // tmux had delivered nothing. A negative control caught it. Reading the
         // clipboard only proves something copied, never who copied it.
-        const dragged = delivered
-            ? await wrapper.evaluate('navigator.clipboard.readText()')
-            : '(tmux delivered nothing; clipboard content proves nothing)';
+        let dragged = '(never read)';
+        if (delivered) {
+            await waitFor(async () => {
+                dragged = await wrapper.evaluate('navigator.clipboard.readText()');
+                return dragged !== SEED_TEXT && /\d/.test(dragged);
+            });
+        } else {
+            dragged = '(tmux delivered nothing; clipboard content proves nothing)';
+        }
         check('the dragged text is what landed on the clipboard', dragged,
             (t) => delivered && typeof t === 'string' && /\d/.test(t) && t !== SEED_TEXT);
     } else {
-        await wrapper.evaluate('document.getElementById("clipboard-btn").click()');
-        await sleep(400);
         console.log('skip  - drag-copy readback (no clipboard-read permission in WebKit)');
     }
     cancelCopyMode();
@@ -359,9 +368,8 @@ async function run(engine, mode, url) {
     // of the same text; the assertion is about the indicator being clearable,
     // which is the part a user can get stuck on.
     await wrapper.evaluate('document.getElementById("clipboard-btn").click()');
-    await sleep(600);
     check('clicking the clipboard button clears the unread indicator',
-        await unread(), false);
+        await waitFor(async () => !(await unread())), true);
     check('acknowledging resets the accessible name and clears the announcement',
         await wrapper.evaluate(`JSON.stringify({
             label: document.getElementById('clipboard-btn').getAttribute('aria-label'),
