@@ -31,6 +31,16 @@ docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
 # Run locally (7680 = web UI/ingress, 7681 = internal ttyd), then test the web UI
 docker run -p 7680:7680 -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
 curl -X GET http://localhost:7680/
+
+# Integration test: real browsers against a real tmux. NOT part of `npm test` and
+# NOT run by CI (needs a container and browser engines). It covers the wiring
+# between browser, xterm.js, ttyd and tmux that unit tests cannot see - every
+# mouse/clipboard bug of 2.7.0-2.7.4 lived there and passed CI. Runs both WebKit
+# and Chromium, against the direct port AND an ingress-shaped harness.
+docker run -d --name ctp -p 7680:7680 -p 7681:7681 local/claude-terminal-prowine
+mkdir -p /tmp/pw && (cd /tmp/pw && npm i playwright && npx playwright install webkit chromium)
+CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \
+  node claude-terminal/wrapper/test/integration/mouse-and-clipboard.mjs
 ```
 
 ### Linting (run from repo root)
@@ -53,12 +63,12 @@ ruff check                                                # Python (tools/)
 - **run.sh** — Startup script: health check → environment init → tools → services → terminal
 - **scripts/** — Modular credential management scripts
 - **ha-mcp/** — Home Assistant MCP server with locked dependencies (`pyproject.toml` + `uv.lock`)
-- **wrapper/** — Express.js server (port 7680): image uploads, terminal proxy, mouse mode toggle
+- **wrapper/** — Express.js server (port 7680): image uploads, terminal proxy, OSC 52 clipboard delivery
   - **public/** — HTML interface, PWA assets (manifest, service worker, icons, offline fallback)
 
 ### Key Components
 1. **Web Terminal** — ttyd (v1.7.7) browser-based terminal
-2. **Wrapper Service** — Express.js handling UI, WebSocket proxy to ttyd, image uploads, mouse toggle
+2. **Wrapper Service** — Express.js handling UI, WebSocket proxy to ttyd, image uploads, clipboard button
 3. **Credential Management** — Persistent auth storage in `/data/.config/claude/` with 600 permissions
 4. **Package Management** — Persistent installation via `persist-install` to `/data/packages/`
 5. **Home Assistant MCP** — Pre-installed ha-mcp server with locked dependencies
@@ -68,6 +78,24 @@ ruff check                                                # Python (tools/)
 - **WebSocket pathRewrite** is required: `'^/terminal': ''` — without it, ttyd rejects with "illegal ws path"
 - **Middleware order matters**: API routes → terminal proxy → static files → error handler
 - **PWA cache version** (`CACHE_NAME` in `sw.js`) must be manually bumped when cached assets change
+- **Bumping `CACHE_NAME` is not enough on its own.** It invalidates the *service worker* cache only; the browser's HTTP cache sits underneath and is untouched by it. `cache-policy.js` sends `no-cache` for the shell so assets revalidate. Without that, Safari served a user 2.7.0 JavaScript against 2.7.1 HTML for an entire release
+
+### Mouse ownership — do not re-litigate
+**tmux is the sole authority over mouse reporting. The browser must not arbitrate it.**
+
+An earlier design had the wrapper veto applications' DECSET requests to keep text
+selection working, reconciled against a flag driven by an HTTP endpoint. The flag
+arrives on a `fetch` response and tmux's DECSET on the PTY — unordered transports —
+so the veto regularly ate the sequences that enabled scrolling, and tmux caches its
+tty mode and never re-sends. It shipped broken through three releases.
+
+- Selection while reporting is on is xterm's job: `macOptionClickForcesSelection`
+  (Option on macOS, Shift elsewhere). Set on the terminal in `index.html`
+- The wheel goes to whoever asked for the mouse. **Do not** set
+  `CLAUDE_CODE_DISABLE_MOUSE` — that suppresses Claude Code's request, so tmux takes
+  the wheel and scrolls pane history instead of the Claude Code session
+- `tmux_mouse_mode` and `Prefix + m` are the only controls. Both are tmux-side, where
+  nothing can race them
 
 ## Conventions
 
