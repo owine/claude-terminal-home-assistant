@@ -96,6 +96,11 @@ async function waitFor(predicate, { timeout = 6000, interval = 150 } = {}) {
 // 1000 = press/release, 1006 = SGR encoding: exactly what Claude Code asks for.
 const APP_TAKES_MOUSE = String.raw`printf '\033[?1000h\033[?1006h'`;
 const APP_RELEASES_MOUSE = String.raw`printf '\033[?1000l\033[?1006l'`;
+
+// Seeds a known value on the clipboard so a stale one cannot be mistaken for a
+// fresh copy. Base64 of SEED_TEXT.
+const SEED_TEXT = 'SEED-NOT-A-DRAG';
+const SEED_CLIPBOARD = String.raw`printf '\033]52;c;U0VFRC1OT1QtQS1EUkFH\007'`;
 const TERM = 'document.getElementById("terminal-frame").contentWindow.term';
 
 // Leave the pane at a plain shell prompt with plenty of scrollback.
@@ -164,6 +169,24 @@ async function run(engine, mode, url) {
     await page.goto(url, { waitUntil: 'load' });
     const wrapper = await wrapperFrame(page);
     await sleep(2500);
+
+    // 0. The shell must be served with revalidation headers. cache-policy.js is
+    //    unit-tested, but nothing there proves it is wired into express.static
+    //    -- and an unwired policy is exactly the failure that shipped 2.7.0
+    //    JavaScript against 2.7.1 HTML for a whole release. Assert on the
+    //    response the browser actually receives, through whichever path it took.
+    const base = wrapper.url().replace(/[^/]*$/, '');
+    const cacheControl = async (path) =>
+        (await fetch(base + path)).headers.get('cache-control');
+    check('the HTML shell is served with revalidation',
+        await cacheControl(''), 'no-cache');
+    check('scripts are served with revalidation',
+        await cacheControl('terminal-clipboard.js'), 'no-cache');
+    check('the service worker is served with revalidation',
+        await cacheControl('sw.js'), 'no-cache');
+    check('icons stay cacheable, and never immutably',
+        await cacheControl('icon-192.png'),
+        (v) => v === 'public, max-age=86400');
 
     // Coordinates come from the terminal's own box, not fixed page positions:
     // under ingress the wrapper sits inside another iframe, so the same page
@@ -244,6 +267,58 @@ async function run(engine, mode, url) {
     await sleep(500);
     check(`${modifier}+drag selects real text while tracking is on`,
         await wrapper.evaluate(`${TERM}.getSelection()`), (s) => /\d/.test(s || ''));
+
+    // 3b. The PRIMARY gesture, and the one this suite was missing: a plain drag
+    //     with no modifier. tmux takes it, enters copy-mode, and its
+    //     MouseDragEnd1Pane binding runs copy-selection-and-cancel, which emits
+    //     OSC 52 to the browser. Every link in that chain was tested in
+    //     isolation and none of it was ever tested as the thing a user does.
+    //
+    //     Seed the clipboard first so a stale value cannot be mistaken for a
+    //     successful drag-copy.
+    if (engine === chromium) {
+        await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    }
+    const unreadNow = () => wrapper.evaluate(
+        '!!document.getElementById("clipboard-btn")?.classList.contains("has-copy")');
+
+    typeLine(SEED_CLIPBOARD);
+    await waitFor(unreadNow);
+    await wrapper.evaluate('document.getElementById("clipboard-btn").click()');
+    // Wait for the indicator to actually clear, do not assume the click did it.
+    // The seed's OSC 52 can land AFTER the click, leaving the indicator raised
+    // and letting the drag check below pass without a drag -- observed as a
+    // spurious pass in one of the four combinations under a negative control.
+    check('fixture: the clipboard indicator starts clear before the drag',
+        await waitFor(async () => !(await unreadNow())), true);
+
+    await page.mouse.move(left.x, left.y);
+    await page.mouse.down();
+    await page.mouse.move(left.x + 128, left.y + 100, { steps: 15 });
+    await page.mouse.up();
+
+    const delivered = await waitFor(unreadNow);
+    check('a plain drag copies through tmux and reaches the browser', delivered, true);
+
+    if (engine === chromium) {
+        await wrapper.evaluate('document.getElementById("clipboard-btn").click()');
+        await sleep(400);
+        // Gated on `delivered`, and that gate is load-bearing. With tmux's mouse
+        // off the same drag becomes an xterm selection, which ttyd auto-copies
+        // to the clipboard -- so an ungated readback saw digits and passed while
+        // tmux had delivered nothing. A negative control caught it. Reading the
+        // clipboard only proves something copied, never who copied it.
+        const dragged = delivered
+            ? await wrapper.evaluate('navigator.clipboard.readText()')
+            : '(tmux delivered nothing; clipboard content proves nothing)';
+        check('the dragged text is what landed on the clipboard', dragged,
+            (t) => delivered && typeof t === 'string' && /\d/.test(t) && t !== SEED_TEXT);
+    } else {
+        await wrapper.evaluate('document.getElementById("clipboard-btn").click()');
+        await sleep(400);
+        console.log('skip  - drag-copy readback (no clipboard-read permission in WebKit)');
+    }
+    cancelCopyMode();
 
     // 4. OSC 52 still reaches the browser clipboard. The handler changed files
     //    in this refactor, so "unchanged" needs proving, not asserting.
