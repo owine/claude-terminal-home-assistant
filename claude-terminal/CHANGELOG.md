@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.7.4](https://github.com/owine/claude-terminal-home-assistant/compare/v2.7.3...v2.7.4) (2026-08-07)
+
+
+### Bug Fixes
+
+* announce clipboard copies on a button instead of in the status bar ([#284](https://github.com/owine/claude-terminal-home-assistant/issues/284)) ([4adab2b](https://github.com/owine/claude-terminal-home-assistant/commit/4adab2b47de12453434d2e789068ae12decd3a87))
+* let the wheel scroll the program that owns the mouse ([#283](https://github.com/owine/claude-terminal-home-assistant/issues/283)) ([f781563](https://github.com/owine/claude-terminal-home-assistant/commit/f781563af49a4b6cb7b1436aafc53143359ca19f))
+
 ## [2.7.3](https://github.com/owine/claude-terminal-home-assistant/compare/v2.7.2...v2.7.3) (2026-08-06)
 
 
