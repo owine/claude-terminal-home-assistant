@@ -19,6 +19,12 @@ concurrency:
 env:
   ARCHITECTURES: '["amd64", "aarch64"]'
   IMAGE_NAME: claude-terminal-prowine
+  # docker/build-push-action (wrapped by the HA builder action) uploads a
+  # .dockerbuild build record as a workflow artifact on every build. They are
+  # never read, two are produced per run, and they sit for the 90-day default
+  # retention -- 673 of them had accumulated. Job-level env reaches composite
+  # action steps, so this switches them off at the source.
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
 
 permissions:
   contents: read
