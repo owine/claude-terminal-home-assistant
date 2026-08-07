@@ -95,6 +95,62 @@
             transition: all 0.2s ease;
         }
 
+        /* Available to assistive technology, absent from the visual layout.
+           clip-rect rather than display:none or visibility:hidden, both of
+           which remove the element from the accessibility tree entirely. */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        /* Clipboard button. Replaces the status-text notification for copies:
+           that text auto-cleared after five seconds, so a copy the user was not
+           looking at vanished with no trace. An indicator persists until it is
+           acknowledged. */
+        #clipboard-btn {
+            position: relative;
+        }
+
+        #clipboard-badge {
+            display: none;
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4ec9b0;
+            box-shadow: 0 0 0 2px #007acc;
+        }
+
+        #clipboard-btn.has-copy #clipboard-badge {
+            display: block;
+        }
+
+        /* One-shot flash on arrival, so a copy is noticeable without stealing
+           focus. The class is removed on animationend; the badge is what
+           persists. */
+        #clipboard-btn.flash {
+            animation: clipboard-flash 0.45s ease-in-out 2;
+        }
+
+        @keyframes clipboard-flash {
+            0%, 100% { background: #007acc; }
+            50%      { background: #4ec9b0; }
+        }
+
+        /* Honour a reduced-motion preference: keep the badge, drop the pulse. */
+        @media (prefers-reduced-motion: reduce) {
+            #clipboard-btn.flash { animation: none; }
+        }
+
         #status.success {
             color: #4ec9b0;
         }
@@ -107,9 +163,6 @@
             opacity: 0.8;
         }
 
-        #status[style*="cursor: pointer"] {
-            user-select: all;
-        }
 
         #terminal-container {
             flex: 1;
@@ -329,7 +382,6 @@
             color: white;
         }
 
-
         #paste-input {
             background: #1e1e1e;
             color: #ccc;
@@ -416,6 +468,17 @@
             <!-- Status and existing buttons -->
             <span id="term-indicator" style="width: 8px; height: 8px; border-radius: 50%; background: #f48771; flex-shrink: 0;" title="Terminal loading..."></span>
             <span id="status"></span>
+            <button id="clipboard-btn" class="header-btn" title="Nothing copied yet"
+                    aria-label="Clipboard: nothing copied yet">
+                <span aria-hidden="true">&#128203;</span>
+                <span id="clipboard-badge" aria-hidden="true"></span>
+            </button>
+            <!-- The badge and the flash are both visual only, so the arrival of
+                 a copy would otherwise be undetectable without sight. A polite
+                 live region announces it without stealing focus mid-task. It is
+                 separate from the button because changing a focused element's
+                 own label is not reliably re-announced. -->
+            <span id="clipboard-announcer" class="sr-only" role="status" aria-live="polite"></span>
             <button id="voice-btn" class="header-btn" title="Voice Input">
                 <span>&#127908;</span>
             </button>
@@ -694,16 +757,16 @@
         // completed by the status-bar click handler below, on a real user
         // gesture. Declared here because setStatus() clears it.
         let pendingClipboardText = null;
+        const clipboardBtn = document.getElementById('clipboard-btn');
+        const clipboardAnnouncer = document.getElementById('clipboard-announcer');
 
         function setStatus(message, type = '', persistent = false) {
-            // Any new message replaces a staged clipboard copy. Otherwise an
-            // unrelated message (an upload, say) would hide the "tap here"
-            // affordance while the staged text survived, and a later click on
-            // ordinary status text would paste stale content. Callers that
-            // stage a copy set these two AFTER calling setStatus.
-            pendingClipboardText = null;
-            status.style.cursor = '';
-
+            // Deliberately does NOT touch pendingClipboardText any more. It used
+            // to clear it, because the staged copy and its "tap here" affordance
+            // both lived in this one status line and an unrelated message would
+            // orphan the text. The staged copy now belongs to the clipboard
+            // button, which owns its own lifetime -- clearing it from here would
+            // leave the button lit with nothing behind it.
             status.textContent = message;
             status.className = type;
             if (message && !persistent) {
@@ -765,41 +828,70 @@
             return false;
         }
 
+        // Announce a copy on the clipboard button rather than in the status bar.
+        //
+        // The status text auto-cleared after five seconds, so a copy that
+        // arrived while the user was reading the terminal disappeared with no
+        // trace and no way to retrieve it. The button's indicator persists
+        // until acknowledged, which is the whole point of moving it.
+        //
+        // The text is staged even when the automatic write already succeeded.
+        // On a secure origin (ingress) it has; on the plain :7680 port
+        // navigator.clipboard does not exist and the click is the only path
+        // that can work. Staging in both cases means the button behaves
+        // identically either way, and a click is at worst a harmless re-write.
         async function putOnClipboard(text) {
             if (typeof text !== 'string') return;
-            const done = text === '' ? 'Clipboard cleared' : 'Copied to clipboard';
-
-            if (await tryClipboardWrite(text)) {
-                setStatus(done, 'success');
-                return;
-            }
-
-            // Neither strategy worked (no user activation). Stage it behind a tap.
-            // The `persistent` argument is load-bearing: setStatus auto-clears
-            // after 5s otherwise, and the affordance would disappear while
-            // pendingClipboardText is still set — an invisible staged copy,
-            // exactly the silent-failure class this change exists to remove.
-            // Order matters: setStatus() clears the staging fields, so they are
-            // set after it. The cursor makes the text read as a control (see
-            // the #status[style*="cursor: pointer"] rule).
-            setStatus(text === ''
-                ? 'Tap here to clear the clipboard'
-                : 'Copied — tap here to place on clipboard', 'success', true);
             pendingClipboardText = text;
-            status.style.cursor = 'pointer';
+            markClipboardUnread(text);
+            // Try the automatic path anyway: when it works the text is already
+            // on the clipboard and the button is pure notification.
+            await tryClipboardWrite(text);
         }
 
-        // Clearing pendingClipboardText before awaiting means a double-tap
+        function markClipboardUnread(text) {
+            clipboardBtn.classList.add('has-copy');
+            const label = text === ''
+                ? 'Clipboard clear staged — click to apply'
+                : 'Copied — click to place on your clipboard';
+            clipboardBtn.title = label;
+            // aria-label as well as title: title is announced inconsistently
+            // and is undiscoverable by touch, and the icon is aria-hidden, so
+            // without this the button has no accessible name at all.
+            clipboardBtn.setAttribute('aria-label', `Clipboard: ${label}`);
+            clipboardAnnouncer.textContent = label;
+            // Restart the animation even if a previous flash is still running,
+            // so back-to-back copies each register visibly.
+            clipboardBtn.classList.remove('flash');
+            void clipboardBtn.offsetWidth;
+            clipboardBtn.classList.add('flash');
+        }
+
+        // Drop the flash class when it finishes so the next copy can re-add it
+        // and re-trigger the animation. The badge is what persists.
+        clipboardBtn.addEventListener('animationend', () =>
+            clipboardBtn.classList.remove('flash'));
+
+        // The one place with genuine user activation, and therefore the only
+        // place execCommand can work on the plain :7680 port.
+        //
+        // Clearing pendingClipboardText before awaiting means a double-click
         // cannot fire two writes. The null check (rather than a truthiness
         // check) keeps a staged empty "clear the clipboard" write working.
-        status.addEventListener('click', async () => {
+        // Clearing the indicator is unconditional: it means "you have seen
+        // this", and leaving it lit after a click would be unresolvable.
+        clipboardBtn.addEventListener('click', async () => {
             if (pendingClipboardText === null) return;
             const text = pendingClipboardText;
             pendingClipboardText = null;
-            if (await tryClipboardWrite(text)) {
-                setStatus(text === '' ? 'Clipboard cleared' : 'Copied to clipboard', 'success');
-            } else {
-                setStatus('Clipboard unavailable — use Select mode to copy', 'error');
+            clipboardBtn.classList.remove('has-copy');
+            clipboardBtn.title = 'Nothing copied yet';
+            clipboardBtn.setAttribute('aria-label', 'Clipboard: nothing copied yet');
+            // Emptied rather than given an "acknowledged" message: the user just
+            // clicked, so they know. Announcing it again would be chatter.
+            clipboardAnnouncer.textContent = '';
+            if (!await tryClipboardWrite(text)) {
+                setStatus('Clipboard unavailable — use Shift+drag to copy', 'error');
             }
         });
 

@@ -234,16 +234,43 @@ async function run(engine, mode, url) {
     await sleep(800);
     typeLine(String.raw`printf '\033]52;c;Q0xJUEJPQVJELU9L\007'`);
 
-    // Poll rather than read once. The status bar clears itself on a timer, so a
-    // single read at a fixed offset is a race — it reported a false failure
-    // before this was a loop.
-    let status = '';
-    for (let i = 0; i < 25 && !/copied|clipboard/i.test(status); i++) {
+    // The acknowledgement is the clipboard button's unread state, not status
+    // text: the text auto-cleared after five seconds, so a copy you did not
+    // happen to be looking at vanished silently. Poll rather than read once —
+    // the write arrives asynchronously.
+    const unread = () => wrapper.evaluate(
+        '!!document.getElementById("clipboard-btn")?.classList.contains("has-copy")');
+    let flagged = false;
+    for (let i = 0; i < 25 && !flagged; i++) {
         await sleep(200);
-        status = await wrapper.evaluate('document.getElementById("status")?.textContent || ""');
+        flagged = await unread();
     }
-    check('OSC 52 write is acknowledged by the wrapper', status,
-        (s) => /copied|clipboard/i.test(s));
+    check('OSC 52 write raises the clipboard button unread indicator', flagged, true);
+
+    // The badge and the flash are visual only. Without an accessible name and
+    // an announcement the arrival of a copy is undetectable without sight, and
+    // the icon span is aria-hidden so the button would have no name at all.
+    check('the unread state is exposed to assistive technology',
+        await wrapper.evaluate(`JSON.stringify({
+            label: document.getElementById('clipboard-btn').getAttribute('aria-label'),
+            announced: document.getElementById('clipboard-announcer').textContent,
+        })`),
+        (v) => { const o = JSON.parse(v); return /copied/i.test(o.label) && /copied/i.test(o.announced); });
+
+    // Clicking delivers the staged text and clears the indicator. On a secure
+    // origin the automatic write has already succeeded, so this is a re-write
+    // of the same text; the assertion is about the indicator being clearable,
+    // which is the part a user can get stuck on.
+    await wrapper.evaluate('document.getElementById("clipboard-btn").click()');
+    await sleep(600);
+    check('clicking the clipboard button clears the unread indicator',
+        await unread(), false);
+    check('acknowledging resets the accessible name and clears the announcement',
+        await wrapper.evaluate(`JSON.stringify({
+            label: document.getElementById('clipboard-btn').getAttribute('aria-label'),
+            announced: document.getElementById('clipboard-announcer').textContent,
+        })`),
+        (v) => { const o = JSON.parse(v); return /nothing copied/i.test(o.label) && o.announced === ''; });
 
     // Read the clipboard back from the wrapper frame — the same context that
     // wrote it, which is the part that matters when that context is a nested
