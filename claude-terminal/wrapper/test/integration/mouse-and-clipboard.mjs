@@ -75,6 +75,26 @@ const cancelCopyMode = () => {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Poll for a condition instead of sleeping a guessed interval. Fixed delays
+// here are not just slow, they are wrong in both directions: too short and the
+// check reports a false failure (this file already did that once, reading the
+// status bar at a fixed offset), too long and every run pays for the worst
+// case. Returns whether the condition held before the deadline, so callers can
+// assert on it rather than on a value read at an arbitrary moment.
+async function waitFor(predicate, { timeout = 6000, interval = 150 } = {}) {
+    for (let waited = 0; waited < timeout; waited += interval) {
+        if (await predicate()) return true;
+        await sleep(interval);
+    }
+    return predicate();
+}
+
+// The mouse-reporting requests an application makes, named so their intent is
+// legible at the call site and so the enable/disable pair cannot drift apart.
+// 1000 = press/release, 1006 = SGR encoding: exactly what Claude Code asks for.
+const APP_TAKES_MOUSE = String.raw`printf '\033[?1000h\033[?1006h'`;
+const APP_RELEASES_MOUSE = String.raw`printf '\033[?1000l\033[?1006l'`;
 const TERM = 'document.getElementById("terminal-frame").contentWindow.term';
 
 // Leave the pane at a plain shell prompt with plenty of scrollback.
@@ -87,11 +107,9 @@ const TERM = 'document.getElementById("terminal-frame").contentWindow.term';
 async function resetPane() {
     cancelCopyMode();
     dexec(['tmux', 'respawn-pane', '-k', 'bash'], { stdio: 'ignore' });
-    for (let i = 0; i < 50; i++) {
-        if (/^(ba)?sh$/.test(tmux('#{pane_current_command}'))) break;
-        await sleep(100);
-    }
+    await waitFor(() => /^(ba)?sh$/.test(tmux('#{pane_current_command}')));
     typeLine('clear; seq 300');
+    await waitFor(() => Number(tmux('#{history_size}')) > 100);
 }
 
 // Under ingress the wrapper is a child frame, so the document holding
@@ -115,7 +133,6 @@ async function wrapperFrame(page) {
 async function run(engine, mode, url) {
     console.log(`\n=== ${engine.name()} / ${mode} ===`);
     await resetPane();
-    await sleep(2000);
     check('fixture: pane has scrollback to scroll through',
         Number(tmux('#{history_size}')), (v) => v > 100);
 
@@ -126,6 +143,19 @@ async function run(engine, mode, url) {
     const wrapper = await wrapperFrame(page);
     await sleep(2500);
 
+    // Coordinates come from the terminal's own box, not fixed page positions:
+    // under ingress the wrapper sits inside another iframe, so the same page
+    // coordinates land somewhere different. `left` is deliberately a few pixels
+    // in from the edge -- that column is where `seq` prints its digits, which is
+    // a character-cell position and not a fraction of the viewport.
+    // wrapper.locator, not page.locator: under ingress #terminal-frame lives in
+    // the wrapper's frame and the main frame has no such element. boundingBox
+    // still returns main-frame viewport coordinates, which is what page.mouse
+    // wants, so the nesting is handled without adjusting anything by hand.
+    const box = await wrapper.locator('#terminal-frame').boundingBox();
+    const mid = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const left = { x: box.x + 12, y: box.y + 60 };
+
     // 1. Mouse reporting is on with NO interaction. The old design required a
     //    button press and lost a race doing it; there is nothing left to press,
     //    so tracking must simply be on once the page settles.
@@ -135,16 +165,47 @@ async function run(engine, mode, url) {
     // 2. A real wheel gesture must reach tmux. Asserting on tmux's own
     //    scroll_position rather than on the bytes xterm emitted: the bytes
     //    being correct was never the part that broke.
-    await page.mouse.move(400, 300);
+    await page.mouse.move(mid.x, mid.y);
     for (let i = 0; i < 5; i++) {
         await page.mouse.wheel(0, -120);
         await sleep(150);
     }
-    await sleep(500);
-    check('wheel scrolls tmux history', Number(tmux('#{scroll_position}')), (v) => v > 0);
-    check('wheel puts the pane in copy-mode', tmux('#{pane_in_mode}'), '1');
+    check('wheel scrolls tmux history',
+        await waitFor(() => Number(tmux('#{scroll_position}')) > 0), true);
+    check('wheel puts the pane in copy-mode',
+        await waitFor(() => tmux('#{pane_in_mode}') === '1'), true);
     cancelCopyMode();
     await sleep(500);
+
+    // 2b. When an APPLICATION holds the mouse, tmux must hand the wheel to it
+    //     rather than taking it for copy-mode. This is what makes the wheel
+    //     scroll the Claude Code session instead of the shell output from
+    //     before Claude Code started, and it is why no CLAUDE_CODE_DISABLE_MOUSE
+    //     is set. Simulated with a bare DECSET rather than by running Claude
+    //     Code, which would need credentials; what is being pinned here is
+    //     tmux's routing, not any one application's behaviour.
+    typeLine(APP_TAKES_MOUSE);
+    check('an application can take the mouse from tmux',
+        await waitFor(() => tmux('#{mouse_any_flag}') === '1'), true);
+    const posBefore = Number(tmux('#{scroll_position}') || 0);
+    await page.mouse.move(mid.x, mid.y);
+    for (let i = 0; i < 3; i++) {
+        await page.mouse.wheel(0, -120);
+        await sleep(150);
+    }
+    await sleep(500);
+    check('tmux forwards the wheel to the application instead of scrolling itself',
+        { inMode: tmux('#{pane_in_mode}'), moved: Number(tmux('#{scroll_position}') || 0) !== posBefore },
+        (v) => v.inMode === '0' && v.moved === false);
+    // The stand-in "application" is a bash prompt, so the wheel reports tmux
+    // just forwarded arrived as keystrokes and are sitting in its input buffer.
+    // Clear the line before typing, or the release command is appended to
+    // escape-sequence garbage and never runs.
+    sendKeys('C-c');
+    await sleep(300);
+    typeLine(APP_RELEASES_MOUSE);
+    check('releasing the mouse gives tmux the wheel back',
+        await waitFor(() => tmux('#{mouse_any_flag}') === '0'), true);
 
     // 3. Selection must still be possible WHILE mouse reporting is on. This is
     //    the capability the deleted DECSET veto existed to provide, now handled
@@ -153,9 +214,9 @@ async function run(engine, mode, url) {
     //    Dragging down the left edge, where `seq` puts the digits.
     const modifier = process.platform === 'darwin' ? 'Alt' : 'Shift';
     await page.keyboard.down(modifier);
-    await page.mouse.move(12, 150);
+    await page.mouse.move(left.x, left.y);
     await page.mouse.down();
-    await page.mouse.move(140, 320, { steps: 15 });
+    await page.mouse.move(left.x + 128, left.y + 170, { steps: 15 });
     await page.mouse.up();
     await page.keyboard.up(modifier);
     await sleep(500);

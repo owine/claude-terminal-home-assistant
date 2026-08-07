@@ -114,14 +114,22 @@ export ANTHROPIC_HOME="/data"
 # GitHub CLI persistent configuration
 export GH_CONFIG_DIR="/data/.config/gh"
 
-# Keep Claude Code from requesting mouse tracking of its own. This is now
-# LOAD-BEARING, not defense in depth: tmux ORs an inner application's request
-# into the outer terminal's mode, and its WheelUpPane binding forwards the wheel
-# to the application whenever mouse_any_flag is set. If Claude Code took the
-# mouse, the wheel would stop scrolling tmux history in exactly the application
-# this add-on exists to run. Undocumented upstream env var - verified against
-# the 2.1.222 binary.
-export CLAUDE_CODE_DISABLE_MOUSE=1
+# Claude Code deliberately keeps its own mouse tracking (it asks for ?1000h +
+# ?1006h, press/release with SGR, which includes wheel events). There used to be
+# a CLAUDE_CODE_DISABLE_MOUSE=1 here; removing it is what makes the wheel scroll
+# the Claude Code session instead of tmux's pane history.
+#
+# tmux ORs an application's mouse request into the outer terminal's mode and its
+# WheelUpPane binding forwards the wheel to the application whenever
+# mouse_any_flag is set. So the wheel lands wherever it should without anything
+# having to detect which program is running: inside Claude Code it scrolls the
+# session, and at a shell prompt - where nothing has claimed the mouse - tmux
+# takes it and scrolls history.
+#
+# Disabling it was originally defense in depth for the DECSET veto, which no
+# longer exists. Handing an application the mouse is safe now because text
+# selection no longer depends on denying it: Shift+drag (Option on macOS) forces
+# xterm's own selection whatever holds mouse reporting.
 
 # Persistent package paths (HIGHEST PRIORITY)
 # Include $HOME/.local/bin for Claude Code native components
