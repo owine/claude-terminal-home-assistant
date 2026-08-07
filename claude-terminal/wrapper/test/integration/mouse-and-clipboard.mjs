@@ -30,6 +30,7 @@
 // one mistyped shell command.
 
 import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { startIngress } from './ingress-harness.mjs';
 
 // Playwright is deliberately NOT a devDependency: CI cannot run this test (it
@@ -130,8 +131,26 @@ async function wrapperFrame(page) {
     throw new Error('wrapper frame with a live terminal never appeared');
 }
 
+// Written only when a combination actually fails. A red browser test is hard
+// to reason about from log lines alone -- what the page looked like and what it
+// logged are usually the whole answer -- but capturing them unconditionally
+// would put megabytes of artifacts on every green run.
+const ARTIFACTS = new URL('./artifacts/', import.meta.url).pathname;
+
+async function saveArtifacts(page, consoleLog, name) {
+    try {
+        mkdirSync(ARTIFACTS, { recursive: true });
+        await page.screenshot({ path: `${ARTIFACTS}${name}.png`, fullPage: true });
+        writeFileSync(`${ARTIFACTS}${name}.log`, consoleLog.join('\n'));
+        console.log(`       artifacts: ${name}.png, ${name}.log`);
+    } catch (e) {
+        console.log(`       could not save artifacts: ${e.message}`);
+    }
+}
+
 async function run(engine, mode, url) {
     console.log(`\n=== ${engine.name()} / ${mode} ===`);
+    const failuresBefore = failures;
     await resetPane();
     check('fixture: pane has scrollback to scroll through',
         Number(tmux('#{history_size}')), (v) => v > 100);
@@ -139,6 +158,9 @@ async function run(engine, mode, url) {
     const browser = await engine.launch();
     const context = await browser.newContext();
     const page = await context.newPage();
+    const consoleLog = [];
+    page.on('console', (m) => consoleLog.push(`${m.type()}: ${m.text()}`));
+    page.on('pageerror', (e) => consoleLog.push(`pageerror: ${e.message}`));
     await page.goto(url, { waitUntil: 'load' });
     const wrapper = await wrapperFrame(page);
     await sleep(2500);
@@ -283,6 +305,9 @@ async function run(engine, mode, url) {
         console.log('skip  - clipboard readback (no clipboard-read permission in WebKit)');
     }
 
+    if (failures > failuresBefore) {
+        await saveArtifacts(page, consoleLog, `${engine.name()}-${mode}`);
+    }
     await browser.close();
 }
 

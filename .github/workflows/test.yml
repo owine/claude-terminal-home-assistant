@@ -136,6 +136,47 @@ jobs:
       # there and passed CI; this is what closes that hole. Reuses the container
       # the smoke test already started and health-checked, so there is no second
       # build and no second startup wait.
+      # Playwright is deliberately not a devDependency (see the test header), so
+      # install it out-of-tree. Pinning the version here is what makes the
+      # browser cache below correct: the cache key has to change when the
+      # browsers do, and Playwright's binaries are tied to its version.
+      - name: Install Playwright
+        if: matrix.arch == 'amd64'
+        id: playwright
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pw
+          npm --prefix /tmp/pw install --no-save --no-package-lock playwright@"${PLAYWRIGHT_VERSION}"
+          echo "version=${PLAYWRIGHT_VERSION}" >> "$GITHUB_OUTPUT"
+        env:
+          PLAYWRIGHT_VERSION: '1.62.1' # renovate: datasource=npm depName=playwright
+
+      # Browser binaries are ~400MB and were re-downloaded on every run. The key
+      # is the Playwright version, not the lockfile: nothing else changes them,
+      # so there is exactly one entry per version rather than one per branch or
+      # per commit. GitHub evicts caches untouched for 7 days, so entries for old
+      # Playwright versions clear themselves once Renovate bumps the pin.
+      - name: Cache Playwright browsers
+        if: matrix.arch == 'amd64'
+        id: browser-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # --with-deps installs apt packages, which live outside the cached path and
+      # so must run either way; it is fast when the packages are already present.
+      # Only the browser download is skipped on a cache hit.
+      - name: Install browsers
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.browser-cache.outputs.cache-hit }}" = "true" ]; then
+            /tmp/pw/node_modules/.bin/playwright install-deps chromium webkit
+          else
+            /tmp/pw/node_modules/.bin/playwright install --with-deps chromium webkit
+          fi
+
       - name: Integration test (browser to tmux wiring)
         if: matrix.arch == 'amd64'
         env:
@@ -149,12 +190,6 @@ jobs:
           # test - not just to run the server.
           npm --prefix claude-terminal/wrapper ci --omit=dev
 
-          # Playwright is deliberately not a devDependency (see the test header),
-          # so install it out-of-tree and point the test at it.
-          mkdir -p /tmp/pw
-          npm --prefix /tmp/pw install --no-save --no-package-lock playwright@1
-          /tmp/pw/node_modules/.bin/playwright install --with-deps chromium webkit
-
           CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \
             node claude-terminal/wrapper/test/integration/mouse-and-clipboard.mjs
 
@@ -167,6 +202,20 @@ jobs:
           echo "=== tmux state ==="
           docker exec smoke-test tmux display -p \
             'mouse=#{mouse} in_mode=#{pane_in_mode} scroll=#{scroll_position} history=#{history_size} cmd=#{pane_current_command}' || true
+
+      # The tmux side alone rarely explains a browser failure. The test writes a
+      # screenshot and the page's console output for each combination that
+      # failed, and only for those - a green run uploads nothing.
+      - name: Upload browser artifacts
+        if: failure() && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-failure-artifacts
+          path: claude-terminal/wrapper/test/integration/artifacts/
+          if-no-files-found: ignore
+          # Long enough to debug the PR that produced them, short enough that
+          # failed runs do not accumulate screenshots for months.
+          retention-days: 3
 
       - name: Show container logs
         if: always()
