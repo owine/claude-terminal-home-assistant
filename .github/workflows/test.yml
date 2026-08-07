@@ -119,6 +119,55 @@ jobs:
 
           echo "Smoke test passed"
 
+      # Everything below is amd64-only: the integration test drives real browser
+      # engines against the running container, and Playwright's WebKit build is
+      # not available for the aarch64 runner. The aarch64 job keeps the smoke
+      # test, which is what it is there to prove.
+      - name: Set up Node
+        if: matrix.arch == 'amd64'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.18.1' # renovate: datasource=node-version depName=node-lts-24 packageName=node
+          cache: npm
+          cache-dependency-path: claude-terminal/wrapper/package-lock.json
+
+      # Covers the wiring between browser, xterm.js, ttyd and tmux that the unit
+      # tests cannot see. Every mouse and clipboard bug in 2.7.0-2.7.4 lived
+      # there and passed CI; this is what closes that hole. Reuses the container
+      # the smoke test already started and health-checked, so there is no second
+      # build and no second startup wait.
+      - name: Integration test (browser to tmux wiring)
+        if: matrix.arch == 'amd64'
+        env:
+          CTP_CONTAINER: smoke-test
+          CTP_URL: http://localhost:7680/
+        run: |
+          set -euo pipefail
+
+          # The ingress harness imports http-proxy-middleware, resolved from the
+          # wrapper's own node_modules, so these are required to even load the
+          # test - not just to run the server.
+          npm --prefix claude-terminal/wrapper ci --omit=dev
+
+          # Playwright is deliberately not a devDependency (see the test header),
+          # so install it out-of-tree and point the test at it.
+          mkdir -p /tmp/pw
+          npm --prefix /tmp/pw install --no-save --no-package-lock playwright@1
+          /tmp/pw/node_modules/.bin/playwright install --with-deps chromium webkit
+
+          CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \
+            node claude-terminal/wrapper/test/integration/mouse-and-clipboard.mjs
+
+      # A failing browser test is opaque without the other side of the wiring.
+      - name: Integration test diagnostics
+        if: failure() && matrix.arch == 'amd64'
+        run: |
+          echo "=== container logs (tail) ==="
+          docker logs smoke-test 2>&1 | tail -80 || true
+          echo "=== tmux state ==="
+          docker exec smoke-test tmux display -p \
+            'mouse=#{mouse} in_mode=#{pane_in_mode} scroll=#{scroll_position} history=#{history_size} cmd=#{pane_current_command}' || true
+
       - name: Show container logs
         if: always()
         run: docker logs smoke-test 2>&1 || true
