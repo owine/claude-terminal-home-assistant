@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.8.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.7.4...v2.8.0) (2026-08-10)
+
+
+### Features
+
+* update dependency ha-mcp to v8 ([#293](https://github.com/owine/claude-terminal-home-assistant/issues/293)) ([4110ff3](https://github.com/owine/claude-terminal-home-assistant/commit/4110ff3511e52a7795c8a3d079335adbc541c807))
+
+
+### Dependencies
+
+* update all non-major dependencies ([#291](https://github.com/owine/claude-terminal-home-assistant/issues/291)) ([e72f08c](https://github.com/owine/claude-terminal-home-assistant/commit/e72f08cf135c34b637ea9516b47ec4ef261fd524))
+* update all non-major dependencies ([#297](https://github.com/owine/claude-terminal-home-assistant/issues/297)) ([9277763](https://github.com/owine/claude-terminal-home-assistant/commit/9277763f9ebad7d6e10cf249d5c9d855b5200658))
+* update dependency ha-mcp to v8.1.1 ([#296](https://github.com/owine/claude-terminal-home-assistant/issues/296)) ([7dab318](https://github.com/owine/claude-terminal-home-assistant/commit/7dab318ffdd0d4bf3bd150f53c672232fead9e6d))
+
 ## [2.7.4](https://github.com/owine/claude-terminal-home-assistant/compare/v2.7.3...v2.7.4) (2026-08-07)
 
 
