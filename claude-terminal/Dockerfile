@@ -26,7 +26,7 @@ RUN apk upgrade --no-cache \
     py3-requests=2.33.1-r0 \
     py3-yaml=6.0.3-r2 \
     python3=3.14.7-r1 \
-    tmux=3.6b-r0 \
+    tmux=3.7c-r0 \
     tree=2.3.2-r0 \
     ttyd=1.7.7-r0 \
     vim=9.2.0854-r0 \
