@@ -397,7 +397,7 @@ wheels = [
 
 [[package]]
 name = "ha-mcp"
-version = "8.1.1"
+version = "8.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
@@ -410,9 +410,9 @@ dependencies = [
     { name = "truststore" },
     { name = "tzdata" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7c/c1/73f92c63a726d9242cb1267b501297b4422c5c3d8a7eb24625729cfd81d2/ha_mcp-8.1.1.tar.gz", hash = "sha256:ec1ac6b23c793eed8bc5051d9955653282dc1933226fce898a721b53b5517fb6", size = 1587874, upload-time = "2026-08-06T01:02:38.561Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4a/f5/a52a2247a29218e2de68f0c30b5decafed3cacbe3b6390c1c5c16a00e884/ha_mcp-8.2.0.tar.gz", hash = "sha256:cc924555e4cae079300473980307403410b6ed8757a2915f73b17ca616413cab", size = 1695261, upload-time = "2026-08-10T01:29:28.972Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/d0/4b932de7b70904aa5bc2a9f0d31157e930a82e8020e6493b4bda4ba54b52/ha_mcp-8.1.1-py3-none-any.whl", hash = "sha256:d8ded96ac43a3209b9129d776c6d5333a2ab616bb7a6b5e6c3d85866347ac389", size = 1705157, upload-time = "2026-08-06T01:02:36.245Z" },
+    { url = "https://files.pythonhosted.org/packages/85/46/7d1bd14f6d5fe408740e171cb8bb07dae49f26f01b9a211d1c4bcee0b327/ha_mcp-8.2.0-py3-none-any.whl", hash = "sha256:fdd9f68b488beea91b728ef450e7f6df2bc0e0bb70d60875307a99295d12e0c9", size = 1816054, upload-time = "2026-08-10T01:29:27.209Z" },
 ]
 
 [[package]]
@@ -424,7 +424,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ha-mcp", specifier = "==8.1.1" }]
+requires-dist = [{ name = "ha-mcp", specifier = "==8.2.0" }]
 
 [[package]]
 name = "httpcore"
