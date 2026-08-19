@@ -2,61 +2,41 @@
 # Trivy vulnerability ignore list.
 #
 # Every entry below is a real, fixed-upstream CVE that this repo cannot remediate
-# on its own — the fix lives in a binary we don't compile (a new HA base image for
-# tempio, a new ha-cli release for ha) or behind a dependency cap we don't control.
-# Review periodically and prune each entry when its stated condition is met.
+# on its own - the fix lives in a binary we don't compile (a new HA base image for
+# tempio, a new ha-cli release for ha, a new gh release for gh) or behind a
+# dependency cap we don't control. Review periodically and prune each entry when
+# its stated condition is met.
 #
 # Entries are scoped with `paths` (matched against the scan target) or `purl` so a
 # suppression can never leak to an unrelated component. NOTE: Trivy does not
-# auto-discover this file — only the plain `.trivyignore` name is picked up by
-# default — so both security.yml and publish.yml must pass it explicitly via the
+# auto-discover this file - only the plain `.trivyignore` name is picked up by
+# default - so both security.yml and publish.yml must pass it explicitly via the
 # action's `trivyignores:` input.
+#
+# Regenerating: extract each binary and scan it standalone rather than trusting a
+# CI log - the log is a snapshot against the Trivy DB of that day and goes stale.
+# See the repo notes for the extract-and-scan method.
 
 vulnerabilities:
-  # --- /usr/bin/tempio (Home Assistant base image templating binary) ---
-  # Go stdlib + x/crypto CVEs in tempio, the templating binary baked into the
-  # Home Assistant base image (built with Go 1.23.3 / x/crypto 0.26.0). Not
-  # fixable here — tempio is not an apk package and is not recompiled by this
-  # add-on; only a new HA base image release can resolve these. Re-scan and prune
-  # when the base image is bumped. Last verified against base:3.24 / 2026.06.1
-  # (2026-08-04) — tempio is still the 2024.11.2 build, unchanged since 2024-11-26.
-  - id: CVE-2024-45337
-    paths:
-      - "usr/bin/tempio"
+  # --- usr/bin/tempio (Home Assistant base image templating binary) ---
+  # Go stdlib and x/crypto CVEs in tempio, the templating binary baked into the
+  # Home Assistant base image. Not fixable here - tempio is not an apk package and
+  # is not recompiled by this add-on; only a new HA base image release can resolve
+  # these. Verified 2026-08-19 against base:3.24 digest 93ef607, which rebuilt
+  # tempio on go1.26.5 (up from go1.23.3) and x/crypto 0.31.0 - that bump retired
+  # 16 previously-listed CVEs, pruned here. The stdlib entries below need
+  # go >= 1.26.6; the x/crypto entries need x/crypto >= 0.52.0. Re-scan and prune
+  # when the base image is bumped again.
   - id: CVE-2025-22869
     paths:
       - "usr/bin/tempio"
   - id: CVE-2025-47913
     paths:
       - "usr/bin/tempio"
-  - id: CVE-2025-61726
+  - id: CVE-2026-33818
     paths:
       - "usr/bin/tempio"
-  - id: CVE-2025-61729
-    paths:
-      - "usr/bin/tempio"
-  - id: CVE-2025-68121
-    paths:
-      - "usr/bin/tempio"
-  - id: CVE-2026-25679
-    paths:
-      - "usr/bin/tempio"
-  - id: CVE-2026-27145
-    paths:
-      - "usr/bin/tempio"
-  - id: CVE-2026-32280
-    paths:
-      - "usr/bin/tempio"
-  - id: CVE-2026-32281
-    paths:
-      - "usr/bin/tempio"
-  - id: CVE-2026-32283
-    paths:
-      - "usr/bin/tempio"
-  - id: CVE-2026-33811
-    paths:
-      - "usr/bin/tempio"
-  - id: CVE-2026-39820
+  - id: CVE-2026-39821
     paths:
       - "usr/bin/tempio"
   - id: CVE-2026-39828
@@ -77,15 +57,6 @@ vulnerabilities:
   - id: CVE-2026-39835
     paths:
       - "usr/bin/tempio"
-  - id: CVE-2026-39836
-    paths:
-      - "usr/bin/tempio"
-  - id: CVE-2026-42499
-    paths:
-      - "usr/bin/tempio"
-  - id: CVE-2026-42504
-    paths:
-      - "usr/bin/tempio"
   - id: CVE-2026-42508
     paths:
       - "usr/bin/tempio"
@@ -95,50 +66,91 @@ vulnerabilities:
   - id: CVE-2026-46597
     paths:
       - "usr/bin/tempio"
-
-  # --- /usr/bin/ha (Home Assistant CLI) ---
-  # golang.org/x/net v0.43.0 and x/text v0.28.0 CVEs compiled into the ha-cli
-  # binary. We already pin HA_CLI_VERSION to the latest release (5.2.0); the fixes
-  # (x/net >= 0.55.0, x/text >= 0.39.0) require an upstream ha-cli rebuild, so this
-  # is not fixable by bumping our pin. Prune when a newer ha-cli release links
-  # x/net >= 0.55.0 and x/text >= 0.39.0. Verified against ha-cli 5.2.0, still the
-  # latest release (2026-08-04).
-  - id: CVE-2026-25681
+  - id: CVE-2026-46600
     paths:
-      - "usr/bin/ha"
-  - id: CVE-2026-27136
+      - "usr/bin/tempio"
+  - id: CVE-2026-56853
+    paths:
+      - "usr/bin/tempio"
+  - id: CVE-2026-56858
+    paths:
+      - "usr/bin/tempio"
+  - id: CVE-2026-56859
+    paths:
+      - "usr/bin/tempio"
+  - id: CVE-2026-56860
+    paths:
+      - "usr/bin/tempio"
+  - id: CVE-2026-56862
+    paths:
+      - "usr/bin/tempio"
+
+  # --- usr/bin/ha (Home Assistant CLI) ---
+  # Go stdlib, x/net and x/text CVEs compiled into the ha-cli binary. We already
+  # pin HA_CLI_VERSION to the latest release (5.3.0). Verified 2026-08-19 that
+  # 5.3.1 is an identical build - same go1.25.12, same x/net 0.55.0, same x/text
+  # 0.37.0 - so bumping the pin fixes none of these. Needs an upstream ha-cli
+  # rebuild on go >= 1.25.13 with x/net >= 0.56.0 and x/text >= 0.39.0.
+  - id: CVE-2026-33818
     paths:
       - "usr/bin/ha"
   - id: CVE-2026-39821
     paths:
       - "usr/bin/ha"
+  - id: CVE-2026-46600
+    paths:
+      - "usr/bin/ha"
   - id: CVE-2026-56852
     paths:
       - "usr/bin/ha"
-
-  # --- Both binaries ---
-  # These land on tempio and ha alike, via different components, so they need both
-  # paths: CVE-2026-33814 is Go stdlib in tempio but x/net in ha, and CVE-2026-39822
-  # (os.Root symlink following, fixed in Go 1.25.12) is stdlib in both. Clearing
-  # them needs an HA base image release *and* an ha-cli release.
-  - id: CVE-2026-33814
+  - id: CVE-2026-56853
     paths:
-      - "usr/bin/tempio"
       - "usr/bin/ha"
-  - id: CVE-2026-39822
+  - id: CVE-2026-56858
     paths:
-      - "usr/bin/tempio"
+      - "usr/bin/ha"
+  - id: CVE-2026-56859
+    paths:
+      - "usr/bin/ha"
+  - id: CVE-2026-56860
+    paths:
+      - "usr/bin/ha"
+  - id: CVE-2026-56862
+    paths:
       - "usr/bin/ha"
 
-  # --- cryptography (claude-terminal/ha-mcp) ---
-  # CVE-2026-69247: Bleichenbacher oracle in cryptography's PKCS#7 EnvelopedData
-  # decryption, fixed in 50.0.0. Not fixable here — ha-mcp caps the dependency at
-  # `cryptography<50,>=48.0.0` (both the pinned 7.14.2 and the current 8.0.0), so
-  # `uv lock --upgrade-package cryptography` resolves straight back to 49.0.0.
-  # Not reachable either: cryptography reaches us via ha-mcp/authlib/joserfc, which
-  # use JWS/JWE/JWT and X.509 — none of them call the PKCS#7 decrypt path, and the
-  # add-on never decrypts attacker-supplied PKCS#7 blobs. Scoped by purl so it
-  # covers both the uv.lock (fs scan) and site-packages (image scan) findings
-  # without suppressing the CVE for any unrelated component.
-  - id: CVE-2026-69247
-    purl: "pkg:pypi/cryptography"
+  # --- usr/bin/gh (GitHub CLI) ---
+  # Go stdlib and x/mod CVEs compiled into the gh binary. GH_CLI_VERSION is
+  # pinned to 2.97.0, which is the latest release (published 2026-07-31, before
+  # the Go security batch landed), so there is nothing to bump to. Needs an
+  # upstream cli/cli rebuild on go >= 1.26.6 with x/mod >= 0.40.0.
+  - id: CVE-2026-33818
+    paths:
+      - "usr/bin/gh"
+  - id: CVE-2026-39821
+    paths:
+      - "usr/bin/gh"
+  - id: CVE-2026-46600
+    paths:
+      - "usr/bin/gh"
+  - id: CVE-2026-56853
+    paths:
+      - "usr/bin/gh"
+  - id: CVE-2026-56858
+    paths:
+      - "usr/bin/gh"
+  - id: CVE-2026-56859
+    paths:
+      - "usr/bin/gh"
+  - id: CVE-2026-56860
+    paths:
+      - "usr/bin/gh"
+  - id: CVE-2026-56862
+    paths:
+      - "usr/bin/gh"
+  - id: CVE-2026-56864
+    paths:
+      - "usr/bin/gh"
+  - id: CVE-2026-56865
+    paths:
+      - "usr/bin/gh"
