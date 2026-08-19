@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.8.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.1...v2.8.2) (2026-08-19)
+
+
+### Dependencies
+
+* update dependency claude-code to v2.1.227 ([#313](https://github.com/owine/claude-terminal-home-assistant/issues/313)) ([bf30492](https://github.com/owine/claude-terminal-home-assistant/commit/bf30492895ec2a79f55c3138958d36f27b9234d4))
+* update ghcr.io/home-assistant/base:3.24 docker digest to 93ef607 ([#312](https://github.com/owine/claude-terminal-home-assistant/issues/312)) ([ca4bc6a](https://github.com/owine/claude-terminal-home-assistant/commit/ca4bc6aa7b67e38430d3a11c905cf74f4ee2ee69))
+
 ## [2.8.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.0...v2.8.1) (2026-08-17)
 
 
