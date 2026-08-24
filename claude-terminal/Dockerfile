@@ -36,7 +36,7 @@ RUN apk upgrade --no-cache \
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
 # renovate: datasource=custom.claude-code
-ARG CLAUDE_VERSION=2.1.227
+ARG CLAUDE_VERSION=2.1.231
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -144,7 +144,7 @@ RUN set -eux; \
 # Install Home Assistant CLI (ha command)
 # Download appropriate binary based on build architecture
 # renovate: datasource=github-releases depName=home-assistant/cli
-ARG HA_CLI_VERSION=5.3.0
+ARG HA_CLI_VERSION=5.3.1
 ARG TARGETARCH
 RUN case "${TARGETARCH}" in \
         amd64)   HA_ARCH="amd64" ;; \
@@ -160,7 +160,7 @@ RUN case "${TARGETARCH}" in \
 # Install GitHub CLI (gh command) with SHA256 verification
 # Download appropriate binary based on build architecture
 # renovate: datasource=github-releases depName=cli/cli
-ARG GH_CLI_VERSION=2.97.0
+ARG GH_CLI_VERSION=2.98.0
 RUN set -eux; \
     # Determine architecture
     case "${TARGETARCH}" in \
