@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.8.3](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.2...v2.8.3) (2026-08-25)
+
+
+### Dependencies
+
+* update all non-major dependencies ([#318](https://github.com/owine/claude-terminal-home-assistant/issues/318)) ([bfc8d1e](https://github.com/owine/claude-terminal-home-assistant/commit/bfc8d1e9ffc17310d55e5b4bad7a54405ccba05a))
+* update all non-major dependencies ([#320](https://github.com/owine/claude-terminal-home-assistant/issues/320)) ([6d90a5c](https://github.com/owine/claude-terminal-home-assistant/commit/6d90a5c010da1fd34bf1a0619d445eed60b28b31))
+
 ## [2.8.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.1...v2.8.2) (2026-08-19)
 
 
