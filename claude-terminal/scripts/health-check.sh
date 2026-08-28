@@ -28,6 +28,40 @@ check_system_resources() {
     fi
 }
 
+check_cpu_capabilities() {
+    bashio::log.info "=== CPU Capability Check ==="
+
+    # Claude Code ships as a Bun-compiled native binary, and Bun requires AVX
+    # on x86-64. Hypervisor default CPU types (Proxmox/QEMU kvm64, qemu64)
+    # mask AVX even when the physical CPU has it, and every claude invocation
+    # then spins at 100% CPU with no output or dies with SIGILL. The binary is
+    # still present and executable, so check_claude_cli passes and the failure
+    # looks like a hang rather than an unsupported CPU. Not applicable on
+    # aarch64.
+    local arch
+    arch=$(uname -m)
+
+    if [ "$arch" != "x86_64" ]; then
+        bashio::log.info "Architecture ${arch}: AVX check not applicable ✓"
+        return 0
+    fi
+
+    if grep -qw avx /proc/cpuinfo; then
+        bashio::log.info "CPU exposes AVX ✓"
+        return 0
+    fi
+
+    bashio::log.error "CPU does not expose AVX ✗"
+    bashio::log.info "Claude Code's runtime (Bun) requires AVX; without it every"
+    bashio::log.info "claude invocation hangs at 100% CPU or crashes with SIGILL."
+    bashio::log.info "On a VM this usually means the hypervisor hides the host CPU:"
+    bashio::log.info "  • Proxmox/QEMU: set the VM's CPU type to 'host' (not kvm64/qemu64),"
+    bashio::log.info "    then fully shut the VM down and start it again - a reboot"
+    bashio::log.info "    is not enough to pick up the new CPU model"
+    bashio::log.info "  • Other hypervisors: enable host CPU passthrough"
+    return 1
+}
+
 check_directory_permissions() {
     bashio::log.info "=== Directory Permissions Check ==="
 
@@ -102,6 +136,7 @@ run_diagnostics() {
     local errors=0
 
     check_system_resources || ((errors++))
+    check_cpu_capabilities || ((errors++))
     check_directory_permissions || ((errors++))
     check_node_installation || ((errors++))
     check_claude_cli || ((errors++))

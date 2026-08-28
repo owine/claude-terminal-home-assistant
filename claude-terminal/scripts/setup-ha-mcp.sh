@@ -38,8 +38,13 @@ configure_ha_mcp_server() {
     # The MCP server will connect to Home Assistant via the Supervisor API
     bashio::log.info "Configuring Claude Code MCP server for Home Assistant..."
 
-    # Remove existing ha-mcp configuration if present (to ensure clean state)
-    claude mcp remove home-assistant 2>/dev/null || true
+    # Remove existing ha-mcp configuration if present (to ensure clean state).
+    # Both claude calls here run on the boot path, ahead of start_web_terminal,
+    # so neither may block startup: a wedged claude binary (e.g. spinning at
+    # 100% CPU on a VM whose virtual CPU masks AVX - see check_cpu_capabilities
+    # in health-check.sh) would otherwise hang the add-on here forever with no
+    # terminal ever coming up. These are local config file edits; 30s is ample.
+    timeout 30 claude mcp remove home-assistant 2>/dev/null || true
 
     # Add ha-mcp as MCP server using pre-installed binary
     # Environment variables:
@@ -47,7 +52,7 @@ configure_ha_mcp_server() {
     #   HOMEASSISTANT_TOKEN: Supervisor token for authentication
     # ENABLE_SKILLS: Serve bundled HA best-practice skills as MCP resources (skill:// URIs)
     # ENABLE_SKILLS_AS_TOOLS: Also expose skills as tools for broader client compatibility
-    if claude mcp add home-assistant \
+    if timeout 30 claude mcp add home-assistant \
         --env "HOMEASSISTANT_URL=http://supervisor/core" \
         --env "HOMEASSISTANT_TOKEN=${SUPERVISOR_TOKEN}" \
         --env "ENABLE_SKILLS=true" \
