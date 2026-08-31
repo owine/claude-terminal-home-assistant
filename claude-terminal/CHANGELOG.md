@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.8.4](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.3...v2.8.4) (2026-08-31)
+
+
+### Bug Fixes
+
+* warn on missing AVX and stop a wedged claude blocking startup ([#325](https://github.com/owine/claude-terminal-home-assistant/issues/325)) ([bffa3ca](https://github.com/owine/claude-terminal-home-assistant/commit/bffa3ca62d0c3b2acb3537ac018ceece9ccb260a))
+
+
+### Dependencies
+
+* update all non-major dependencies ([#328](https://github.com/owine/claude-terminal-home-assistant/issues/328)) ([7180dfb](https://github.com/owine/claude-terminal-home-assistant/commit/7180dfb233dccefcbccba12bc523cc271eb7649f))
+* update all non-major dependencies ([#332](https://github.com/owine/claude-terminal-home-assistant/issues/332)) ([14c5e56](https://github.com/owine/claude-terminal-home-assistant/commit/14c5e5649646f9b450d50464f16361e03b2d8f04))
+* update dependency alpine_3_24/vim to v9.2.1011-r0 ([#322](https://github.com/owine/claude-terminal-home-assistant/issues/322)) ([eb38407](https://github.com/owine/claude-terminal-home-assistant/commit/eb3840728af625a686f17e3a363f44ecd1e6bc14))
+* update dependency alpine_3_24/vim to v9.2.1014-r0 ([#324](https://github.com/owine/claude-terminal-home-assistant/issues/324)) ([b022b49](https://github.com/owine/claude-terminal-home-assistant/commit/b022b49e6837146974d1707c288c1d661da3bcda))
+* update dependency home-assistant/cli to v5.4.0 ([#330](https://github.com/owine/claude-terminal-home-assistant/issues/330)) ([c0d6b5e](https://github.com/owine/claude-terminal-home-assistant/commit/c0d6b5ebc8750f62afea22f982e32106df2ead53))
+* update ha-mcp to v8.4.0 ([#331](https://github.com/owine/claude-terminal-home-assistant/issues/331)) ([5574c11](https://github.com/owine/claude-terminal-home-assistant/commit/5574c11445eb1b3c1b1f2721fba48e33bf1de283))
+
 ## [2.8.3](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.2...v2.8.3) (2026-08-25)
 
 
