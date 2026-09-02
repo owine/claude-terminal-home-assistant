@@ -16,7 +16,7 @@ RUN apk upgrade --no-cache \
     bash=5.3.9-r1 \
     curl=8.21.0-r0 \
     git=2.54.0-r0 \
-    jq=1.8.1-r0 \
+    jq=1.8.2-r0 \
     nano=9.2-r0 \
     nodejs=24.18.1-r0 \
     npm=11.12.1-r0 \
