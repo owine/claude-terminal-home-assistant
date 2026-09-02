@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.8.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.4...v2.8.5) (2026-09-02)
+
+
+### Dependencies
+
+* update dependency alpine_3_24/curl to v8.22.0-r0 ([#336](https://github.com/owine/claude-terminal-home-assistant/issues/336)) ([ebaed89](https://github.com/owine/claude-terminal-home-assistant/commit/ebaed89315f8986c8a4b7bc1f591bd7307c43bb6))
+* update dependency alpine_3_24/jq to v1.8.2-r0 ([#334](https://github.com/owine/claude-terminal-home-assistant/issues/334)) ([1fa2587](https://github.com/owine/claude-terminal-home-assistant/commit/1fa2587d00a7a6ad203ce53e530d9eda7c8a11b3))
+
 ## [2.8.4](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.3...v2.8.4) (2026-08-31)
 
 
