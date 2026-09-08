@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.8.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.4...v2.8.5) (2026-09-08)
+
+
+### Dependencies
+
+* update all non-major dependencies ([#340](https://github.com/owine/claude-terminal-home-assistant/issues/340)) ([e4a4a95](https://github.com/owine/claude-terminal-home-assistant/commit/e4a4a9507eddf21257998777aa067951f45d3973))
+* update all non-major dependencies ([#344](https://github.com/owine/claude-terminal-home-assistant/issues/344)) ([134d671](https://github.com/owine/claude-terminal-home-assistant/commit/134d6714a01004d269af383dee048b81bb3efe11))
+* update dependency alpine_3_24/curl to v8.22.0-r0 ([#336](https://github.com/owine/claude-terminal-home-assistant/issues/336)) ([ebaed89](https://github.com/owine/claude-terminal-home-assistant/commit/ebaed89315f8986c8a4b7bc1f591bd7307c43bb6))
+* update dependency alpine_3_24/jq to v1.8.2-r0 ([#334](https://github.com/owine/claude-terminal-home-assistant/issues/334)) ([1fa2587](https://github.com/owine/claude-terminal-home-assistant/commit/1fa2587d00a7a6ad203ce53e530d9eda7c8a11b3))
+* update dependency alpine_3_24/yq-go to v4.53.3-r1 ([#337](https://github.com/owine/claude-terminal-home-assistant/issues/337)) ([6fb5e85](https://github.com/owine/claude-terminal-home-assistant/commit/6fb5e8528445f112a91acf26a08bae250529cc90))
+* update dependency eslint to v10.10.0 ([#342](https://github.com/owine/claude-terminal-home-assistant/issues/342)) ([c85c73d](https://github.com/owine/claude-terminal-home-assistant/commit/c85c73d93f0b79c20e6422ba6e435f393a1c7330))
+
 ## [2.8.4](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.3...v2.8.4) (2026-08-31)
 
 
