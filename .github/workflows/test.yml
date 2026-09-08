@@ -155,7 +155,7 @@ jobs:
           npm --prefix /tmp/pw install --no-save --no-package-lock playwright@"${PLAYWRIGHT_VERSION}"
           echo "version=${PLAYWRIGHT_VERSION}" >> "$GITHUB_OUTPUT"
         env:
-          PLAYWRIGHT_VERSION: '1.62.1' # renovate: datasource=npm depName=playwright
+          PLAYWRIGHT_VERSION: '1.63.0' # renovate: datasource=npm depName=playwright
 
       # Browser binaries are ~400MB and were re-downloaded on every run. The key
       # is the Playwright version, not the lockfile: nothing else changes them,
