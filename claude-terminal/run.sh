@@ -440,6 +440,30 @@ init_docker() {
 
 # Legacy monitoring functions removed - using simplified /data approach
 
+# Non-interactive authentication via a token from `claude setup-token`.
+#
+# The value reaches the auto-launched claude through the environment: run.sh
+# starts the tmux server, so every session and pane inherits this export, and
+# tmux.conf lists CLAUDE_CODE_OAUTH_TOKEN in update-environment so re-attached
+# clients keep it. It deliberately does NOT go into
+# /etc/profile.d/persistent-packages.sh - that file lives on disk and would put
+# a long-lived credential somewhere it can be read back, and the tmux session
+# command runs through a non-interactive shell that never sources it anyway.
+#
+# The token itself is never logged. It is declared password? in the schema so
+# the Supervisor UI masks it.
+#
+# Note: token auth cannot establish Remote Control sessions.
+export_oauth_token() {
+    local token
+    token=$(bashio::config 'claude_code_oauth_token' '')
+
+    if [ -n "$token" ] && [ "$token" != "null" ]; then
+        export CLAUDE_CODE_OAUTH_TOKEN="$token"
+        bashio::log.info "CLAUDE_CODE_OAUTH_TOKEN set from add-on configuration"
+    fi
+}
+
 # Directory the terminal session starts in.
 #
 # Defaults to /config, which is what the container already used: the Dockerfile
@@ -655,6 +679,7 @@ main() {
     bashio::log.info "Initializing Claude Terminal app..."
 
     init_environment
+    export_oauth_token
 
     # Run diagnostics after environment is initialized (Claude binary needs PATH setup)
     run_health_check
