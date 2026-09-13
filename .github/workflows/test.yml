@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'claude-terminal/**'
+      - 'tests/**'
       - '.github/workflows/test.yml'
   # Run on every PR (no paths filter): the branch ruleset requires
   # `Test build amd64` and `Test build aarch64` to pass, so a PR that doesn't
@@ -45,6 +46,33 @@ jobs:
         with:
           architectures: ${{ env.ARCHITECTURES }}
           image-name: ${{ env.IMAGE_NAME }}
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.20.0' # renovate: datasource=node-version depName=node-lts-24 packageName=node
+          cache: npm
+          cache-dependency-path: claude-terminal/wrapper/package-lock.json
+
+      # Startup-script helpers: sourced with bashio stubbed, so they run
+      # without a Supervisor or a container. See tests/README.md.
+      - name: Shell tests
+        run: |
+          bash --version | head -1
+          tests/run-tests.sh
+
+      - name: Wrapper tests
+        working-directory: claude-terminal/wrapper
+        run: |
+          npm ci
+          npm test
 
   build:
     name: Test build ${{ matrix.arch }}
