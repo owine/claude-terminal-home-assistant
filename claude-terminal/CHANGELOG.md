@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.6](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.5...v2.8.6) (2026-09-13)
+
+
+### Dependencies
+
+* update dependency alpine_3_24/vim to v9.2.1091-r0 ([#346](https://github.com/owine/claude-terminal-home-assistant/issues/346)) ([b34089d](https://github.com/owine/claude-terminal-home-assistant/commit/b34089d90346cd3973843fcceca4b8b26d9ca268))
+
 ## [2.8.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.4...v2.8.5) (2026-09-08)
 
 
