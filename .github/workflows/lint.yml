@@ -6,6 +6,7 @@ on:
     paths:
       - 'claude-terminal/**'
       - 'tools/**'
+      - 'tests/**'
       - 'test-wrapper-integration.sh'
       - '.github/workflows/**'
       - '.hadolint.yaml'
@@ -54,6 +55,7 @@ jobs:
             claude-terminal/run.sh \
             claude-terminal/scripts/*.sh \
             claude-terminal/scripts/persist-install \
+            tests/*.sh \
             test-wrapper-integration.sh
 
       - name: yamllint
