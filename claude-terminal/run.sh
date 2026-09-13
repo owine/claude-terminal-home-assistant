@@ -87,6 +87,11 @@ init_environment() {
         bashio::log.info "  - npm cache: ephemeral ($npm_config_cache)"
     fi
 
+    # Same class of backup bloat as the npm cache above, different directory:
+    # superseded Claude Code binaries accumulate in versions/. XDG_DATA_HOME
+    # and HOME are both exported by this point.
+    prune_claude_versions
+
     # Setup persistent package paths (HIGHEST PRIORITY)
     # Include $HOME/.local/bin for Claude Code native components
     export PATH="$persist_bin:$persist_python/venv/bin:$HOME/.local/bin:$PATH"
@@ -212,6 +217,48 @@ PROFILE_EOF
     bashio::log.info "  - GitHub config: $GH_CONFIG_DIR"
     bashio::log.info "  - Cache: $XDG_CACHE_HOME"
     bashio::log.info "  - Persistent packages: $persist_root"
+}
+
+# Reclaim persistent storage taken by superseded Claude Code binaries.
+#
+# The native CLI self-updates through its own path regardless of any add-on
+# setting (autoUpdatesProtectedForNative exempts native installs from the
+# autoUpdates toggle), leaving a ~250 MB binary behind in versions/ on every
+# update. XDG_DATA_HOME points into /data, so each one is dead weight carried
+# into every Home Assistant backup from then on - the same failure mode as the
+# legacy npm cache handled above.
+#
+# Keep two entries: whatever the active symlink resolves to, and the newest
+# entry (so a rollback target survives). Prune the rest. A pruned binary that
+# is mid-execution keeps running - the inode stays alive until the process
+# exits - so no running-session check is needed.
+prune_claude_versions() {
+    local versions_dir="${XDG_DATA_HOME:?}/claude/versions"
+    [ -d "$versions_dir" ] || return 0
+
+    local active newest entry canonical pruned=0
+    # Both sides of the comparison are canonicalized. readlink -f resolves every
+    # component, so comparing its output against a raw "$versions_dir/*" path
+    # silently fails to match whenever any parent component is itself a symlink
+    # - and a missed match here deletes the binary that is actually in use.
+    active=$(readlink -f "$HOME/.local/bin/claude" 2>/dev/null || true)
+    # busybox-safe newest-entry lookup: find -printf is not available here, and
+    # version directory names are semver (no whitespace or globs to mangle).
+    # shellcheck disable=SC2012  # ls is safe for these controlled names
+    newest=$(readlink -f "$versions_dir/$(ls -1t "$versions_dir" 2>/dev/null | head -1)" 2>/dev/null || true)
+
+    for entry in "$versions_dir"/*; do
+        [ -e "$entry" ] || continue
+        canonical=$(readlink -f "$entry" 2>/dev/null || echo "$entry")
+        [ -n "$active" ] && [ "$canonical" = "$active" ] && continue
+        [ -n "$newest" ] && [ "$canonical" = "$newest" ] && continue
+        rm -rf "$entry"
+        pruned=$((pruned + 1))
+    done
+
+    if [ "$pruned" -gt 0 ]; then
+        bashio::log.info "  - Claude versions: pruned $pruned superseded binary/binaries from /data"
+    fi
 }
 
 # One-time migration of existing authentication files
