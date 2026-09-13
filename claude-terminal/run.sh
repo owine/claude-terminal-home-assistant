@@ -324,6 +324,16 @@ setup_session_picker() {
         chmod +x /opt/scripts/claude-auth-helper.sh
         bashio::log.info "Authentication helper script ready"
     fi
+
+    # Expose the health check as a user-facing diagnostic. It already runs once
+    # at boot into the add-on log, which is not where a user looks when the
+    # terminal misbehaves - they are in the terminal. A symlink rather than a
+    # copy so the two can never drift.
+    if [ -f "/opt/scripts/health-check.sh" ]; then
+        chmod +x /opt/scripts/health-check.sh
+        ln -sf /opt/scripts/health-check.sh /usr/local/bin/claude-doctor
+        bashio::log.info "Diagnostic command installed: 'claude-doctor'"
+    fi
 }
 
 # Setup persistent package manager
