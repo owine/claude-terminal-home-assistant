@@ -89,6 +89,11 @@ map:
   # (HA default mount). Always-on read-write; see DOCS.md "Add-on Config Access".
   - type: all_addon_configs
     read_only: false
+  # share exposes /share, the folder Home Assistant and other add-ons use to
+  # exchange files. Read-write so Claude can work on files placed there - a
+  # natural home for projects that are not Home Assistant configuration.
+  - type: share
+    read_only: false
 
 # API access for Home Assistant integration
 # hassio_api + role manager: the Supervisor endpoints used for add-on and host

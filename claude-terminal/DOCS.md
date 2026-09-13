@@ -131,6 +131,14 @@ persistent_pip_packages:
 
 Your OAuth credentials are stored in the `/config/claude-config` directory and will persist across app updates and restarts, so you won't need to log in again.
 
+### Shared Folder Access
+
+The terminal mounts `/share`, the folder Home Assistant and other add-ons use to
+exchange files, read-write. It is a natural place to keep projects that are not
+Home Assistant configuration, and a convenient handoff point for files produced
+by other add-ons. Point `working_directory` at a path under `/share` if that is
+where you usually work.
+
 ### Add-on Config Access
 
 In addition to your Home Assistant config at `/config`, the terminal mounts every
