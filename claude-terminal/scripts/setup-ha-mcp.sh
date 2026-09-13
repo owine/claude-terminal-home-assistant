@@ -52,9 +52,23 @@ configure_ha_mcp_server() {
     #   HOMEASSISTANT_TOKEN: Supervisor token for authentication
     # ENABLE_SKILLS: Serve bundled HA best-practice skills as MCP resources (skill:// URIs)
     # ENABLE_SKILLS_AS_TOOLS: Also expose skills as tools for broader client compatibility
+    #
+    # HOMEASSISTANT_TOKEN is stored as the literal string ${SUPERVISOR_TOKEN} --
+    # the single quotes are deliberate, so this shell does NOT expand it. Claude
+    # Code expands ${VAR} from its own environment when it launches the MCP
+    # server, which keeps the live Supervisor credential out of the on-disk MCP
+    # config under $HOME (/data/home/.claude.json) and therefore out of every
+    # Home Assistant backup. Double quotes here wrote the token verbatim into
+    # /data, against this repo's own credential-handling convention.
+    #
+    # The token is present where it is actually needed: run.sh runs under
+    # with-contenv, so SUPERVISOR_TOKEN is in the environment the tmux server,
+    # ttyd and claude inherit, and tmux.conf lists it in update-environment so
+    # re-attached sessions keep it.
+    # shellcheck disable=SC2016  # the literal ${SUPERVISOR_TOKEN} is the point
     if timeout 30 claude mcp add home-assistant \
         --env "HOMEASSISTANT_URL=http://supervisor/core" \
-        --env "HOMEASSISTANT_TOKEN=${SUPERVISOR_TOKEN}" \
+        --env 'HOMEASSISTANT_TOKEN=${SUPERVISOR_TOKEN}' \
         --env "ENABLE_SKILLS=true" \
         --env "ENABLE_SKILLS_AS_TOOLS=true" \
         -- "$HA_MCP_BIN"; then
@@ -63,7 +77,7 @@ configure_ha_mcp_server() {
         bashio::log.info "Available tools: entity control, automations, scripts, history, and more"
     else
         bashio::log.warning "Failed to configure ha-mcp - continuing without MCP integration"
-        bashio::log.warning "You can manually run: claude mcp add home-assistant --env HOMEASSISTANT_URL=http://supervisor/core --env HOMEASSISTANT_TOKEN=\$SUPERVISOR_TOKEN -- ${HA_MCP_BIN}"
+        bashio::log.warning "You can manually run: claude mcp add home-assistant --env HOMEASSISTANT_URL=http://supervisor/core --env 'HOMEASSISTANT_TOKEN=\${SUPERVISOR_TOKEN}' -- ${HA_MCP_BIN}"
     fi
 }
 
