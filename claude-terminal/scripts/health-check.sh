@@ -112,18 +112,46 @@ check_claude_cli() {
     # Check known install locations directly — do not rely on PATH here because
     # with-contenv resets PATH to the s6 container environment, which does not
     # include /data/home/.local/bin (set at runtime by run.sh, not at build time).
+    #
+    # Order mirrors the runtime PATH that run.sh exports
+    # (/data/packages/bin, then $HOME/.local/bin, then the system path), so the
+    # binary probed here is the one a user's `claude` actually launches.
+    # Probing the bundled /root copy first would green-tick a working binary
+    # while the persistent copy that really runs is broken - and diagnosing
+    # exactly that is the point of this check. /root/.local/bin is not even on
+    # the runtime PATH; it is the build-time source init_environment copies
+    # from, so it is only a last resort for a container that has not finished
+    # initializing.
     local claude_bin=""
-    for candidate in /root/.local/bin/claude /data/home/.local/bin/claude; do
+    for candidate in /data/packages/bin/claude /data/home/.local/bin/claude /root/.local/bin/claude; do
         if [ -x "$candidate" ]; then
             claude_bin="$candidate"
             break
         fi
     done
 
-    if [ -n "$claude_bin" ]; then
-        bashio::log.info "Claude CLI found at: $claude_bin ✓"
-    else
+    if [ -z "$claude_bin" ]; then
         bashio::log.error "Claude CLI not found ✗"
+        bashio::log.info "Restart the add-on: startup installs the binary into"
+        bashio::log.info "/data/home/.local/bin from the bundled copy at /root/.local/bin"
+        return 1
+    fi
+
+    bashio::log.info "Claude CLI found at: $claude_bin ✓"
+
+    # Present and executable is not the same as runnable. The native build is
+    # dynamically linked, so a libc mismatch aborts it on launch with
+    # "Error relocating ...: symbol not found" while the file is still there
+    # and +x. That is precisely the state this command exists to diagnose, so
+    # actually run it. The timeout also catches the AVX-masked VM case flagged
+    # by check_cpu_capabilities, where claude spins at 100% CPU forever.
+    local version
+    if version=$(timeout 10 "$claude_bin" --version 2>/dev/null) && [ -n "$version" ]; then
+        bashio::log.info "Claude CLI runs: ${version} ✓"
+    else
+        bashio::log.error "Claude CLI is present but fails to run ✗"
+        bashio::log.info "Output of '${claude_bin} --version':"
+        timeout 10 "$claude_bin" --version 2>&1 | head -5 || true
         return 1
     fi
 }

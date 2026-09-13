@@ -224,6 +224,9 @@ claude --help
 
 - `menu` - Return to session picker from bash shell
 - `persist-install` - Install packages that survive reboots (see Persistent Packages section)
+- `claude-doctor` - Diagnose environment problems: memory and disk in `/data`, CPU
+  AVX support, directory permissions, Node.js, and whether the Claude binary is
+  both present and actually runnable
 
 The terminal starts directly in your `/config` directory, giving you immediate access to all your Home Assistant configuration files. This makes it easy to get help with your configuration, create automations, and troubleshoot issues.
 
@@ -431,6 +434,10 @@ See [PERSISTENT_PACKAGES.md](PERSISTENT_PACKAGES.md) for complete guide.
 
 ## Troubleshooting
 
+- Run `claude-doctor` in the terminal first — it reports the environment faults
+  behind most failures, including the two that look like a hang rather than an
+  error: a CPU without AVX (common on Proxmox/QEMU VMs using the default `kvm64`
+  CPU type) and a Claude binary that is installed but aborts on launch
 - If Claude doesn't start automatically, try running `claude` manually
 - If you see permission errors, try restarting the app
 - If you have authentication issues, try logging out and back in
