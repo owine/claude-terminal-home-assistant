@@ -39,6 +39,12 @@ options:
   #   started. A path that does not exist warns in the log and falls back to
   #   /config rather than failing - a typo must not take the terminal down.
   working_directory: ""
+  # claude_code_oauth_token: Non-interactive auth. Generate with
+  #   `claude setup-token` on a machine where you are already logged in, then
+  #   paste it here to skip the browser OAuth flow entirely. Masked in the UI
+  #   and never written to the log. Leave empty to log in interactively.
+  #   Note: token auth cannot establish Remote Control sessions.
+  claude_code_oauth_token: ""
   # tmux_mouse_mode: Enable mouse support in tmux
   #   When true (default): the wheel scrolls tmux history and a drag selects and
   #     copies. To select with the terminal's own selection instead, hold Shift
@@ -63,6 +69,7 @@ schema:
   dangerously_skip_permissions: bool?
   enable_ha_mcp: bool?
   working_directory: str?
+  claude_code_oauth_token: password?
   tmux_mouse_mode: bool?
   persist_npm_cache: bool?
   persistent_apk_packages:
