@@ -32,6 +32,15 @@ docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
 docker run -p 7680:7680 -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
 curl -X GET http://localhost:7680/
 
+# Shell unit tests for the startup scripts (run.sh, health-check.sh). No deps,
+# no container: each suite sources the script with bashio stubbed and points it
+# at a fixture tree. Runs in CI as the "Unit tests" job. See tests/README.md.
+tests/run-tests.sh
+tests/run-tests.sh health     # filter by filename
+
+# Wrapper JS unit tests
+(cd claude-terminal/wrapper && npm test)
+
 # Integration test: real browsers against a real tmux. NOT part of `npm test` and
 # NOT run by CI (needs a container and browser engines). It covers the wiring
 # between browser, xterm.js, ttyd and tmux that unit tests cannot see - every
@@ -43,11 +52,17 @@ CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \
   node claude-terminal/wrapper/test/integration/mouse-and-clipboard.mjs
 ```
 
+Startup-script helpers are unit-tested — `run.sh` and `health-check.sh` guard
+their entrypoints with `[ "${BASH_SOURCE[0]}" = "${0}" ]` so tests can source
+them. Keep that guard when editing either file, and note that `bashio::log.*`
+writes to `$LOG_FD` rather than stdout: a helper whose result is read via
+command substitution must never have its log output redirected to stdout.
+
 ### Linting (run from repo root)
 ```bash
 hadolint claude-terminal/Dockerfile
 shellcheck --external-sources claude-terminal/run.sh claude-terminal/scripts/*.sh \
-  claude-terminal/scripts/persist-install test-wrapper-integration.sh
+  claude-terminal/scripts/persist-install tests/*.sh test-wrapper-integration.sh
 yamllint -c .yamllint.yml claude-terminal/config.yaml \
   .trivy.yaml .github/workflows/
 actionlint
@@ -219,7 +234,7 @@ gh run list --workflow=publish.yml --limit 3
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `release-please.yml` | Push to main | Maintain Release PR (version bump + changelog) |
-| `test.yml` | Push to main, PRs | Validate builds (2-job: init → per-arch native builds, no QEMU) |
+| `test.yml` | Push to main, PRs | Unit tests (shell + wrapper JS) and build validation (init → per-arch native builds, no QEMU) |
 | `lint.yml` | Push/PR to main | hadolint, shellcheck, yamllint, actionlint |
 | `publish.yml` | Release published | Build + sign + push images (4-job: init → per-arch → manifest → scan) |
 | `security.yml` | Push/PR to main + weekly cron | Trivy filesystem security scan; opens tracking issue on findings |
