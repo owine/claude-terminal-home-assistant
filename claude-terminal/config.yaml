@@ -78,10 +78,14 @@ map:
     read_only: false
 
 # API access for Home Assistant integration
+# hassio_api + role manager: the Supervisor endpoints used for add-on and host
+#   information; /addons needs manager, /core/info and /host/info need default
+# homeassistant_api: the /core/api/* proxy used by ha-mcp
+# Deliberately NOT auth_api: it grants only http://supervisor/auth, which
+#   validates a Home Assistant username and password. Nothing here calls it.
 hassio_api: true
 hassio_role: manager
 homeassistant_api: true
-auth_api: true
 # Docker socket access (inert while Protection Mode is ON).
 # Lets the terminal talk to the host Docker daemon when the user disables
 # Protection Mode AND sets enable_docker: true. See DOCS.md "Docker Access".
