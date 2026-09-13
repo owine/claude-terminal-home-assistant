@@ -34,6 +34,11 @@ options:
   auto_launch_claude: true
   dangerously_skip_permissions: false
   enable_ha_mcp: true
+  # working_directory: Directory the terminal session starts in.
+  #   Empty (default) means /config, which is where the container already
+  #   started. A path that does not exist warns in the log and falls back to
+  #   /config rather than failing - a typo must not take the terminal down.
+  working_directory: ""
   # tmux_mouse_mode: Enable mouse support in tmux
   #   When true (default): the wheel scrolls tmux history and a drag selects and
   #     copies. To select with the terminal's own selection instead, hold Shift
@@ -57,6 +62,7 @@ schema:
   auto_launch_claude: bool?
   dangerously_skip_permissions: bool?
   enable_ha_mcp: bool?
+  working_directory: str?
   tmux_mouse_mode: bool?
   persist_npm_cache: bool?
   persistent_apk_packages:

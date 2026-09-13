@@ -440,6 +440,34 @@ init_docker() {
 
 # Legacy monitoring functions removed - using simplified /data approach
 
+# Directory the terminal session starts in.
+#
+# Defaults to /config, which is what the container already used: the Dockerfile
+# sets WORKDIR /config, so run.sh - and therefore the tmux server and every
+# session it spawns - inherits it. Keeping /config as the default makes this
+# option a no-op for anyone who does not set it.
+#
+# A configured directory that does not exist warns and falls back rather than
+# failing: a typo in an add-on option must never take the terminal down, since
+# the terminal is how the user would fix the typo. Claude Code shows its
+# one-time per-directory trust prompt on first use of a new directory.
+get_working_directory() {
+    local dir
+    dir=$(bashio::config 'working_directory' '')
+
+    if [ -z "$dir" ] || [ "$dir" = "null" ]; then
+        echo "/config"
+        return 0
+    fi
+
+    if [ -d "$dir" ]; then
+        echo "$dir"
+    else
+        bashio::log.warning "working_directory '$dir' does not exist; starting in /config instead"
+        echo "/config"
+    fi
+}
+
 # Determine Claude launch command based on configuration
 get_claude_launch_command() {
     local auto_launch_claude
@@ -541,6 +569,7 @@ start_wrapper_service() {
 setup_tmux_session() {
     local session_name="claude"
     local launch_command="$1"
+    local workdir="$2"
 
     # Ensure TERM is set for proper color support in tmux
     export TERM="${TERM:-xterm-256color}"
@@ -553,7 +582,7 @@ setup_tmux_session() {
         # Create detached session running our command
         # The session runs bash with our launch command
         # Set TERM and COLORTERM explicitly for full color support
-        tmux new-session -d -s "$session_name" -x 200 -y 50 \
+        tmux new-session -d -s "$session_name" -x 200 -y 50 -c "$workdir" \
             "TERM=xterm-256color COLORTERM=truecolor bash -l -c \"$launch_command; exec bash -l\""
         bashio::log.info "tmux session created successfully"
     fi
@@ -584,7 +613,10 @@ start_web_terminal() {
 
     # Create the tmux session BEFORE ttyd starts (key insight from ttyd#1396)
     # This avoids the "nested session" error because tmux session exists independently
-    setup_tmux_session "$launch_command"
+    local workdir
+    workdir=$(get_working_directory)
+    bashio::log.info "Session working directory: ${workdir}"
+    setup_tmux_session "$launch_command" "$workdir"
 
     # Run ttyd - it just attaches to the existing tmux session
     # Each browser connection gets attached to the same session
