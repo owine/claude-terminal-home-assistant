@@ -690,5 +690,11 @@ main() {
     start_web_terminal
 }
 
-# Execute main function
-main "$@"
+# Execute main function, unless this file is being sourced.
+#
+# The guard matches the convention already used by health-check.sh and
+# setup-ha-mcp.sh, and lets tests/ source this file to exercise individual
+# helpers against stubbed bashio functions without starting the add-on.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
+fi

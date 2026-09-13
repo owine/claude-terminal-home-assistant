@@ -122,8 +122,14 @@ check_claude_cli() {
     # the runtime PATH; it is the build-time source init_environment copies
     # from, so it is only a last resort for a container that has not finished
     # initializing.
+    # CLAUDE_BIN_PREFIX is a test seam and is empty in production: it lets
+    # tests/ point the probe at a fixture tree instead of the real absolute
+    # paths, which cannot be relocated otherwise.
+    local prefix="${CLAUDE_BIN_PREFIX:-}"
     local claude_bin=""
-    for candidate in /data/packages/bin/claude /data/home/.local/bin/claude /root/.local/bin/claude; do
+    for candidate in "$prefix/data/packages/bin/claude" \
+                     "$prefix/data/home/.local/bin/claude" \
+                     "$prefix/root/.local/bin/claude"; do
         if [ -x "$candidate" ]; then
             claude_bin="$candidate"
             break
