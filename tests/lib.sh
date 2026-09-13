@@ -71,6 +71,27 @@ reset_config() {
 }
 
 # ---------------------------------------------------------------------------
+# Portability shims
+# ---------------------------------------------------------------------------
+
+# check_claude_cli guards its runnability probe with `timeout`, which Alpine
+# always provides via busybox. macOS does not ship one at all (GNU coreutils'
+# is available as `gtimeout`, or as `timeout` only if coreutils is on PATH), so
+# on a stock Mac the probe would fail with status 127 and report a healthy
+# fixture binary as broken - a suite failure that says nothing about the code.
+#
+# Define a shim only when no real timeout exists. It ignores the duration and
+# runs the command directly, which is correct for test fixtures: every stub
+# under test exits immediately. The production path is unaffected, and the
+# container's busybox timeout is used whenever it is present.
+if ! command -v timeout >/dev/null 2>&1; then
+    timeout() {
+        shift          # discard the duration
+        "$@"
+    }
+fi
+
+# ---------------------------------------------------------------------------
 # Assertions
 # ---------------------------------------------------------------------------
 

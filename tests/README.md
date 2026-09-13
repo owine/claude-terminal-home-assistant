@@ -8,8 +8,8 @@ tests/run-tests.sh            # every suite
 tests/run-tests.sh health     # only suites whose filename matches "health"
 ```
 
-No dependencies beyond bash. Runs in CI as the **Unit tests** job in
-`test.yml`, alongside the wrapper's JavaScript tests.
+No dependencies beyond bash and the usual POSIX tools. Runs in CI as the
+**Unit tests** job in `test.yml`, alongside the wrapper's JavaScript tests.
 
 ## How it works
 
@@ -72,6 +72,20 @@ Suites must run on **bash 3.2** as well as bash 5: macOS still ships 3.2 as
 unavailable on 3.2 — and fails quietly in a way that corrupts lookups rather
 than erroring, so `lib.sh` stores config values in individual variables
 instead.
+
+They must also run on a **stock macOS** with no Homebrew on `PATH`. The one
+tool that is genuinely missing there is `timeout`, which `check_claude_cli`
+uses to guard its runnability probe; Alpine has it via busybox, macOS has none.
+`lib.sh` defines a shim only when no real `timeout` is found, so the suite is
+runnable either way and the container still uses the real thing. (`readlink -f`
+needs no shim — current macOS supports it, despite the BSD `readlink` of
+folklore.)
+
+Worth re-checking with:
+
+```bash
+env PATH="/usr/bin:/bin:/usr/sbin:/sbin" tests/run-tests.sh
+```
 
 ## Test seams in production code
 
