@@ -168,6 +168,7 @@ mapping cannot be disabled without forking the add-on.
 | `auto_launch_claude` | `true` | Automatically start Claude when opening the terminal |
 | `dangerously_skip_permissions` | `false` | Run Claude with unrestricted file access ⚠️ |
 | `enable_ha_mcp` | `true` | Enable Home Assistant MCP server integration |
+| `working_directory` | `""` | Directory the terminal session starts in. Empty means `/config`, which is where it already started. A path that does not exist logs a warning and falls back to `/config` |
 | `tmux_mouse_mode` | `true` | Mouse reporting: the wheel scrolls and a drag selects. Set `false` to disable it entirely (the wheel then sends arrow keys to full-screen apps). Flip it live with **Prefix + m**. **Changed in 2.7.3** — this defaulted to `false` before, so if you never set it, the mouse became active on upgrade |
 | `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
@@ -228,7 +229,7 @@ claude --help
   AVX support, directory permissions, Node.js, and whether the Claude binary is
   both present and actually runnable
 
-The terminal starts directly in your `/config` directory, giving you immediate access to all your Home Assistant configuration files. This makes it easy to get help with your configuration, create automations, and troubleshoot issues.
+The terminal starts directly in your `/config` directory, giving you immediate access to all your Home Assistant configuration files. This makes it easy to get help with your configuration, create automations, and troubleshoot issues. Set `working_directory` if you would rather start somewhere else — for example `/addon_configs/<repo>_<slug>` or a project directory under `/share`. Claude Code asks once to trust a directory the first time you use it, then remembers.
 
 ## Features
 
