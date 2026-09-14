@@ -143,18 +143,37 @@ RUN set -eux; \
 
 # Install Home Assistant CLI (ha command)
 # Download appropriate binary based on build architecture
+#
+# NOTE: this is the one download here that is NOT checksum-verified, and that is
+# an upstream limitation rather than an oversight: home-assistant/cli publishes
+# only the two raw binaries (ha_amd64, ha_aarch64) as release assets, with no
+# checksums file to verify against. Pinning a checksum locally instead would
+# break the build on every Renovate version bump, since Renovate updates the
+# version but cannot compute the new digest.
+#
+# What is enforced: TLS 1.2+ over HTTPS only (--proto '=https' rejects a plaintext
+# redirect), an exact pinned release tag, and - as with gh and uv - actually
+# running the binary, so a truncated or corrupt download fails the build here
+# rather than at runtime inside a user's add-on.
 # renovate: datasource=github-releases depName=home-assistant/cli
 ARG HA_CLI_VERSION=5.5.0
 ARG TARGETARCH
-RUN case "${TARGETARCH}" in \
+RUN set -eux; \
+    case "${TARGETARCH}" in \
         amd64)   HA_ARCH="amd64" ;; \
         arm64)   HA_ARCH="aarch64" ;; \
         *)       echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
-    esac && \
-    echo "Installing Home Assistant CLI ${HA_CLI_VERSION} for ${HA_ARCH}..." && \
-    curl -fsSL -o /usr/bin/ha \
-        "https://github.com/home-assistant/cli/releases/download/${HA_CLI_VERSION}/ha_${HA_ARCH}" && \
-    chmod +x /usr/bin/ha && \
+    esac; \
+    \
+    echo "Installing Home Assistant CLI ${HA_CLI_VERSION} for ${HA_ARCH}..."; \
+    curl -fsSL --proto '=https' --tlsv1.2 -o /usr/bin/ha \
+        "https://github.com/home-assistant/cli/releases/download/${HA_CLI_VERSION}/ha_${HA_ARCH}"; \
+    chmod +x /usr/bin/ha; \
+    \
+    # Verify installation. `ha` has no --version flag (it is a Supervisor API
+    # client, and every subcommand needs one); --help exits 0 offline and is
+    # enough to prove the binary downloaded intact and executes.
+    ha --help > /dev/null; \
     echo "Home Assistant CLI ${HA_CLI_VERSION} installed successfully"
 
 # Install GitHub CLI (gh command) with SHA256 verification
