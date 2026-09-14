@@ -16,20 +16,21 @@ init_environment() {
     local persist_root="/data/packages"
     local persist_bin="$persist_root/bin"
     local persist_lib="$persist_root/lib"
+    local persist_libexec="$persist_root/libexec"
     local persist_python="$persist_root/python"
 
     bashio::log.info "Initializing Claude Code environment in /data..."
 
     # Create all required directories
     if ! mkdir -p "$data_home" "$data_home/.local/bin" "$config_dir/claude" "$config_dir/gh" "$cache_dir" "$state_dir" "/data/.local" \
-                  "$persist_bin" "$persist_lib" "$persist_python"; then
+                  "$persist_bin" "$persist_lib" "$persist_libexec" "$persist_python"; then
         bashio::log.error "Failed to create directories in /data"
         exit 1
     fi
 
     # Set permissions
     chmod 755 "$data_home" "$config_dir" "$cache_dir" "$state_dir" "$claude_config_dir" "$gh_config_dir" \
-              "$persist_root" "$persist_bin" "$persist_lib" "$persist_python"
+              "$persist_root" "$persist_bin" "$persist_lib" "$persist_libexec" "$persist_python"
 
     # Set XDG and application environment variables
     export HOME="$data_home"
@@ -103,6 +104,11 @@ init_environment() {
         export VIRTUAL_ENV="$persist_python/venv"
         bashio::log.info "  - Python venv: active"
     fi
+
+    # bin and lib are reached through PATH and LD_LIBRARY_PATH, which are now
+    # set. libexec cannot be: it has to be copied back onto the freshly rebuilt
+    # container filesystem before anything looks for a helper there.
+    restore_persistent_libexec
 
     # Create profile script for persistent environment variables
     # This ensures ALL bash sessions (including ttyd shells) have correct PATH
@@ -217,6 +223,53 @@ PROFILE_EOF
     bashio::log.info "  - GitHub config: $GH_CONFIG_DIR"
     bashio::log.info "  - Cache: $XDG_CACHE_HOME"
     bashio::log.info "  - Persistent packages: $persist_root"
+}
+
+# Put persisted libexec helpers back where their programs look for them.
+#
+# /data/packages/bin and /data/packages/lib work by being prepended to PATH and
+# LD_LIBRARY_PATH. libexec has no such variable: whatever uses a helper there
+# looks in a fixed absolute location - Docker finds `docker compose` at
+# /usr/libexec/docker/cli-plugins/docker-compose, git finds its helpers under
+# /usr/libexec/git-core - and that location lives on the container filesystem,
+# which is rebuilt on every restart. So the files have to be copied back.
+#
+# An existing target is never overwritten. /data outlives the image, so a helper
+# persisted against an older Alpine must not replace the one the current image
+# shipped - the same hazard as a stale credential in the legacy auth migration,
+# or a stale .so ahead of the system one on LD_LIBRARY_PATH. The image always
+# wins; persistence only fills gaps.
+#
+# PERSIST_LIBEXEC_DIR and LIBEXEC_TARGET_DIR are test seams with production
+# defaults.
+restore_persistent_libexec() {
+    local source_root="${PERSIST_LIBEXEC_DIR:-/data/packages/libexec}"
+    local target_root="${LIBEXEC_TARGET_DIR:-/usr/libexec}"
+
+    [ -d "$source_root" ] || return 0
+
+    local source relative target restored=0
+    # -type f only: directories are created on demand below, and a dangling
+    # symlink persisted from an older image would restore nothing useful.
+    while IFS= read -r source; do
+        [ -n "$source" ] || continue
+        relative="${source#"$source_root"/}"
+        target="$target_root/$relative"
+
+        # The image's own copy wins.
+        [ -e "$target" ] && continue
+
+        mkdir -p "$(dirname "$target")" || continue
+        # -a preserves the executable bit, without which Docker skips a plugin
+        # silently - indistinguishable from it not being installed.
+        cp -a "$source" "$target" 2>/dev/null && restored=$((restored + 1))
+    done <<EOF
+$(find "$source_root" -type f 2>/dev/null)
+EOF
+
+    if [ "$restored" -gt 0 ]; then
+        bashio::log.info "  - Persistent packages: restored $restored libexec helper(s)"
+    fi
 }
 
 # Reclaim persistent storage taken by superseded Claude Code binaries.

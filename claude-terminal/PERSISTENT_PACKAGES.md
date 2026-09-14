@@ -47,7 +47,7 @@ aliases (e.g. `--python`, `-p`, and `python` all work).
 
 | Command | Aliases | What it does |
 |---------|---------|--------------|
-| `persist-install <pkg> [pkg...]` | — | Install Alpine **APK system packages** (binaries → `/data/packages/bin`, libraries → `/data/packages/lib`) |
+| `persist-install <pkg> [pkg...]` | — | Install Alpine **APK system packages** (binaries → `/data/packages/bin`, libraries → `/data/packages/lib`, helpers → `/data/packages/libexec`) |
 | `persist-install --python <pkg> [pkg...]` | `-p`, `python` | Install **Python packages** with pip into the persistent venv (`/data/packages/python/venv`) |
 | `persist-install --list` | `-l`, `list` | List installed system binaries, Python packages, and total disk usage |
 | `persist-install --help` | `-h`, `help` | Show usage help (also shown when run with no arguments) |
@@ -84,6 +84,8 @@ aliases (e.g. `--python`, `-p`, and `python` all work).
 │   └── vim
 ├── lib/              # Shared libraries
 │   └── *.so files
+├── libexec/          # Helper programs, restored to /usr/libexec at startup
+│   └── docker/cli-plugins/docker-compose
 └── python/           # Python virtual environment
     └── venv/
         ├── bin/
@@ -103,6 +105,14 @@ export, from `run.sh`, is:
 ```bash
 export PATH="/data/packages/bin:/data/packages/python/venv/bin:$HOME/.local/bin:$PATH"
 export LD_LIBRARY_PATH="/data/packages/lib:${LD_LIBRARY_PATH:-}"
+
+`libexec` is the exception: there is no environment variable for it. Programs
+that use a helper there look in a fixed absolute path — Docker finds
+`docker compose` at `/usr/libexec/docker/cli-plugins/docker-compose`, git finds
+its helpers under `/usr/libexec/git-core` — and that path is on the container
+filesystem, which is rebuilt on every restart. So `run.sh` copies those files
+back at startup, preserving their directory structure. A file that the image
+already provides is never overwritten: the image is newer than `/data`.
 ```
 
 Resolved order:
