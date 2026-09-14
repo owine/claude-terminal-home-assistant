@@ -5,7 +5,38 @@
 
 PERSIST_ROOT="/data/packages"
 PERSIST_BIN="$PERSIST_ROOT/bin"
+PERSIST_LIB="$PERSIST_ROOT/lib"
 PERSIST_PYTHON="$PERSIST_ROOT/python"
+
+# `apk info -L` reports paths RELATIVE to / ("usr/bin/tree"), preceded by a
+# header line naming the package ("tree-2.2.1-r0 contains:"). Anchor a listed
+# line at / so it names a real file; a raw relative path would resolve against
+# whatever directory the caller happens to be in.
+persist_absolute_path() {
+    printf '/%s\n' "${1#/}"
+}
+
+# Echo the persistent destination directory for one line of `apk info -L`
+# output, or nothing when the line is not a file worth persisting.
+#
+# Matching absolute paths here is what made the whole feature a no-op: apk
+# emits relative paths, so the original patterns never matched and every
+# install reported success while copying nothing to /data. Accept both
+# spellings so no future caller can reintroduce that silently.
+persist_target_dir() {
+    local file="$1"
+
+    # Skip the "<pkg>-<version> contains:" header. A real path never ends in a
+    # colon, so this cannot swallow a file.
+    case "$file" in
+        ""|*:) return 0 ;;
+    esac
+
+    case "$(persist_absolute_path "$file")" in
+        /usr/bin/*|/usr/sbin/*|/bin/*|/sbin/*) printf '%s\n' "$PERSIST_BIN" ;;
+        /usr/lib/*.so|/usr/lib/*.so.*|/lib/*.so|/lib/*.so.*) printf '%s\n' "$PERSIST_LIB" ;;
+    esac
+}
 
 # Echo the Python minor version (e.g. "3.14") the system interpreter reports.
 system_python_minor() {
@@ -114,25 +145,22 @@ install_system_packages() {
 
     # Copy to persistent storage
     echo "💾 Copying to persistent storage..."
-    mkdir -p "$PERSIST_BIN" "$PERSIST_ROOT/lib"
+    mkdir -p "$PERSIST_BIN" "$PERSIST_LIB"
 
     for pkg in "${packages[@]}"; do
         echo "  Processing: $pkg"
 
-        # Get list of files installed by package
-        apk info -L "$pkg" 2>/dev/null | while read -r file; do
-            # Copy executables
-            if [[ "$file" == /usr/bin/* ]] || [[ "$file" == /usr/sbin/* ]] || [[ "$file" == /bin/* ]]; then
-                if [ -f "$file" ] && [ -x "$file" ]; then
-                    cp -a "$file" "$PERSIST_BIN/" 2>/dev/null && echo "    ✓ $(basename "$file")"
-                fi
-            fi
+        # Get list of files installed by package. persist_target_dir handles the
+        # header line and the relative paths apk emits; see its definition.
+        apk info -L "$pkg" 2>/dev/null | while read -r line; do
+            dest=$(persist_target_dir "$line")
+            [ -n "$dest" ] || continue
 
-            # Copy shared libraries
-            if [[ "$file" == /usr/lib/* ]] && [[ "$file" == *.so* ]]; then
-                if [ -f "$file" ]; then
-                    cp -a "$file" "$PERSIST_ROOT/lib/" 2>/dev/null
-                fi
+            file=$(persist_absolute_path "$line")
+            [ -f "$file" ] || continue
+
+            if cp -a "$file" "$dest/" 2>/dev/null && [ "$dest" = "$PERSIST_BIN" ]; then
+                echo "    ✓ $(basename "$file")"
             fi
         done
     done
