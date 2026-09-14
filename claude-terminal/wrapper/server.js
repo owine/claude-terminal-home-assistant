@@ -20,44 +20,17 @@ const path = require('path');
 const fs = require('fs');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { cacheControlFor } = require('./cache-policy');
+const {
+    createRateLimiter,
+    createOriginGuard,
+    errorResponseFor,
+    INVALID_FILE_TYPE,
+} = require('./http-guards');
 
 const app = express();
 const PORT = process.env.WRAPPER_PORT || 7680;
 const TTYD_PORT = process.env.TTYD_PORT || 7681;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/data/images';
-
-// Simple in-memory rate limiter (no external dependencies)
-// Uses sliding window to track requests per IP
-function createRateLimiter({ windowMs = 60000, max = 20, message = 'Too many requests, try again later' } = {}) {
-    const hits = new Map();
-
-    // Periodic cleanup to prevent memory leaks from abandoned IPs
-    const cleanup = setInterval(() => {
-        const cutoff = Date.now() - windowMs;
-        for (const [key, timestamps] of hits) {
-            const valid = timestamps.filter(t => t > cutoff);
-            if (valid.length === 0) hits.delete(key);
-            else hits.set(key, valid);
-        }
-    }, windowMs);
-    cleanup.unref(); // Don't prevent process exit
-
-    return (req, res, next) => {
-        const key = req.ip || req.socket?.remoteAddress || 'unknown';
-        const now = Date.now();
-        const cutoff = now - windowMs;
-
-        const timestamps = (hits.get(key) || []).filter(t => t > cutoff);
-
-        if (timestamps.length >= max) {
-            return res.status(429).json({ error: message });
-        }
-
-        timestamps.push(now);
-        hits.set(key, timestamps);
-        next();
-    };
-}
 
 // Rate limiters: generous for general use, stricter for uploads
 const generalLimiter = createRateLimiter({ windowMs: 60000, max: 60 });
@@ -93,39 +66,18 @@ const upload = multer({
         if (allowedMimes.includes(file.mimetype)) {
             cb(null, true);
         } else {
-            cb(new Error('Only image files are allowed'));
+            const err = new Error('Only image files are allowed');
+            // Untagged, this reached the error handler as a plain Error and
+            // was reported as a 500 - the add-on claiming it had broken when
+            // the upload was simply refused.
+            err.code = INVALID_FILE_TYPE;
+            cb(err);
         }
     }
 });
 
-// CSRF protection for state-changing requests (POST)
-// Validates Origin/Referer header to block cross-origin attacks from malicious websites
-// Allows: same-origin requests, requests with no origin (curl, non-browser clients)
-app.use((req, res, next) => {
-    if (req.method !== 'POST') return next();
-
-    const origin = req.get('Origin');
-    const referer = req.get('Referer');
-    const host = req.get('Host');
-
-    // Allow requests with no Origin header (same-origin, curl, server-to-server)
-    if (!origin && !referer) return next();
-
-    // Validate origin matches the Host header
-    const source = origin || referer;
-    try {
-        const sourceHost = new URL(source).host;
-        if (host && sourceHost === host) return next();
-    } catch {
-        // Malformed URL in Origin/Referer
-    }
-
-    // Also allow requests coming through HA ingress (X-Ingress-Path header present)
-    if (req.get('X-Ingress-Path')) return next();
-
-    console.warn(`Blocked cross-origin POST from: ${source}`);
-    return res.status(403).json({ error: 'Cross-origin requests are not allowed' });
-});
+// CSRF protection for state-changing requests (POST). See http-guards.js.
+app.use(createOriginGuard());
 
 // API routes MUST come before static files middleware
 // Otherwise static middleware will intercept API requests
@@ -207,25 +159,14 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
 }));
 
-// Multer error handling middleware
+// Upload error handling. errorResponseFor decides client-vs-server fault;
+// see http-guards.js for why that is not just `instanceof MulterError`.
 app.use((err, req, res, next) => {
-    if (err instanceof multer.MulterError) {
-        console.error('Multer error:', err.message);
-        return res.status(400).json({
-            success: false,
-            error: `Upload error: ${err.message}`
-        });
-    }
+    if (!err) return next();
 
-    if (err) {
-        console.error('Error:', err.message);
-        return res.status(500).json({
-            success: false,
-            error: err.message
-        });
-    }
-
-    next();
+    const { status, body } = errorResponseFor(err);
+    console.error(`Upload error (${status}):`, err.message);
+    return res.status(status).json(body);
 });
 
 // Create HTTP server and start listening
