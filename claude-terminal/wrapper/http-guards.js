@@ -74,13 +74,23 @@ function createOriginGuard({ log = console.warn } = {}) {
         // Allow requests with no Origin header (same-origin, curl, server-to-server)
         if (!origin && !referer) return next();
 
-        // Validate origin matches the Host header
+        // Validate origin matches the Host header.
+        //
+        // Both sides go through the URL parser, because it is not a neutral
+        // read: it lowercases the hostname and drops a default port. Comparing
+        // its output against the raw Host header compares a normalized value
+        // with an unnormalized one, so `Host: HA.LOCAL:7680` would not match an
+        // Origin of `http://HA.LOCAL:7680` and a same-origin upload would be
+        // rejected. Parsing the Host with the source's scheme makes the
+        // default-port elision symmetric too.
         const source = origin || referer;
         try {
-            const sourceHost = new URL(source).host;
-            if (host && sourceHost === host) return next();
+            const sourceUrl = new URL(source);
+            const expectedHost = host ? new URL(`${sourceUrl.protocol}//${host}`).host : null;
+            if (expectedHost && sourceUrl.host === expectedHost) return next();
         } catch {
-            // Malformed URL in Origin/Referer
+            // Malformed URL in Origin/Referer, or an unusable Host header.
+            // Either way this falls through and is refused.
         }
 
         // Also allow requests coming through HA ingress, where the Supervisor
