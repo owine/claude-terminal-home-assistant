@@ -530,7 +530,6 @@
     <script src="terminal-clipboard.js"></script>
     <script>
         let ttydPort = 7681;
-        let uploadDir = '/data/images';
 
         // Fetch configuration and load ttyd
         // Use relative paths for Home Assistant ingress compatibility
@@ -538,7 +537,6 @@
             .then(res => res.json())
             .then(config => {
                 ttydPort = config.ttydPort;
-                uploadDir = config.uploadDir;
                 console.log('Config loaded:', config);
                 // Load ttyd via proxy endpoint
                 loadTerminal();

@@ -41,9 +41,10 @@ tests/run-tests.sh health     # filter by filename
 # Wrapper JS unit tests
 (cd claude-terminal/wrapper && npm test)
 
-# Integration test: real browsers against a real tmux. NOT part of `npm test` and
-# NOT run by CI (needs a container and browser engines). It covers the wiring
-# between browser, xterm.js, ttyd and tmux that unit tests cannot see - every
+# Integration test: real browsers against a real tmux. NOT part of `npm test`,
+# but CI does run it - test.yml runs it on the amd64 build only, since
+# Playwright ships no WebKit build for aarch64. It covers the wiring between
+# browser, xterm.js, ttyd and tmux that unit tests cannot see - every
 # mouse/clipboard bug of 2.7.0-2.7.4 lived there and passed CI. Runs both WebKit
 # and Chromium, against the direct port AND an ingress-shaped harness.
 docker run -d --name ctp -p 7680:7680 -p 7681:7681 local/claude-terminal-prowine

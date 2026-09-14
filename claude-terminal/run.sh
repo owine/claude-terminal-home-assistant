@@ -311,14 +311,14 @@ migrate_legacy_auth_files() {
             if cp -a "$legacy_path/." "$target_dir/" 2>/dev/null; then
                 # Set proper permissions
                 find "$target_dir" -type f -exec chmod 600 {} \;
-                
+
                 # Create compatibility symlink if this is a standard location
                 if [[ "$legacy_path" == "$prefix/root/.config/anthropic" ]] || [[ "$legacy_path" == "$prefix/root/.anthropic" ]]; then
                     rm -rf "$legacy_path"
                     ln -sf "$target_dir" "$legacy_path"
                     bashio::log.info "Created compatibility symlink: $legacy_path -> $target_dir"
                 fi
-                
+
                 # Record the source only after a successful copy, so a failed
                 # migration is retried on the next boot rather than skipped.
                 printf '%s\n' "$legacy_path" >> "$marker"

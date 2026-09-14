@@ -422,7 +422,7 @@ compare /data/images/pasted-123.png and /data/images/pasted-456.png
 
 **Dependencies:**
 - Express v5.2.1 (HTTP server with security improvements)
-- Multer v2.2.0 (multipart/form-data handling, fixes critical CVEs)
+- Multer v2.3.0 (multipart/form-data handling, fixes critical CVEs)
 - ARM-compatible for Raspberry Pi
 
 **Resource Usage:**
