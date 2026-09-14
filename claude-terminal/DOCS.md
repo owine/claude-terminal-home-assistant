@@ -337,11 +337,29 @@ Claude Terminal can be installed as a Progressive Web App on your phone or table
 #### Access Methods
 
 The PWA works with any of these access methods:
-- **Direct port**: `http://your-ha-ip:7680`
 - **HA external URL**: Through Home Assistant's sidebar (via Nabu Casa or reverse proxy)
 - **Custom reverse proxy**: e.g., `https://claude.yourdomain.com`
+- **Direct port**: `http://your-ha-ip:7680` — off by default, see the warning below
 
-**Tip:** For the most reliable PWA experience, install via a stable URL (direct IP or reverse proxy) rather than HA ingress. Ingress tokens can rotate, which may require re-adding the app.
+**Tip:** For the most reliable PWA experience, install via a stable URL (reverse proxy, or the direct port) rather than HA ingress. Ingress tokens can rotate, which may require re-adding the app.
+
+> [!WARNING]
+> **The direct port has no authentication.** Ingress is gated by your Home
+> Assistant login; port 7680 is not gated by anything. The web UI proxies
+> straight through to a writable terminal attached to a root shell with access
+> to `/config`, `/share`, every add-on's config, and — if you enabled it — the
+> host Docker socket. Anyone who can reach `http://your-ha-ip:7680` has all of
+> that, with no password.
+>
+> That is why the port is **not published by default**. To turn it on, open the
+> add-on's **Configuration → Network** section, set **7680** as the host port,
+> and save. Only do this on a network you trust, or put an authenticating
+> reverse proxy in front of it — never forward this port to the internet.
+>
+> **Upgrading from 2.8.5 or earlier?** The port used to be published by
+> default. If you reach the add-on at `http://your-ha-ip:7680` (including a PWA
+> installed from that URL) and it stops loading after the upgrade, re-add the
+> port as above — your setup still works, it just has to be asked for now.
 
 #### Offline Support
 

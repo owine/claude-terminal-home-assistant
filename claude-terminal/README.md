@@ -75,7 +75,7 @@ claude-logout
 
 The app works with zero configuration out of the box, with optional settings available (see [DOCS.md](DOCS.md#configuration) for the full list of options):
 
-- **Port**: Web interface and HA ingress run on port 7680 (the internal ttyd terminal uses 7681)
+- **Port**: The web interface is reached through HA ingress. Port 7680 can also be published directly from **Configuration → Network**, but it is unauthenticated — see the warning in [DOCS.md](DOCS.md#access-methods) before turning it on
 - **Authentication**: OAuth with Anthropic (credentials stored securely in `/config/claude-config/`)
 - **Terminal**: Full bash environment with Claude Code CLI pre-installed
 - **Volumes**: Access to your Home Assistant `/config` directory
