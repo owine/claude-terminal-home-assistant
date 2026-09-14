@@ -92,6 +92,31 @@ test('allows a POST whose Referer matches the Host when Origin is absent', () =>
     assert.strictEqual(run(guard, req).allowed, true);
 });
 
+// Both sides of the comparison have to have been through the same
+// normalization. `new URL(origin).host` lowercases the hostname and drops a
+// default port; the raw Host header gets neither, so comparing them directly
+// rejects requests that are in fact same-origin. Same bug class as the
+// canonicalization note in prune_claude_versions (run.sh).
+test('allows a same-origin POST when the Host header differs only in case', () => {
+    const guard = createOriginGuard(silent);
+    const req = makeReq({
+        method: 'POST',
+        headers: { Host: 'HA.LOCAL:7680', Origin: 'http://HA.LOCAL:7680' },
+    });
+    assert.strictEqual(run(guard, req).allowed, true);
+});
+
+test('allows a same-origin POST when only one side spells out the default port', () => {
+    // Origin http://ha.local:80 parses to host "ha.local"; a proxy that passes
+    // the Host through unnormalized still says "ha.local:80".
+    const guard = createOriginGuard(silent);
+    const req = makeReq({
+        method: 'POST',
+        headers: { Host: 'ha.local:80', Origin: 'http://ha.local' },
+    });
+    assert.strictEqual(run(guard, req).allowed, true);
+});
+
 test('blocks a POST from a different origin', () => {
     const guard = createOriginGuard(silent);
     const req = makeReq({
@@ -110,6 +135,28 @@ test('blocks a POST from a different port on the same hostname', () => {
     const req = makeReq({
         method: 'POST',
         headers: { Host: 'ha.local:7680', Origin: 'http://ha.local:8123' },
+    });
+    assert.strictEqual(run(guard, req).allowed, false);
+});
+
+test('still blocks a different port once normalization is applied', () => {
+    // Normalizing must not become "close enough": a non-default port that
+    // genuinely differs is still a different origin.
+    const guard = createOriginGuard(silent);
+    const req = makeReq({
+        method: 'POST',
+        headers: { Host: 'ha.local:7680', Origin: 'http://ha.local:9999' },
+    });
+    assert.strictEqual(run(guard, req).allowed, false);
+});
+
+test('blocks a POST whose Host header is unparsable', () => {
+    // Normalizing the Host means parsing it, and a garbage value must fail
+    // closed rather than throw out of the middleware.
+    const guard = createOriginGuard(silent);
+    const req = makeReq({
+        method: 'POST',
+        headers: { Host: 'not a host', Origin: 'http://ha.local:7680' },
     });
     assert.strictEqual(run(guard, req).allowed, false);
 });
