@@ -21,6 +21,7 @@ CURRENT_SUITE="persist-install"
 PERSIST_ROOT=$(new_tmpdir)
 PERSIST_BIN="$PERSIST_ROOT/bin"
 PERSIST_LIB="$PERSIST_ROOT/lib"
+PERSIST_LIBEXEC="$PERSIST_ROOT/libexec"
 
 # ---------------------------------------------------------------------------
 # persist_target_dir - the real `apk info -L` output shape
@@ -51,6 +52,31 @@ assert_eq "an unversioned shared library is a library" \
 
 assert_eq "a shared library below /lib is a library" \
     "$PERSIST_LIB" "$(persist_target_dir 'lib/libz.so.1')"
+
+# ---------------------------------------------------------------------------
+# persist_target_dir - libexec helpers
+# ---------------------------------------------------------------------------
+printf '\n%s\n' "persist_target_dir: libexec keeps its directory structure"
+
+# Unlike bin and lib, which flatten, libexec MUST keep its relative path: the
+# programs that look there find helpers by exact location, not by PATH. The
+# Docker CLI searches /usr/libexec/docker/cli-plugins for `docker compose`, so a
+# docker-compose flattened into bin/ would leave `docker compose` unavailable
+# while a stray `docker-compose` appeared on PATH.
+assert_eq "a CLI plugin keeps its plugin directory" \
+    "$PERSIST_LIBEXEC/docker/cli-plugins" \
+    "$(persist_target_dir 'usr/libexec/docker/cli-plugins/docker-compose')"
+
+assert_eq "a git helper keeps its git-core directory" \
+    "$PERSIST_LIBEXEC/git-core" \
+    "$(persist_target_dir 'usr/libexec/git-core/git-submodule')"
+
+assert_eq "a helper directly under libexec has no subdirectory" \
+    "$PERSIST_LIBEXEC" "$(persist_target_dir 'usr/libexec/helper')"
+
+assert_eq "an absolute libexec path classifies the same way" \
+    "$PERSIST_LIBEXEC/docker/cli-plugins" \
+    "$(persist_target_dir '/usr/libexec/docker/cli-plugins/docker-buildx')"
 
 # ---------------------------------------------------------------------------
 # persist_target_dir - lines that must be ignored

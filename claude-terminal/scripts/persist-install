@@ -6,6 +6,7 @@
 PERSIST_ROOT="/data/packages"
 PERSIST_BIN="$PERSIST_ROOT/bin"
 PERSIST_LIB="$PERSIST_ROOT/lib"
+PERSIST_LIBEXEC="$PERSIST_ROOT/libexec"
 PERSIST_PYTHON="$PERSIST_ROOT/python"
 
 # `apk info -L` reports paths RELATIVE to / ("usr/bin/tree"), preceded by a
@@ -32,9 +33,28 @@ persist_target_dir() {
         ""|*:) return 0 ;;
     esac
 
-    case "$(persist_absolute_path "$file")" in
+    local absolute
+    absolute=$(persist_absolute_path "$file")
+
+    case "$absolute" in
         /usr/bin/*|/usr/sbin/*|/bin/*|/sbin/*) printf '%s\n' "$PERSIST_BIN" ;;
         /usr/lib/*.so|/usr/lib/*.so.*|/lib/*.so|/lib/*.so.*) printf '%s\n' "$PERSIST_LIB" ;;
+        /usr/libexec/*)
+            # libexec keeps its directory structure, where bin and lib flatten.
+            # Nothing searches libexec by PATH: the programs that use it look in
+            # an exact location, so the relative path IS the interface. Docker
+            # finds `docker compose` at docker/cli-plugins/docker-compose and
+            # git finds its helpers under git-core; flattening either into bin
+            # would put the file on PATH and still leave the subcommand missing.
+            local relative subdir
+            relative="${absolute#/usr/libexec/}"
+            subdir=$(dirname "$relative")
+            if [ "$subdir" = "." ]; then
+                printf '%s\n' "$PERSIST_LIBEXEC"
+            else
+                printf '%s/%s\n' "$PERSIST_LIBEXEC" "$subdir"
+            fi
+            ;;
     esac
 }
 
@@ -145,7 +165,7 @@ install_system_packages() {
 
     # Copy to persistent storage
     echo "💾 Copying to persistent storage..."
-    mkdir -p "$PERSIST_BIN" "$PERSIST_LIB"
+    mkdir -p "$PERSIST_BIN" "$PERSIST_LIB" "$PERSIST_LIBEXEC"
 
     for pkg in "${packages[@]}"; do
         echo "  Processing: $pkg"
@@ -159,7 +179,11 @@ install_system_packages() {
             file=$(persist_absolute_path "$line")
             [ -f "$file" ] || continue
 
-            if cp -a "$file" "$dest/" 2>/dev/null && [ "$dest" = "$PERSIST_BIN" ]; then
+            # libexec destinations are nested (docker/cli-plugins, git-core),
+            # so the directory may not exist yet.
+            mkdir -p "$dest" 2>/dev/null || true
+
+            if cp -a "$file" "$dest/" 2>/dev/null && [ "$dest" != "$PERSIST_LIB" ]; then
                 echo "    ✓ $(basename "$file")"
             fi
         done

@@ -111,7 +111,7 @@ Set `enable_docker_buildx: true` to also install `docker buildx`, enabling multi
 
 #### Package installation note
 
-When `enable_docker: true`, the app installs `docker-cli` and `docker-cli-compose` (and `docker-cli-buildx` if enabled) via `persist-install` into `/data/packages` at startup, so they survive restarts. The version installed floats to whatever Alpine's package repos currently provide — consistent with how all `persist-install` packages behave (not version-pinned, not Renovate-tracked).
+When `enable_docker: true`, the app installs `docker-cli` and `docker-cli-compose` (and `docker-cli-buildx` if enabled) via `persist-install` into `/data/packages` at startup, so they survive restarts. The CLI plugins that back `docker compose` and `docker buildx` live under `/usr/libexec/docker/cli-plugins`, and are restored there on each start — `docker compose` works after a restart, not just `docker`. The version installed floats to whatever Alpine's package repos currently provide — consistent with how all `persist-install` packages behave (not version-pinned, not Renovate-tracked).
 
 #### Troubleshooting Docker access
 
