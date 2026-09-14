@@ -261,39 +261,72 @@ prune_claude_versions() {
     fi
 }
 
-# One-time migration of existing authentication files
+# One-time migration of existing authentication files.
+#
+# "One-time" is enforced by a marker listing the sources already migrated. It
+# used to be enforced only by the /root branch below replacing its source with
+# a symlink, which left /config/claude-config and /tmp/claude-config copying on
+# EVERY boot: a user who logged in again after the migration had the stale
+# credential in /config put back over the fresh one on the next restart.
+#
+# The marker records each source path rather than a single "migration ran"
+# flag, so a legacy directory that only appears later is still picked up.
 migrate_legacy_auth_files() {
     local target_dir="$1"
     local migrated=false
+    # Lives in the target dir, which is /data and therefore survives restarts
+    # alongside the credentials whose re-copying it is there to prevent.
+    local marker="$target_dir/.legacy-auth-migrated"
 
     bashio::log.info "Checking for existing authentication files to migrate..."
 
-    # Check common legacy locations
+    # Check common legacy locations. LEGACY_AUTH_PREFIX is a test seam and is
+    # empty in production, mirroring CLAUDE_BIN_PREFIX in health-check.sh: these
+    # paths are absolute and cannot otherwise be pointed at a fixture tree.
+    local prefix="${LEGACY_AUTH_PREFIX:-}"
     local legacy_locations=(
-        "/root/.config/anthropic"
-        "/root/.anthropic" 
-        "/config/claude-config"
-        "/tmp/claude-config"
+        "$prefix/root/.config/anthropic"
+        "$prefix/root/.anthropic"
+        "$prefix/config/claude-config"
+        "$prefix/tmp/claude-config"
     )
 
     for legacy_path in "${legacy_locations[@]}"; do
         if [ -d "$legacy_path" ] && [ "$(ls -A "$legacy_path" 2>/dev/null)" ]; then
+            # Already carried over on an earlier boot. Skipping is the whole
+            # point: the source is left in place for the user to inspect and
+            # remove, so it is still here and still looks migratable.
+            if grep -qxF -- "$legacy_path" "$marker" 2>/dev/null; then
+                bashio::log.debug "Already migrated, skipping: $legacy_path"
+                continue
+            fi
+
             bashio::log.info "Migrating auth files from: $legacy_path"
-            
-            # Copy files to new location
-            if cp -r "$legacy_path"/* "$target_dir/" 2>/dev/null; then
+
+            # "$legacy_path/." rather than "$legacy_path"/* - the glob skips
+            # dotfiles, and every file this migration exists to move is one
+            # (.credentials.json, .claude.json). With the glob it matched
+            # nothing, cp was handed the literal unexpanded pattern, and the
+            # failure was swallowed by 2>/dev/null.
+            if cp -a "$legacy_path/." "$target_dir/" 2>/dev/null; then
                 # Set proper permissions
                 find "$target_dir" -type f -exec chmod 600 {} \;
                 
                 # Create compatibility symlink if this is a standard location
-                if [[ "$legacy_path" == "/root/.config/anthropic" ]] || [[ "$legacy_path" == "/root/.anthropic" ]]; then
+                if [[ "$legacy_path" == "$prefix/root/.config/anthropic" ]] || [[ "$legacy_path" == "$prefix/root/.anthropic" ]]; then
                     rm -rf "$legacy_path"
                     ln -sf "$target_dir" "$legacy_path"
                     bashio::log.info "Created compatibility symlink: $legacy_path -> $target_dir"
                 fi
                 
+                # Record the source only after a successful copy, so a failed
+                # migration is retried on the next boot rather than skipped.
+                printf '%s\n' "$legacy_path" >> "$marker"
+                chmod 600 "$marker" 2>/dev/null || true
+
                 migrated=true
                 bashio::log.info "Migration completed from: $legacy_path"
+                bashio::log.info "You can now delete $legacy_path"
             else
                 bashio::log.warning "Failed to migrate from: $legacy_path"
             fi
