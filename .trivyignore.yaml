@@ -22,11 +22,12 @@ vulnerabilities:
   # Go stdlib and x/crypto CVEs in tempio, the templating binary baked into the
   # Home Assistant base image. Not fixable here - tempio is not an apk package and
   # is not recompiled by this add-on; only a new HA base image release can resolve
-  # these. Verified 2026-08-19 against base:3.24 digest 93ef607, which rebuilt
-  # tempio on go1.26.5 (up from go1.23.3) and x/crypto 0.31.0 - that bump retired
-  # 16 previously-listed CVEs, pruned here. The stdlib entries below need
-  # go >= 1.26.6; the x/crypto entries need x/crypto >= 0.52.0. Re-scan and prune
-  # when the base image is bumped again.
+  # these. Verified 2026-09-14 against base:3.24 digest 93ef607 - still the digest
+  # the `3.24` tag resolves to upstream, so there is no newer base to bump to.
+  # tempio there is built on go1.26.5 with x/crypto v0.31.0 (confirmed with
+  # `go version -m` on the extracted binary). The stdlib entries below need
+  # go >= 1.26.6; the x/crypto entries need x/crypto >= 0.55.0. Re-scan and prune
+  # when the base image digest moves.
   - id: CVE-2025-22869
     paths:
       - "usr/bin/tempio"
@@ -70,6 +71,17 @@ vulnerabilities:
     paths:
       - "usr/bin/tempio"
   - id: CVE-2026-56853
+    paths:
+      - "usr/bin/tempio"
+  # x/crypto/ssh source-address bypass. Trivy flags this at *module* granularity -
+  # it reads `golang.org/x/crypto v0.31.0` out of the build info - but the
+  # vulnerable package is not linked into tempio at all. The only x/crypto packages
+  # embedded in the binary are cryptobyte, bcrypt, blowfish, scrypt and pbkdf2,
+  # pulled in by Masterminds/sprig's password/hash template helpers; `x/crypto/ssh`
+  # appears nowhere (verified 2026-09-14 by grepping package paths out of the
+  # stripped binary - `go tool nm` returns nothing on it, so use `strings`). The fix
+  # landed in x/crypto 0.55.0, which only a base image rebuild can deliver.
+  - id: CVE-2026-56854
     paths:
       - "usr/bin/tempio"
   - id: CVE-2026-56858
