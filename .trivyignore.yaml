@@ -73,8 +73,13 @@ vulnerabilities:
   - id: CVE-2026-56853
     paths:
       - "usr/bin/tempio"
-  # x/crypto/ssh source-address bypass. tempio is a one-shot template renderer and
-  # never runs an SSH server, so the vulnerable code path is unreachable; the fix
+  # x/crypto/ssh source-address bypass. Trivy flags this at *module* granularity -
+  # it reads `golang.org/x/crypto v0.31.0` out of the build info - but the
+  # vulnerable package is not linked into tempio at all. The only x/crypto packages
+  # embedded in the binary are cryptobyte, bcrypt, blowfish, scrypt and pbkdf2,
+  # pulled in by Masterminds/sprig's password/hash template helpers; `x/crypto/ssh`
+  # appears nowhere (verified 2026-09-14 by grepping package paths out of the
+  # stripped binary - `go tool nm` returns nothing on it, so use `strings`). The fix
   # landed in x/crypto 0.55.0, which only a base image rebuild can deliver.
   - id: CVE-2026-56854
     paths:
