@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.9.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.5...v2.9.0) (2026-09-14)
+
+
+### Features
+
+* add a claude_code_oauth_token option for non-interactive auth ([e1c4415](https://github.com/owine/claude-terminal-home-assistant/commit/e1c441566e5a44e34978ed07947ddfdd7926db3d))
+* add a working_directory option ([e644cf5](https://github.com/owine/claude-terminal-home-assistant/commit/e644cf51a2c84b751c661aceb04f394c90a5df14))
+* expose the health check as a claude-doctor command ([cc0d74e](https://github.com/owine/claude-terminal-home-assistant/commit/cc0d74e7b7ffbc10dbad66b9d5416a8175f6a9bc))
+* mount the shared folder at /share ([8015c3a](https://github.com/owine/claude-terminal-home-assistant/commit/8015c3a271117c936144e87468f19ad9bd820761))
+* persist libexec helpers so `docker compose` survives a restart ([2ea570a](https://github.com/owine/claude-terminal-home-assistant/commit/2ea570a9835630cc1842a54399d1b60989cfce71))
+
+
+### Bug Fixes
+
+* bump the PWA cache version for the changed shell ([67672df](https://github.com/owine/claude-terminal-home-assistant/commit/67672dff7284585090ca77e894bb99f2126d9599))
+* do not publish the unauthenticated web UI port by default ([6a36999](https://github.com/owine/claude-terminal-home-assistant/commit/6a3699926a745f04037ef4fff03f8e70f399e155))
+* migrate legacy auth files once, and actually copy them ([9c605aa](https://github.com/owine/claude-terminal-home-assistant/commit/9c605aa953bd94f6596f8d985339c3f6456ac06c))
+* normalize both sides of the origin comparison ([9d9b9d8](https://github.com/owine/claude-terminal-home-assistant/commit/9d9b9d8413922e3aa7f9646f3d5b9f41c4b86339))
+* persist packages that apk lists with relative paths ([a329540](https://github.com/owine/claude-terminal-home-assistant/commit/a329540b5381de9390b1d1062bc02f76e7153422))
+* prune superseded Claude Code binaries from persistent storage ([7e4c518](https://github.com/owine/claude-terminal-home-assistant/commit/7e4c5187f4727eb5c821fe2377b56d7815ea9cad))
+* return 400 for a rejected upload, and cover the wrapper's guards ([40f6926](https://github.com/owine/claude-terminal-home-assistant/commit/40f69266805a02e239f7190891942119ef0bac82))
+* stop persisting SUPERVISOR_TOKEN into /data ([6ee2169](https://github.com/owine/claude-terminal-home-assistant/commit/6ee21699ef3046091983938dd5d2fe3a8d918aef))
+* verify the Home Assistant CLI download executes ([bcffa29](https://github.com/owine/claude-terminal-home-assistant/commit/bcffa29624d6fb841663c580787e203f84b6198c))
+
+
+### Dependencies
+
+* update all non-major dependencies ([#352](https://github.com/owine/claude-terminal-home-assistant/issues/352)) ([d6c1f13](https://github.com/owine/claude-terminal-home-assistant/commit/d6c1f133b6bd02b2160701ec7e8c64e40fbe74ec))
+* update dependency alpine_3_24/vim to v9.2.1091-r0 ([#346](https://github.com/owine/claude-terminal-home-assistant/issues/346)) ([b34089d](https://github.com/owine/claude-terminal-home-assistant/commit/b34089d90346cd3973843fcceca4b8b26d9ca268))
+
 ## [2.8.5](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.4...v2.8.5) (2026-09-08)
 
 
