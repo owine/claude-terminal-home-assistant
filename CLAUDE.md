@@ -185,11 +185,11 @@ Note: Renovate auto-tracks both `pyproject.toml` + `uv.lock`. Manual updates rar
 
 ### Renovate
 - Auto-merges patch updates; groups minor updates; individual PRs for major
-- Tracks npm, Docker, GitHub Actions, Python (uv), and Alpine apk (Repology) dependencies
+- Tracks npm, Docker, GitHub Actions, Python (uv), and Alpine apk dependencies
 - All GitHub Actions use SHA256 digest pinning (Renovate auto-updates)
-- Alpine packages in `Dockerfile` are pinned to exact versions; Renovate tracks them via the Repology datasource
+- Alpine packages in `Dockerfile` are pinned to exact versions; Renovate's dockerfile manager extracts those `apk add` pins natively (datasource `apk`)
 - The HA base image (`ghcr.io/home-assistant/base`) is pinned to a tag + digest in the Dockerfile `BUILD_FROM` ARG and tracked by Renovate's built-in dockerfile manager (digest auto-updated)
-- **IMPORTANT:** When bumping the Alpine base image (e.g., 3.23 → 3.24), you must also update `depNameTemplate` in `renovate.json` from `alpine_3_23/{{package}}` to `alpine_3_24/{{package}}` — otherwise Renovate will look up versions from the wrong Alpine release
+- **IMPORTANT:** When bumping the Alpine base image (e.g., 3.24 → 3.25), you must also update `branch=v3.24` → `branch=v3.25` in the apk `registryUrls` packageRule in `renovate.json` — otherwise Renovate will look up versions from the wrong Alpine release
 - See `renovate.json` for config
 
 ## Release Management

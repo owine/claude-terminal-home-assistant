@@ -16,17 +16,16 @@
   },
   "packageRules": [
     {
+      "description": "Alpine apk pins are extracted by Renovate's built-in dockerfile manager (>= 44.97.1) as datasource `apk`; the :alpine preset supplies the grouping, rangeStrategy and automerge posture but stays release-line agnostic, so this URL is the ONE place the Alpine release line is written. Bump `branch=v3.24` when the base image crosses a release line (3.24 -> 3.25). `components=main,community` merges both indexes in a single lookup (registryStrategy 'merge'), so community packages need no separate registryUrls override.",
+      "matchDatasources": ["apk"],
+      "registryUrls": ["https://dl-cdn.alpinelinux.org/alpine?branch=v3.24&components=main,community&arch=x86_64"]
+    },
+    {
       "description": "Auto-merge Claude Code patch updates from the stable channel",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["custom.claude-code"],
       "matchUpdateTypes": ["patch"],
       "automerge": true
-    },
-    {
-      "description": "These packages live in the Alpine community repository. Custom datasources use registryStrategy 'first', so this REPLACES the main index rather than adding to it. The URL derives its release line from the depName, so an Alpine bump stays a one-line edit to depNameTemplate. A community package missing from this rule is SILENTLY untracked: no warning, no dashboard entry. See owine/renovate-config README.",
-      "matchDatasources": ["custom.alpine"],
-      "matchPackageNames": ["/^alpine_.*/(npm|py3-aiohttp|py3-beautifulsoup4|ttyd|vim|yq-go)$/"],
-      "registryUrls": ["https://dl-cdn.alpinelinux.org/alpine/v{{ replace '_' '.' (replace 'alpine_' '' (lookup (split packageName '/') 0)) }}/community/x86_64/"]
     }
   ],
   "customManagers": [
@@ -61,21 +60,6 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+(?:local )?\\w+=\\\"(?<currentValue>[^\\\"]+)\\\""
       ]
-    },
-    {
-      "description": "Update pinned Alpine apk packages via the shared custom.alpine datasource (Alpine CDN index). IMPORTANT: bump alpine version in depNameTemplate when the base image changes (e.g. alpine_3_23 -> alpine_3_24) - it also derives the registry URL",
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^claude-terminal/Dockerfile$/"
-      ],
-      "matchStringsStrategy": "any",
-      "matchStrings": [
-        "\\s\\s(?<package>[a-z0-9][a-z0-9-_]+)=(?<currentValue>[a-z0-9-_.]+)\\s+"
-      ],
-      "versioningTemplate": "loose",
-      "datasourceTemplate": "custom.alpine",
-      "extractVersionTemplate": "^{{{package}}}-(?<version>\\d.*)\\.apk$",
-      "depNameTemplate": "alpine_3_24/{{package}}"
     }
   ],
   "customDatasources": {
