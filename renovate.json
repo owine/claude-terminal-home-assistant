@@ -16,7 +16,7 @@
   },
   "packageRules": [
     {
-      "description": "Alpine apk pins are extracted by Renovate's built-in dockerfile manager (>= 44.97.1) as datasource `apk`; the :alpine preset supplies the grouping, rangeStrategy and automerge posture but stays release-line agnostic, so this URL is the ONE place the Alpine release line is written. Bump `branch=v3.24` when the base image crosses a release line (3.24 -> 3.25). `components=main,community` merges both indexes in a single lookup (registryStrategy 'merge'), so community packages need no separate registryUrls override.",
+      "description": "Alpine apk pins are extracted by Renovate's built-in dockerfile manager (>= 44.96.0) as datasource `apk`; the :alpine preset supplies the grouping, rangeStrategy and automerge posture but stays release-line agnostic, so this URL is the ONE place the Alpine release line is written. Bump `branch=v3.24` when the base image crosses a release line (3.24 -> 3.25). `components=main,community` merges both indexes in a single lookup (registryStrategy 'merge'), so community packages need no separate registryUrls override.",
       "matchDatasources": ["apk"],
       "registryUrls": ["https://dl-cdn.alpinelinux.org/alpine?branch=v3.24&components=main,community&arch=x86_64"]
     },

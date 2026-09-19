@@ -1,0 +1,19 @@
+---
+# actionlint validates `runs-on:` against a runner-label list baked into its
+# binary. Ubuntu 26.04 went GA 2026-09-17, after the latest actionlint release
+# (v1.7.12, 2026-03-30), so every literal ubuntu-26.04 label is reported as
+# unknown. Declaring the labels here is the escape hatch actionlint's own
+# error message points to.
+#
+# Note this only ever covers the jobs that carry a literal label. The build
+# matrix jobs use `runs-on: ${{ matrix.os }}`, whose value comes from
+# home-assistant/builder -- actionlint does not evaluate that expression, so
+# those runners are invisible to this check either way.
+#
+# Remove this file once actionlint ships ubuntu-26.04 in rule_runner_label.go;
+# keeping it after that only costs the version-compatibility checks actionlint
+# does for known images.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+    - ubuntu-26.04-arm
