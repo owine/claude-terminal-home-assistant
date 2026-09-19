@@ -77,6 +77,16 @@ jobs:
   build:
     name: Test build ${{ matrix.arch }}
     needs: init
+    # Runner labels for these matrix jobs are not ours to pin. `matrix.os`
+    # comes from home-assistant/builder's prepare-multi-arch-matrix in the
+    # `init` job, which is fed only `architectures` and `image-name` and picks
+    # the labels itself -- including the `-arm` suffixed label for aarch64,
+    # a form that appears nowhere in this repo. So an Ubuntu bump for these
+    # jobs arrives inside an ordinary action-digest bump for the builder, with
+    # no mention of Ubuntu in the diff. Renovate cannot cover them either: the
+    # shared preset's github-runners customManager keys on a literal
+    # `runs-on:` value, and there is none here to key on. Don't add a literal
+    # label to "fix" that -- it would break the arch/runner pairing.
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
