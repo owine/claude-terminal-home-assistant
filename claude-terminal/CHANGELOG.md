@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.9.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.9.0...v2.9.1) (2026-09-22)
+
+
+### Dependencies
+
+* update dependency eslint to v10.11.0 ([#367](https://github.com/owine/claude-terminal-home-assistant/issues/367)) ([9264446](https://github.com/owine/claude-terminal-home-assistant/commit/92644462fc7665f80423acb0b3768682d226c4c1))
+
 ## [2.9.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.8.5...v2.9.0) (2026-09-14)
 
 
