@@ -20,6 +20,7 @@ const path = require('path');
 const fs = require('fs');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { cacheControlFor } = require('./cache-policy');
+const { handleProxyError } = require('./proxy-error');
 const {
     createRateLimiter,
     createOriginGuard,
@@ -137,18 +138,7 @@ const terminalProxy = createProxyMiddleware({
         '^/terminal': '' // Remove /terminal prefix
     },
     on: {
-        error: (err, req, res) => {
-            console.error('Proxy error:', err.message);
-            // WebSocket upgrade errors don't have standard res.status()
-            // Check if res has status method before using it
-            if (res && typeof res.status === 'function') {
-                res.status(502).send('Failed to connect to terminal');
-            } else if (res && typeof res.writeHead === 'function') {
-                // WebSocket upgrade response
-                res.writeHead(502);
-                res.end('Failed to connect to terminal');
-            }
-        }
+        error: (err, req, res) => handleProxyError(err, req, res),
     },
     logger: console
 });
