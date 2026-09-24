@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { createRateLimiter, createOriginGuard, errorResponseFor } = require('../http-guards.js');
+const { createRateLimiter, createOriginGuard, createUpgradeGuard, errorResponseFor } = require('../http-guards.js');
 
 let passed = 0;
 function test(name, fn) {
@@ -208,6 +208,109 @@ test('records the rejected source so a blocked POST is diagnosable', () => {
         headers: { Host: 'ha.local:7680', Origin: 'http://evil.example' },
     });
     run(guard, req);
+    assert.strictEqual(lines.length, 1);
+    assert.match(lines[0], /evil\.example/);
+});
+
+// ---------------------------------------------------------------------------
+// createUpgradeGuard
+// ---------------------------------------------------------------------------
+//
+// WebSocket upgrades never reach Express - server.js hands them straight to the
+// proxy from the http server's 'upgrade' event - so the origin guard above
+// never saw them. Browsers do not apply CORS to WebSockets: without this, any
+// page a LAN user visited could open the terminal socket and drive a root
+// shell. Same policy as the POST guard, applied at the socket.
+
+// A raw http.IncomingMessage, not an Express request: headers are a plain
+// object with lowercased keys and there is no req.get().
+function makeUpgradeReq(headers = {}) {
+    const lower = {};
+    for (const [k, v] of Object.entries(headers)) lower[k.toLowerCase()] = v;
+    return { url: '/terminal/ws', headers: lower };
+}
+
+function makeSocket() {
+    return {
+        written: '',
+        closed: false,
+        end(data) { if (data) this.written += data; this.closed = true; },
+        destroy() { this.closed = true; },
+    };
+}
+
+function upgrade(guard, req) {
+    const socket = makeSocket();
+    const allowed = guard(req, socket);
+    return { allowed, socket };
+}
+
+test('allows an upgrade whose Origin matches the Host', () => {
+    const guard = createUpgradeGuard(silent);
+    const req = makeUpgradeReq({ Host: 'ha.local:7680', Origin: 'http://ha.local:7680' });
+    const { allowed, socket } = upgrade(guard, req);
+    assert.strictEqual(allowed, true);
+    assert.strictEqual(socket.closed, false);
+});
+
+test('allows an upgrade with no Origin', () => {
+    // Browsers always send Origin on a WebSocket handshake; its absence means a
+    // non-browser client, which is not the cross-site case being defended.
+    const guard = createUpgradeGuard(silent);
+    const req = makeUpgradeReq({ Host: 'ha.local:7680' });
+    assert.strictEqual(upgrade(guard, req).allowed, true);
+});
+
+test('allows a same-origin upgrade when the Host header differs only in case', () => {
+    const guard = createUpgradeGuard(silent);
+    const req = makeUpgradeReq({ Host: 'HA.LOCAL:7680', Origin: 'http://HA.LOCAL:7680' });
+    assert.strictEqual(upgrade(guard, req).allowed, true);
+});
+
+test('refuses an upgrade from a different origin with a 403 and closes the socket', () => {
+    const guard = createUpgradeGuard(silent);
+    const req = makeUpgradeReq({ Host: 'ha.local:7680', Origin: 'http://evil.example' });
+    const { allowed, socket } = upgrade(guard, req);
+    assert.strictEqual(allowed, false);
+    assert.match(socket.written, /^HTTP\/1\.1 403 /);
+    assert.strictEqual(socket.closed, true);
+});
+
+test('refuses an upgrade from a different port on the same hostname', () => {
+    const guard = createUpgradeGuard(silent);
+    const req = makeUpgradeReq({ Host: 'ha.local:7680', Origin: 'http://ha.local:8123' });
+    assert.strictEqual(upgrade(guard, req).allowed, false);
+});
+
+test('refuses an upgrade whose Origin is the opaque "null"', () => {
+    // Sandboxed iframes and file:// pages send `Origin: null`. It is a browser,
+    // so it is not the no-Origin case, and it matches no Host.
+    const guard = createUpgradeGuard(silent);
+    const req = makeUpgradeReq({ Host: 'ha.local:7680', Origin: 'null' });
+    assert.strictEqual(upgrade(guard, req).allowed, false);
+});
+
+test('allows a mismatched Origin when the upgrade arrived through HA ingress', () => {
+    // Core's ingress proxy sets X-Ingress-Path on WebSocket upgrades as well as
+    // plain requests (homeassistant/components/hassio/ingress.py _init_header).
+    // A browser page cannot put a custom header on a WebSocket handshake at
+    // all, so it cannot forge this.
+    const guard = createUpgradeGuard(silent);
+    const req = makeUpgradeReq({
+        Host: 'localhost:7680',
+        Origin: 'https://hass.example',
+        'X-Ingress-Path': '/api/hassio_ingress/abc123',
+    });
+    assert.strictEqual(upgrade(guard, req).allowed, true);
+});
+
+test('records the rejected origin so a refused terminal is diagnosable', () => {
+    // A reverse proxy that rewrites Host will trip this. The log line is the
+    // only thing distinguishing that from the terminal simply not loading.
+    const lines = [];
+    const guard = createUpgradeGuard({ log: (line) => lines.push(line) });
+    const req = makeUpgradeReq({ Host: 'ha.local:7680', Origin: 'http://evil.example' });
+    upgrade(guard, req);
     assert.strictEqual(lines.length, 1);
     assert.match(lines[0], /evil\.example/);
 });

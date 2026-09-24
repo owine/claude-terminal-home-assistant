@@ -23,25 +23,26 @@ panel_admin: true
 
 # Port configuration
 #
-# Both default to null - unpublished - so the only route in is ingress, which
-# Home Assistant authenticates. Nothing in this add-on authenticates a direct
+# 7680 defaults to null - unpublished - so the only route in is ingress, which
+# Home Assistant authenticates. ttyd (7681) is not listed: it binds the
+# container's loopback and is reachable only through the wrapper. Nothing in this add-on authenticates a direct
 # connection: the web UI proxies straight through to `ttyd --writable` attached
 # to a root tmux session with /config, /share and (when enabled) the host
 # Docker socket. Publishing 7680 therefore hands a root terminal to anyone who
-# can reach the host on that port.
+# can reach the host on that port. (The wrapper does refuse WebSocket
+# connections opened by other websites, so a page a LAN user visits cannot
+# drive the terminal through their browser.)
 #
 # Assigning a host port in the add-on's Network tab is the opt-in, and is what
 # the PWA-over-a-stable-URL setup in DOCS.md needs. Put it behind an
 # authenticating reverse proxy if it leaves the LAN.
 ports:
   7680/tcp: null
-  7681/tcp: null
 ports_description:
   7680/tcp: >-
     Web UI and image upload service. WARNING: UNAUTHENTICATED - anyone who can
     reach this port gets a root terminal. Leave blank to use ingress only
     (recommended)
-  7681/tcp: "ttyd terminal (not required, access via ingress on port 7680)"
 
 # App configuration options
 options:

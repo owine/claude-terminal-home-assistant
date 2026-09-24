@@ -12,7 +12,7 @@
 //
 //   docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
 //     -t local/ctp ./claude-terminal
-//   docker run -d --name ctp -p 7680:7680 -p 7681:7681 local/ctp
+//   docker run -d --name ctp -p 7680:7680 local/ctp
 //   mkdir -p /tmp/pw && cd /tmp/pw && npm i playwright && npx playwright install webkit chromium
 //   CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \
 //     node claude-terminal/wrapper/test/integration/mouse-and-clipboard.mjs

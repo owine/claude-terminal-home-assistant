@@ -351,6 +351,11 @@ The PWA works with any of these access methods:
 > host Docker socket. Anyone who can reach `http://your-ha-ip:7680` has all of
 > that, with no password.
 >
+> The add-on does refuse terminal connections opened by *other websites*, so a
+> page someone on your LAN visits cannot reach the terminal through their
+> browser. That closes the browser route only — anything that connects to the
+> port directly still gets in.
+>
 > That is why the port is **not published by default**. To turn it on, open the
 > add-on's **Configuration → Network** section, set **7680** as the host port,
 > and save. Only do this on a network you trust, or put an authenticating
@@ -416,7 +421,7 @@ compare /data/images/pasted-123.png and /data/images/pasted-456.png
 
 **Architecture:**
 - Node.js image upload service runs on port 7680 (main web interface)
-- ttyd terminal embedded on port 7681
+- ttyd terminal on port 7681, bound to the container's loopback only and reached through the wrapper
 - Handles uploads via paste, drag-drop, or button click
 - Saves to `/data/images/` (persistent storage)
 

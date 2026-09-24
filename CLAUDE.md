@@ -28,8 +28,8 @@ docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
 # Add --no-cache when npm or Python dependencies change
 
-# Run locally (7680 = web UI/ingress, 7681 = internal ttyd), then test the web UI
-docker run -p 7680:7680 -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
+# Run locally (7680 = web UI/ingress; ttyd is loopback-only inside the container), then test the web UI
+docker run -p 7680:7680 -v "$(pwd)/config:/config" local/claude-terminal-prowine
 curl -X GET http://localhost:7680/
 
 # Shell unit tests for the startup scripts (run.sh, health-check.sh). No deps,
@@ -47,7 +47,7 @@ tests/run-tests.sh health     # filter by filename
 # browser, xterm.js, ttyd and tmux that unit tests cannot see - every
 # mouse/clipboard bug of 2.7.0-2.7.4 lived there and passed CI. Runs both WebKit
 # and Chromium, against the direct port AND an ingress-shaped harness.
-docker run -d --name ctp -p 7680:7680 -p 7681:7681 local/claude-terminal-prowine
+docker run -d --name ctp -p 7680:7680 local/claude-terminal-prowine
 mkdir -p /tmp/pw && (cd /tmp/pw && npm i playwright && npx playwright install webkit chromium)
 CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \
   node claude-terminal/wrapper/test/integration/mouse-and-clipboard.mjs
@@ -93,6 +93,7 @@ ruff check                                                # Python (tools/)
 ### Wrapper Service Gotchas
 - **WebSocket pathRewrite** is required: `'^/terminal': ''` — without it, ttyd rejects with "illegal ws path"
 - **Middleware order matters**: API routes → terminal proxy → static files → error handler
+- **WebSocket upgrades bypass Express.** They are dispatched from the http server's `upgrade` event, so no Express middleware sees them — the origin check for the terminal socket is `createUpgradeGuard` (`http-guards.js`), called in that handler. ttyd binds `127.0.0.1` only, so the wrapper is the single way in; do not rebind it to `0.0.0.0`. ttyd's own `--check-origin` is no substitute: the proxy's `changeOrigin` rewrites Host before ttyd sees it
 - **PWA cache version** (`CACHE_NAME` in `sw.js`) must be manually bumped when cached assets change
 - **Bumping `CACHE_NAME` is not enough on its own.** It invalidates the *service worker* cache only; the browser's HTTP cache sits underneath and is untouched by it. `cache-policy.js` sends `no-cache` for the shell so assets revalidate. Without that, Safari served a user 2.7.0 JavaScript against 2.7.1 HTML for an entire release
 
@@ -138,7 +139,7 @@ in 2.7.4.
 - `ANTHROPIC_CONFIG_DIR=/data/.config/claude` — Claude config
 - `HOME=/data/home` — Persistent home directory
 - `SUPERVISOR_TOKEN` — HA Supervisor API token
-- `WRAPPER_PORT=7680` / `TTYD_PORT=7681` — Service ports
+- `WRAPPER_PORT=7680` / `TTYD_PORT=7681` — Service ports (ttyd on loopback only)
 - `XDG_CONFIG_HOME=/data/.config`, `XDG_CACHE_HOME=/data/.cache`, `XDG_STATE_HOME=/data/.local/state`, `XDG_DATA_HOME=/data/.local/share`
 
 ### Important Constraints

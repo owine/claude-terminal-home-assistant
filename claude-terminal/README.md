@@ -100,11 +100,11 @@ For local development and testing:
 # Build and run locally (replace amd64 with aarch64 for ARM)
 docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
-docker run -p 7680:7680 -p 7681:7681 -v "$(pwd)/config:/config" local/claude-terminal-prowine
+docker run -p 7680:7680 -v "$(pwd)/config:/config" local/claude-terminal-prowine
 
 # Lint and validate
 hadolint claude-terminal/Dockerfile
-curl -X GET http://localhost:7680/  # 7680 = web UI/ingress (7681 is internal ttyd)
+curl -X GET http://localhost:7680/  # 7680 = web UI/ingress (ttyd listens on container loopback only)
 ```
 
 ## Architecture
