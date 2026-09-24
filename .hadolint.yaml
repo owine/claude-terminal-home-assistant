@@ -6,10 +6,6 @@ ignored:
   # FROM uses the BUILD_FROM ARG (pinned base tag + digest), which hadolint can't resolve
   - DL3006
 
-  # DL3018: Pinning apk versions is not practical for HA apps
-  # The base image manages Alpine package versions
-  - DL3018
-
   # DL4006: Set pipefail before pipes
   # Alpine's /bin/sh handles errors adequately with 'set -e'
   - DL4006

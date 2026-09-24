@@ -85,7 +85,7 @@ A web-based terminal interface with Claude Code CLI pre-installed and enhanced p
 
 #### Configuration Options
 
-The app works with zero configuration out of the box. Eight optional settings are available (auto-launch, unrestricted mode, HA MCP, tmux mouse mode, persistent APK/pip packages, and Docker access). See the [full options reference in DOCS.md](claude-terminal/DOCS.md#options).
+The app works with zero configuration out of the box. Twelve optional settings are available (auto-launch, unrestricted mode, HA MCP, working directory, OAuth token, tmux mouse mode, npm cache persistence, uploaded-image retention, persistent APK/pip packages, and Docker access with optional buildx). See the [full options reference in DOCS.md](claude-terminal/DOCS.md#options).
 
 [Documentation](claude-terminal/DOCS.md)
 

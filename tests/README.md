@@ -114,5 +114,6 @@ docker run --rm -v "$PWD:/repo:ro" -w /repo --entrypoint bash \
 
 `check_claude_cli` probes absolute install paths that cannot be relocated, so
 it honours `CLAUDE_BIN_PREFIX` — empty in production, set by tests to point at
-a fixture tree. It is the only such seam; prefer designing functions to take
-their inputs as arguments or environment over adding more.
+a fixture tree. `migrate_legacy_auth_files` has the same kind of seam,
+`LEGACY_AUTH_PREFIX`. Keep them rare: prefer designing functions to take their
+inputs as arguments or environment over adding more.

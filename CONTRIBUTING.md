@@ -32,8 +32,9 @@ See [CLAUDE.md](./CLAUDE.md) for comprehensive development documentation.
 Before submitting changes, always test locally:
 
 ```bash
-# Build the app (replace {arch} with amd64 or aarch64)
-docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.24 \
+# Build the app. base:3.24 is multi-arch, so this builds for the host;
+# add --platform linux/arm64 (or linux/amd64) to cross-build.
+docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal:test ./claude-terminal
 
 # Run locally (7680 = web UI/ingress; ttyd is loopback-only inside the container)
@@ -58,9 +59,9 @@ All code must pass linting before being merged. Run from the repo root:
 hadolint claude-terminal/Dockerfile                       # Dockerfile
 shellcheck --external-sources claude-terminal/run.sh \
   claude-terminal/scripts/*.sh claude-terminal/scripts/persist-install \
-  test-wrapper-integration.sh                             # Shell scripts
+  tests/*.sh test-wrapper-integration.sh                  # Shell scripts
 yamllint -c .yamllint.yml claude-terminal/config.yaml \
-  .trivy.yaml .github/workflows/  # YAML files
+  .trivy.yaml .trivyignore.yaml .github/workflows/        # YAML files
 actionlint                                                # GitHub Actions
 (cd claude-terminal/wrapper && npm ci && npm run lint)    # ESLint (wrapper JS)
 ruff check                                                # Python (tools/)
@@ -207,11 +208,13 @@ All PRs trigger automated workflows:
 - shellcheck for shell scripts
 - yamllint for YAML files
 - actionlint for GitHub Actions
+- ESLint for the wrapper's JavaScript
+- Ruff for Python (`tools/`)
 
-**Test Builds** (`.github/workflows/test.yml`)
-- Builds for both amd64 and aarch64
-- Builds each arch with `push: false` and runs a smoke test (no registry push)
-- Validates build configuration before merge
+**Tests** (`.github/workflows/test.yml`)
+- Unit tests: the shell suites (`tests/run-tests.sh`) and the wrapper's JS tests (`npm test`)
+- Builds for both amd64 and aarch64 with `push: false` and runs a smoke test (no registry push)
+- On amd64, the Playwright integration test drives WebKit and Chromium against the running container
 
 Check GitHub Actions results before requesting review
 
@@ -224,7 +227,7 @@ Check GitHub Actions results before requesting review
 **Solution:** Use `--no-cache` flag when dependencies change:
 ```bash
 docker build --no-cache \
-  --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.24 \
+  --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal:test ./claude-terminal
 ```
 
