@@ -95,6 +95,15 @@ function checkOrigin(header) {
     // not CORS-safelisted, so a cross-origin page cannot set it without a
     // preflight the add-on never answers - and cannot put it on a WebSocket
     // handshake at all.
+    //
+    // Deferring to ingress here does not open a cross-site route through it.
+    // The Supervisor rejects any ingress request - WebSocket upgrades included
+    // - without a valid `ingress_session` cookie (supervisor/api/ingress.py,
+    // handler), and the HA frontend sets that cookie SameSite=Strict
+    // (frontend src/data/hassio/ingress.ts), so a handshake started by another
+    // site arrives without it and is refused before reaching the add-on.
+    // Comparing Origin to X-Forwarded-Host here instead would add nothing but
+    // breakage for reverse proxies in front of HA that do not pass Host.
     if (header('x-ingress-path')) return { allowed: true };
 
     return { allowed: false, source };
