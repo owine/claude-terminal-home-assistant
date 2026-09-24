@@ -150,8 +150,30 @@ list_packages() {
     du -sh "$PERSIST_ROOT" 2>/dev/null || echo "  0B"
 }
 
+# Echo the bare package name of an apk spec: "curl=8.1-r0", "curl>8" and
+# "curl~8" all name "curl", and "curl@edge" pins a repository tag.
+#
+# `apk add` accepts a constrained spec, but `apk info -L` does not: given one it
+# prints nothing and fails. Looking the files up by the spec as typed installed
+# the package for this boot only while reporting it persisted.
+apk_package_name() {
+    printf '%s\n' "${1%%[=<>~@]*}"
+}
+
 install_system_packages() {
     local packages=("$@")
+    local pkg
+
+    # A leading dash is an option, not a package. Passed through, apk would act
+    # on it (--allow-untrusted, -X <repo>), so refuse before installing anything.
+    for pkg in "${packages[@]}"; do
+        case "$pkg" in
+            -*)
+                echo "❌ Invalid package name: $pkg (package names cannot start with -)"
+                exit 1
+                ;;
+        esac
+    done
 
     echo "📦 Installing system packages: ${packages[*]}"
     echo ""
@@ -167,12 +189,24 @@ install_system_packages() {
     echo "💾 Copying to persistent storage..."
     mkdir -p "$PERSIST_BIN" "$PERSIST_LIB" "$PERSIST_LIBEXEC"
 
+    local name listing unlisted=()
     for pkg in "${packages[@]}"; do
         echo "  Processing: $pkg"
 
         # Get list of files installed by package. persist_target_dir handles the
         # header line and the relative paths apk emits; see its definition.
-        apk info -L "$pkg" 2>/dev/null | while read -r line; do
+        name=$(apk_package_name "$pkg")
+        listing=$(apk info -L "$name" 2>/dev/null)
+
+        # Even a package with no files prints a "<pkg> contains:" header, so no
+        # output at all means the lookup failed and nothing was persisted.
+        if [ -z "$listing" ]; then
+            echo "    ❌ apk lists no files for $name - nothing was persisted"
+            unlisted+=("$pkg")
+            continue
+        fi
+
+        printf '%s\n' "$listing" | while read -r line; do
             dest=$(persist_target_dir "$line")
             [ -n "$dest" ] || continue
 
@@ -190,6 +224,10 @@ install_system_packages() {
     done
 
     echo ""
+    if [ "${#unlisted[@]}" -gt 0 ]; then
+        echo "❌ Installed but NOT persisted (lost on restart): ${unlisted[*]}"
+        exit 1
+    fi
     echo "✅ System packages installed and persisted!"
     echo "💡 These packages will survive container restarts"
 }
@@ -222,17 +260,30 @@ install_python_packages() {
         fi
 
         mkdir -p "$PERSIST_PYTHON"
-        python3 -m venv "$PERSIST_PYTHON/venv"
+        if ! python3 -m venv "$PERSIST_PYTHON/venv"; then
+            echo "❌ Failed to create virtual environment"
+            exit 1
+        fi
         echo "✅ Virtual environment ready"
         echo ""
     fi
 
     # Activate and install
-    source "$PERSIST_PYTHON/venv/bin/activate"
+    if ! source "$PERSIST_PYTHON/venv/bin/activate"; then
+        echo "❌ Failed to activate virtual environment"
+        exit 1
+    fi
 
+    # The exit status is how run.sh learns an install failed, so a failure here
+    # must not fall through to the success message below.
     echo "⏳ Installing packages..."
-    pip install --upgrade pip -q
-    pip install "${packages[@]}"
+    if ! pip install --upgrade pip -q; then
+        echo "⚠️  Could not upgrade pip; continuing with the installed version"
+    fi
+    if ! pip install "${packages[@]}"; then
+        echo "❌ Failed to install Python packages: ${packages[*]}"
+        exit 1
+    fi
 
     echo ""
     echo "✅ Python packages installed!"
