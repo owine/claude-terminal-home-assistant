@@ -61,6 +61,11 @@ jobs:
           cache: npm
           cache-dependency-path: claude-terminal/wrapper/package-lock.json
 
+      # tests/test-tmux-conf.sh drives a real tmux against the shipped config.
+      # It fails rather than skips under CI, so make sure tmux is present.
+      - name: Install tmux
+        run: command -v tmux || { sudo apt-get update -qq && sudo apt-get install -y -qq tmux; }
+
       # Startup-script helpers: sourced with bashio stubbed, so they run
       # without a Supervisor or a container. See tests/README.md.
       - name: Shell tests
