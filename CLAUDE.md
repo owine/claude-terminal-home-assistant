@@ -94,6 +94,7 @@ ruff check                                                # Python (tools/)
 - **WebSocket pathRewrite** is required: `'^/terminal': ''` — without it, ttyd rejects with "illegal ws path"
 - **Middleware order matters**: API routes → terminal proxy → static files → error handler
 - **WebSocket upgrades bypass Express.** They are dispatched from the http server's `upgrade` event, so no Express middleware sees them — the origin check for the terminal socket is `createUpgradeGuard` (`http-guards.js`), called in that handler. ttyd binds `127.0.0.1` only, so the wrapper is the single way in; do not rebind it to `0.0.0.0`. ttyd's own `--check-origin` is no substitute: the proxy's `changeOrigin` rewrites Host before ttyd sees it
+- **The wrapper runs under `supervise()` in run.sh**, which restarts it with capped back-off. Nothing else would: config.yaml has no `watchdog:`, and ttyd keeps the container "running" without it. Still, code on event-listener paths (the proxy's `on.error`, see `proxy-error.js`) must never throw — an exception there is uncaught and costs every open session a restart
 - **PWA cache version** (`CACHE_NAME` in `sw.js`) must be manually bumped when cached assets change
 - **Bumping `CACHE_NAME` is not enough on its own.** It invalidates the *service worker* cache only; the browser's HTTP cache sits underneath and is untouched by it. `cache-policy.js` sends `no-cache` for the shell so assets revalidate. Without that, Safari served a user 2.7.0 JavaScript against 2.7.1 HTML for an entire release
 
