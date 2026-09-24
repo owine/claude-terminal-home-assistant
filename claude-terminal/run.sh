@@ -517,7 +517,9 @@ init_docker() {
     bashio::log.warning "SECURITY: Only keep enable_docker on if you understand this risk."
 
     # Confirm daemon connectivity (lightweight).
-    if docker version >/dev/null 2>&1; then
+    # Bounded: a wedged daemon can accept the connection and never answer,
+    # and startup waits on this.
+    if timeout 10 docker version >/dev/null 2>&1; then
         bashio::log.info "Docker CLI ready and connected to the host daemon."
     else
         bashio::log.warning "Docker socket present but daemon unreachable ('docker version' failed)."
@@ -718,8 +720,8 @@ start_web_terminal() {
     auto_launch_claude=$(bashio::config 'auto_launch_claude' 'true')
     bashio::log.info "Auto-launch Claude: ${auto_launch_claude}"
 
-    # Start the wrapper service first (UI, proxy, uploads)
-    start_wrapper_service
+    # The wrapper (UI, proxy, uploads) is already running: main() starts it
+    # before the slow network-bound steps.
 
     # Create the tmux session BEFORE ttyd starts (key insight from ttyd#1396)
     # This avoids the "nested session" error because tmux session exists independently
@@ -767,12 +769,22 @@ main() {
     init_environment
     export_oauth_token
 
+    # Serve the UI before anything that reaches the network. Package installs,
+    # Docker CLI setup and ha-mcp registration can take minutes on a slow
+    # link, and until the wrapper listens, ingress has nothing to talk to and
+    # Home Assistant shows a bare 502. With it up, the page loads and its
+    # terminal pane connects as soon as ttyd does.
+    start_wrapper_service
+
     # Run diagnostics after environment is initialized (Claude binary needs PATH setup)
     run_health_check
     setup_session_picker
     setup_persistent_packages
     init_docker
     setup_ha_mcp
+
+    # Last: ha-mcp must be registered, and persistent packages on PATH, before
+    # the first Claude session launches inside tmux.
     start_web_terminal
 }
 
