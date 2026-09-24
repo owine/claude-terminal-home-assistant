@@ -1,7 +1,12 @@
-const CACHE_NAME = 'claude-ha-v7';
+const CACHE_NAME = 'claude-ha-v8';
 const OFFLINE_URL = './offline.html';
+// Every path is relative: under Home Assistant ingress the app is served
+// beneath a per-session path prefix, and these resolve against sw.js's URL.
+//
+// The start URL ('./') is deliberately NOT precached. Navigations never read
+// the cache (see below), so a cached shell could only ever be served offline -
+// a page whose terminal iframe cannot connect.
 const SHELL_ASSETS = [
-    './',
     './login-link.js',
     './terminal-clipboard.js',
     OFFLINE_URL,
@@ -33,7 +38,7 @@ self.addEventListener('activate', (event) => {
     );
 });
 
-// Fetch: network-first with offline fallback
+// Fetch: network-first, with different fallbacks for pages and assets
 self.addEventListener('fetch', (event) => {
     // Only handle GET requests
     if (event.request.method !== 'GET') return;
@@ -41,25 +46,25 @@ self.addEventListener('fetch', (event) => {
     // Skip WebSocket and non-http(s) requests
     if (!event.request.url.startsWith('http')) return;
 
+    // Navigations: network, else the offline page - never a cached page.
+    // The terminal needs a live connection to the add-on, so an offline copy
+    // of the shell is worse than useless: it looks like the app and does
+    // nothing. Previously a cache lookup came first, and because install had
+    // cached './', the start URL got that dead shell instead of offline.html.
+    if (event.request.mode === 'navigate') {
+        event.respondWith(
+            fetch(event.request).catch(() => caches.match(OFFLINE_URL))
+        );
+        return;
+    }
+
+    // Assets: network, else cache, else a plain 503
     event.respondWith(
         fetch(event.request)
-            .catch(() => {
-                // Network failed — try cache, then offline page for navigations
-                return caches.match(event.request)
-                    .then((cached) => {
-                        if (cached) return cached;
-
-                        // For navigation requests, serve offline page
-                        if (event.request.mode === 'navigate') {
-                            return caches.match(OFFLINE_URL);
-                        }
-
-                        // Non-navigation, non-cached: fail naturally
-                        return new Response('Network error', {
-                            status: 503,
-                            statusText: 'Service Unavailable'
-                        });
-                    });
-            })
+            .catch(() => caches.match(event.request)
+                .then((cached) => cached || new Response('Network error', {
+                    status: 503,
+                    statusText: 'Service Unavailable'
+                })))
     );
 });

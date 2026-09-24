@@ -7,7 +7,7 @@ module.exports = [
     js.configs.recommended,
     {
         // Node-side Express service, its helper modules, and this config file.
-        files: ['server.js', 'cache-policy.js', 'http-guards.js', 'eslint.config.js'],
+        files: ['server.js', 'cache-policy.js', 'http-guards.js', 'upload-naming.js', 'eslint.config.js'],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: 'commonjs',

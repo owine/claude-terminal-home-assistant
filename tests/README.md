@@ -20,8 +20,8 @@ and write to `/data`. None of that exists on a developer laptop or a CI runner.
 So each suite sources the script under test with `bashio` stubbed, and points
 it at a temporary fixture tree:
 
-- **`main` is not executed.** `run.sh`, `health-check.sh`, `setup-ha-mcp.sh`
-  and `persist-install` all guard their entrypoint with
+- **`main` is not executed.** `run.sh`, `health-check.sh`, `setup-ha-mcp.sh`,
+  `claude-session-picker.sh` and `persist-install` all guard their entrypoint with
   `[ "${BASH_SOURCE[0]}" = "${0}" ]`, so sourcing them defines functions
   without starting the add-on.
 - **Absolute paths reach fixtures through a prefix seam.** `CLAUDE_BIN_PREFIX`
