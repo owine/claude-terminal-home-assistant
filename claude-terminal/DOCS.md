@@ -478,6 +478,7 @@ See [PERSISTENT_PACKAGES.md](PERSISTENT_PACKAGES.md) for complete guide.
 - **Interactive menu**: Choose between new, continue, or resume sessions
 - **GitHub CLI**: Pre-installed with persistent authentication
 - **tmux integration**: Sessions persist across browser refreshes
+- **Your own tmux settings**: put them in `~/.tmux.local.conf`. `~/.tmux.conf` is rewritten from the add-on on every start (it carries the mouse and clipboard setup), and it sources `~/.tmux.local.conf` last, so your settings win and survive restarts
 - **Mouse and selection**: mouse reporting is on by default, so the wheel (and a touch swipe) always scrolls something sensible. Inside a full-screen program that wants the mouse - Claude Code, vim, htop - the wheel scrolls *that program's* view, the same content `PgUp`/`PgDn` moves through. At a shell prompt, where nothing has claimed the mouse, it scrolls tmux history instead. Nothing detects which program is running; tmux routes the wheel to whoever asked for it
   - **Drag to select**: a plain drag selects in tmux and copies to your clipboard automatically when you release
   - **Shift+drag** (**Option+drag** on macOS) selects using the terminal's own selection instead, which reaches into the full scrollback and also copies automatically. Use it when a full-screen app wants the mouse for itself

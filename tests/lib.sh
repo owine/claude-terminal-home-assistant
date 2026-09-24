@@ -207,21 +207,23 @@ REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 export REPO_ROOT
 
 # Create a throwaway directory that is removed when the suite exits.
+#
+# Every directory lives under one root made here, in the sourcing shell. Suites
+# call this as `dir=$(new_tmpdir)`, and command substitution runs it in a
+# subshell: recording each directory in an array - as this used to - lost the
+# record before the EXIT trap read it, and every run leaked its fixtures into
+# $TMPDIR. Removing the root needs no record at all.
+TEST_TMP_ROOT=$(mktemp -d)
+
 new_tmpdir() {
-    local d
-    d=$(mktemp -d)
-    TMPDIRS+=("$d")
-    printf '%s\n' "$d"
+    mktemp -d "$TEST_TMP_ROOT/t.XXXXXX"
 }
 
-TMPDIRS=()
 cleanup_tmpdirs() {
-    local d
-    for d in "${TMPDIRS[@]:-}"; do
-        [ -n "$d" ] && [ -d "$d" ] && rm -rf "$d"
-    done
+    rm -rf "$TEST_TMP_ROOT"
+    mkdir -p "$TEST_TMP_ROOT"
 }
-trap cleanup_tmpdirs EXIT
+trap 'rm -rf "$TEST_TMP_ROOT"' EXIT
 
 # Write an executable stub script.
 #   make_stub <path> <exit status> [stdout text] [stderr text]
