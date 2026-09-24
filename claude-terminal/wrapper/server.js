@@ -23,6 +23,7 @@ const { cacheControlFor } = require('./cache-policy');
 const {
     createRateLimiter,
     createOriginGuard,
+    createUpgradeGuard,
     errorResponseFor,
     INVALID_FILE_TYPE,
 } = require('./http-guards');
@@ -119,7 +120,9 @@ app.post('/upload', uploadLimiter, upload.single('image'), (req, res) => {
 // This allows ttyd to work through Home Assistant ingress
 // Handles both HTTP and WebSocket connections
 const terminalProxy = createProxyMiddleware({
-    target: `http://localhost:${TTYD_PORT}`,
+    // 127.0.0.1, not localhost: ttyd binds IPv4 loopback only (run.sh), and
+    // localhost may resolve to ::1 first.
+    target: `http://127.0.0.1:${TTYD_PORT}`,
     changeOrigin: true,
     ws: true, // Enable WebSocket proxying
     // Explicitly strip /terminal prefix for WebSocket upgrades
@@ -173,7 +176,12 @@ app.use((err, req, res, next) => {
 const server = http.createServer(app);
 
 // http-proxy-middleware does not auto-bind WS upgrades; without this the terminal won't connect.
-server.on('upgrade', terminalProxy.upgrade);
+// Upgrades bypass Express entirely, so the origin check has to happen here: the
+// POST guard above never sees them, and browsers apply no CORS to WebSockets.
+const upgradeGuard = createUpgradeGuard();
+server.on('upgrade', (req, socket, head) => {
+    if (upgradeGuard(req, socket)) terminalProxy.upgrade(req, socket, head);
+});
 
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Claude Terminal Wrapper Service running on port ${PORT}`);

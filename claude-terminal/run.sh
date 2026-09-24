@@ -730,10 +730,16 @@ start_web_terminal() {
 
     # Run ttyd - it just attaches to the existing tmux session
     # Each browser connection gets attached to the same session
+    #
+    # Loopback only. The wrapper is the sole client (it proxies /terminal/ to
+    # localhost), and it is where the WebSocket origin check lives. Bound to
+    # 0.0.0.0, ttyd was a second, unguarded way into the same root session -
+    # reachable by other containers on the hassio network even with 7681
+    # unpublished.
     bashio::log.info "Starting ttyd with tmux attach..."
     exec ttyd \
         --port "${port}" \
-        --interface 0.0.0.0 \
+        --interface 127.0.0.1 \
         --writable \
         tmux attach-session -t "$session_name"
 }

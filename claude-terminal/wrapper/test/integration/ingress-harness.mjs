@@ -44,6 +44,12 @@ export function startIngress({ target = 'http://localhost:7680', port = 8123 } =
         // never learns it is behind one -- which is the point, and why its URLs
         // have to stay relative.
         pathRewrite: { [`^${INGRESS_PATH}`]: '/' },
+        // HA Core stamps every proxied request with X-Ingress-Path, WebSocket
+        // upgrades included (hassio/ingress.py, _init_header). The wrapper's
+        // origin guards rely on it: changeOrigin rewrites Host, so the
+        // browser's Origin no longer matches and only this header vouches for
+        // the request. Without it the terminal socket is refused with a 403.
+        headers: { 'X-Ingress-Path': INGRESS_PATH.replace(/\/$/, '') },
     });
 
     const server = http.createServer((req, res) => {

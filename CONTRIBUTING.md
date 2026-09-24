@@ -36,8 +36,8 @@ Before submitting changes, always test locally:
 docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/{arch}-base:3.24 \
   -t local/claude-terminal:test ./claude-terminal
 
-# Run locally (7680 = web UI/ingress, 7681 = internal ttyd)
-docker run -d --name test-claude-dev -p 7680:7680 -p 7681:7681 \
+# Run locally (7680 = web UI/ingress; ttyd is loopback-only inside the container)
+docker run -d --name test-claude-dev -p 7680:7680 \
   -v $(pwd)/config:/config local/claude-terminal:test
 
 # Test in browser

@@ -56,6 +56,60 @@ function createRateLimiter({
 }
 
 /**
+ * The origin policy shared by the POST guard and the WebSocket upgrade guard.
+ *
+ * `header(name)` reads a request header by lowercase name; the two callers get
+ * headers from different shapes (Express request vs raw IncomingMessage).
+ * Returns `{ allowed, source }`, where `source` is the Origin/Referer that was
+ * judged, for the caller's log line.
+ */
+function checkOrigin(header) {
+    const origin = header('origin');
+    const referer = header('referer');
+    const host = header('host');
+
+    // Allow requests with no Origin header (same-origin, curl, server-to-server)
+    if (!origin && !referer) return { allowed: true };
+
+    // Validate origin matches the Host header.
+    //
+    // Both sides go through the URL parser, because it is not a neutral
+    // read: it lowercases the hostname and drops a default port. Comparing
+    // its output against the raw Host header compares a normalized value
+    // with an unnormalized one, so `Host: HA.LOCAL:7680` would not match an
+    // Origin of `http://HA.LOCAL:7680` and a same-origin upload would be
+    // rejected. Parsing the Host with the source's scheme makes the
+    // default-port elision symmetric too.
+    const source = origin || referer;
+    try {
+        const sourceUrl = new URL(source);
+        const expectedHost = host ? new URL(`${sourceUrl.protocol}//${host}`).host : null;
+        if (expectedHost && sourceUrl.host === expectedHost) return { allowed: true };
+    } catch {
+        // Malformed URL in Origin/Referer, or an unusable Host header.
+        // Either way this falls through and is refused.
+    }
+
+    // Also allow requests coming through HA ingress, where the Supervisor
+    // rewrites Host so a legitimate Origin will not match. This header is
+    // not CORS-safelisted, so a cross-origin page cannot set it without a
+    // preflight the add-on never answers - and cannot put it on a WebSocket
+    // handshake at all.
+    //
+    // Deferring to ingress here does not open a cross-site route through it.
+    // The Supervisor rejects any ingress request - WebSocket upgrades included
+    // - without a valid `ingress_session` cookie (supervisor/api/ingress.py,
+    // handler), and the HA frontend sets that cookie SameSite=Strict
+    // (frontend src/data/hassio/ingress.ts), so a handshake started by another
+    // site arrives without it and is refused before reaching the add-on.
+    // Comparing Origin to X-Forwarded-Host here instead would add nothing but
+    // breakage for reverse proxies in front of HA that do not pass Host.
+    if (header('x-ingress-path')) return { allowed: true };
+
+    return { allowed: false, source };
+}
+
+/**
  * CSRF protection for state-changing requests (POST).
  *
  * Validates Origin/Referer against Host to block cross-origin POSTs driven by a
@@ -67,40 +121,32 @@ function createOriginGuard({ log = console.warn } = {}) {
     return (req, res, next) => {
         if (req.method !== 'POST') return next();
 
-        const origin = req.get('Origin');
-        const referer = req.get('Referer');
-        const host = req.get('Host');
-
-        // Allow requests with no Origin header (same-origin, curl, server-to-server)
-        if (!origin && !referer) return next();
-
-        // Validate origin matches the Host header.
-        //
-        // Both sides go through the URL parser, because it is not a neutral
-        // read: it lowercases the hostname and drops a default port. Comparing
-        // its output against the raw Host header compares a normalized value
-        // with an unnormalized one, so `Host: HA.LOCAL:7680` would not match an
-        // Origin of `http://HA.LOCAL:7680` and a same-origin upload would be
-        // rejected. Parsing the Host with the source's scheme makes the
-        // default-port elision symmetric too.
-        const source = origin || referer;
-        try {
-            const sourceUrl = new URL(source);
-            const expectedHost = host ? new URL(`${sourceUrl.protocol}//${host}`).host : null;
-            if (expectedHost && sourceUrl.host === expectedHost) return next();
-        } catch {
-            // Malformed URL in Origin/Referer, or an unusable Host header.
-            // Either way this falls through and is refused.
-        }
-
-        // Also allow requests coming through HA ingress, where the Supervisor
-        // rewrites Host so a legitimate Origin will not match. This header is
-        // not CORS-safelisted, so a cross-origin page cannot set it without a
-        // preflight the add-on never answers.
-        if (req.get('X-Ingress-Path')) return next();
+        const { allowed, source } = checkOrigin((name) => req.get(name));
+        if (allowed) return next();
 
         log(`Blocked cross-origin POST from: ${source}`);
         return res.status(403).json({ error: 'Cross-origin requests are not allowed' });
+    };
+}
+
+/**
+ * Cross-site WebSocket hijacking protection for the terminal socket.
+ *
+ * Upgrades are dispatched from the http server's 'upgrade' event and never pass
+ * through Express, so createOriginGuard cannot see them - and browsers do not
+ * apply CORS to WebSockets, so any page could otherwise open the terminal.
+ *
+ * Call with the raw request and socket before handing the upgrade on. Returns
+ * true to proceed; on false it has already answered 403 and closed the socket.
+ */
+function createUpgradeGuard({ log = console.warn } = {}) {
+    return (req, socket) => {
+        const { allowed, source } = checkOrigin((name) => req.headers[name]);
+        if (allowed) return true;
+
+        log(`Blocked cross-origin WebSocket from: ${source}`);
+        socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+        return false;
     };
 }
 
@@ -124,4 +170,10 @@ function errorResponseFor(err) {
     };
 }
 
-module.exports = { createRateLimiter, createOriginGuard, errorResponseFor, INVALID_FILE_TYPE };
+module.exports = {
+    createRateLimiter,
+    createOriginGuard,
+    createUpgradeGuard,
+    errorResponseFor,
+    INVALID_FILE_TYPE,
+};

@@ -128,11 +128,13 @@ jobs:
             -e SUPERVISOR_TOKEN=smoke-test-fake-token \
             "$IMAGE"
 
-          # Poll until ttyd (7681) and wrapper (7680) both respond, or timeout.
+          # Poll until the wrapper (7680) and ttyd behind it both respond, or
+          # timeout. ttyd is loopback-only, so it is reached through the
+          # wrapper's /terminal/ proxy - the same path a browser takes.
           echo "Waiting for services to start (up to 60s)..."
           READY=false
           for i in $(seq 1 30); do
-            if curl -sf --max-time 2 http://localhost:7681/ > /dev/null 2>&1 && \
+            if curl -sf --max-time 2 http://localhost:7680/terminal/ > /dev/null 2>&1 && \
                curl -sf --max-time 2 http://localhost:7680/ > /dev/null 2>&1; then
               echo "Services ready after $((i * 2))s"
               READY=true
@@ -151,10 +153,36 @@ jobs:
             exit 1
           fi
 
-          # Verify ttyd returns HTTP 200 — proves ttyd started and exec'd its command
-          TTYD_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:7681/)
-          [ "$TTYD_CODE" = "200" ] || { echo "ERROR: ttyd returned HTTP $TTYD_CODE"; exit 1; }
-          echo "ttyd endpoint: HTTP $TTYD_CODE"
+          # Verify ttyd answers through the proxy — proves ttyd started, exec'd
+          # its command, and the wrapper can reach it on loopback
+          TTYD_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:7680/terminal/)
+          [ "$TTYD_CODE" = "200" ] || { echo "ERROR: ttyd via proxy returned HTTP $TTYD_CODE"; exit 1; }
+          echo "ttyd via proxy: HTTP $TTYD_CODE"
+
+          # 7681 is published above on purpose: ttyd must NOT answer on it.
+          # ttyd binds loopback only, so docker's port forward finds nothing
+          # listening and the connection fails. An HTTP code here means ttyd
+          # is reachable from outside the container, bypassing the wrapper.
+          DIRECT_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:7681/ || true)
+          [ "$DIRECT_CODE" = "000" ] || { echo "ERROR: ttyd reachable directly on 7681 (HTTP $DIRECT_CODE)"; exit 1; }
+          echo "ttyd direct port: unreachable, as intended"
+
+          # WebSocket origin check. A handshake is the only way to exercise it:
+          # upgrades bypass Express. --max-time bounds the accepted case, where
+          # the socket stays open after the 101 and curl exits on the timeout.
+          ws_handshake() {
+            curl -s -o /dev/null -w "%{http_code}" --max-time 3 --http1.1 \
+              -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+              -H 'Sec-WebSocket-Version: 13' \
+              -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+              -H 'Sec-WebSocket-Protocol: tty' \
+              -H "Origin: $1" http://localhost:7680/terminal/ws || true
+          }
+          CROSS_CODE=$(ws_handshake http://evil.example)
+          [ "$CROSS_CODE" = "403" ] || { echo "ERROR: cross-origin WebSocket got HTTP $CROSS_CODE, want 403"; exit 1; }
+          SAME_CODE=$(ws_handshake http://localhost:7680)
+          [ "$SAME_CODE" = "101" ] || { echo "ERROR: same-origin WebSocket got HTTP $SAME_CODE, want 101"; exit 1; }
+          echo "WebSocket origin check: cross-origin 403, same-origin 101"
 
           # Verify wrapper returns HTTP 200 — proves the Node service started
           WRAP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:7680/)
