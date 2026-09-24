@@ -18,9 +18,10 @@ on:
   push:
     branches: [main]
 
+# release-please acts with the GitHub App token generated below, never with
+# GITHUB_TOKEN, so the default token needs nothing beyond read.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:

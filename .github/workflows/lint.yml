@@ -26,6 +26,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only. Without this block the job inherits the repository default, which
+# is a write-all token able to approve pull requests - and this job runs
+# `npm ci` on PR code, so any dev-dependency install script (a Renovate eslint
+# bump, say) would run holding it.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint all
