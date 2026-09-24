@@ -9,22 +9,92 @@
 # Claude binary (now in PATH via /root/.local/bin)
 CLAUDE_BIN="claude"
 
-# Get Claude flags from environment.
-# Checks CLAUDE_DANGEROUS_MODE config to determine if unrestricted mode is enabled.
-# When enabled, sets IS_SANDBOX=1 to bypass Claude CLI's root privilege restriction
-# for --dangerously-skip-permissions (required in container environments).
-# This is an undocumented workaround - Claude CLI normally refuses dangerous mode
-# under root for security reasons.
-# NOTE: This function exports IS_SANDBOX globally, affecting all subsequent Claude
-# invocations in the shell session. See run_claude_yolo() for command-scoped alternative.
-get_claude_flags() {
-    local flags=""
+# Run claude with the given arguments, adding the dangerous-mode flags when the
+# add-on's CLAUDE_DANGEROUS_MODE is enabled.
+# In dangerous mode, IS_SANDBOX=1 bypasses Claude CLI's refusal to run
+# --dangerously-skip-permissions as root (required in the container). This is
+# an undocumented workaround.
+# IS_SANDBOX is scoped to the claude command, as in run_claude_yolo(). This
+# used to be an `export` inside a function that every caller ran as
+# $(get_claude_flags) - a subshell - so it never reached claude at all.
+launch_claude() {
     if [ "${CLAUDE_DANGEROUS_MODE}" = "true" ]; then
-        flags="--dangerously-skip-permissions"
         echo "⚠️  Running in DANGEROUS mode (unrestricted file access)" >&2
-        export IS_SANDBOX=1  # Global export - affects all future Claude commands
+        IS_SANDBOX=1 "$CLAUDE_BIN" "$@" --dangerously-skip-permissions
+    else
+        "$CLAUDE_BIN" "$@"
     fi
-    echo "$flags"
+}
+
+# Split a typed command line into words the way a shell would quote them, and
+# store them in the PARSED_ARGS array. Returns 1 on an unterminated quote.
+#
+# Why a hand-rolled parser:
+# - Unquoted $line word-splits and globs but ignores quotes, so -p "hello"
+#   reached claude as the two-character-longer `"hello"`, and `?` or `*` in a
+#   prompt could expand to file names.
+# - `eval "set -- $line"` honours quotes but also runs $(...) and backticks:
+#   the menu would execute whatever was typed at it.
+# - `read -a` is not quote-aware, and xargs' quote handling differs between
+#   busybox, GNU and BSD.
+# This handles the quoting subset people actually type: blanks separate words;
+# '...' is literal; "..." is literal except that \ escapes " \ $ and `; a bare
+# \ escapes the next character. Nothing is ever expanded or executed - $VAR,
+# $(...), `...`, ~ and globs all reach claude as typed.
+parse_command_line() {
+    local line="$1" len=${#1} i=0 c next word="" in_word=0 quote=""
+    PARSED_ARGS=()
+    while [ "$i" -lt "$len" ]; do
+        c="${line:i:1}"
+        if [ "$quote" = "'" ]; then
+            if [ "$c" = "'" ]; then quote=""; else word+="$c"; fi
+        elif [ "$quote" = '"' ]; then
+            if [ "$c" = '"' ]; then
+                quote=""
+            elif [ "$c" = "\\" ]; then
+                next="${line:i+1:1}"
+                case "$next" in
+                    '"'|"\\"|'$'|'`')
+                        word+="$next"
+                        i=$((i + 1))
+                        ;;
+                    *)
+                        word+="$c"
+                        ;;
+                esac
+            else
+                word+="$c"
+            fi
+        else
+            case "$c" in
+                ' '|$'\t')
+                    if [ "$in_word" = 1 ]; then
+                        PARSED_ARGS+=("$word")
+                        word=""
+                        in_word=0
+                    fi
+                    ;;
+                "'"|'"')
+                    quote="$c"
+                    in_word=1
+                    ;;
+                "\\")
+                    i=$((i + 1))
+                    word+="${line:i:1}"
+                    in_word=1
+                    ;;
+                *)
+                    word+="$c"
+                    in_word=1
+                    ;;
+            esac
+        fi
+        i=$((i + 1))
+    done
+    [ -z "$quote" ] || return 1
+    if [ "$in_word" = 1 ]; then
+        PARSED_ARGS+=("$word")
+    fi
 }
 
 show_banner() {
@@ -85,38 +155,28 @@ show_return_message() {
 
 # Run Claude and return to picker when done (no exec)
 run_claude_new() {
-    local flags
-    flags=$(get_claude_flags)
     echo "🚀 Starting new Claude session..."
     sleep 1
-    # shellcheck disable=SC2086
-    $CLAUDE_BIN $flags
+    launch_claude
     show_return_message
 }
 
 run_claude_continue() {
-    local flags
-    flags=$(get_claude_flags)
     echo "⏩ Continuing most recent conversation..."
     sleep 1
-    # shellcheck disable=SC2086
-    $CLAUDE_BIN -c $flags
+    launch_claude -c
     show_return_message
 }
 
 run_claude_resume() {
-    local flags
-    flags=$(get_claude_flags)
     echo "📋 Opening conversation list for selection..."
     sleep 1
-    # shellcheck disable=SC2086
-    $CLAUDE_BIN -r $flags
+    launch_claude -r
     show_return_message
 }
 
 run_claude_custom() {
-    local base_flags
-    base_flags=$(get_claude_flags)
+    local custom_line
     echo ""
     echo "Enter your Claude command (e.g., 'claude --help' or 'claude -p \"hello\"'):"
     echo "Available flags: -c (continue), -r (resume), -p (print), --model,"
@@ -125,18 +185,34 @@ run_claude_custom() {
         echo "Note: --dangerously-skip-permissions will be automatically added"
     fi
     echo -n "> claude "
-    read -r custom_args
+    read -r custom_line
 
-    if [ -z "$custom_args" ]; then
+    # IMPORTANT: Do NOT use eval here - it runs $(...) typed at the prompt.
+    # See parse_command_line.
+    if ! parse_command_line "$custom_line"; then
+        echo ""
+        echo "❌ Unterminated quote in: $custom_line"
+        echo ""
+        printf "Press Enter to return to menu..." >&2
+        read -r
+        return
+    fi
+
+    # The prompt already shows `claude`, but its help text says to type
+    # 'claude --help' - which used to run `claude claude --help`.
+    if [ "${#PARSED_ARGS[@]}" -gt 0 ] && [ "${PARSED_ARGS[0]}" = "claude" ]; then
+        PARSED_ARGS=("${PARSED_ARGS[@]:1}")
+    fi
+
+    if [ "${#PARSED_ARGS[@]}" -eq 0 ]; then
         echo "No arguments provided. Starting default session..."
         run_claude_new
     else
-        echo "🚀 Running: claude $custom_args $base_flags"
+        printf '🚀 Running: claude'
+        printf ' %q' "${PARSED_ARGS[@]}"
+        printf '\n'
         sleep 1
-        # shellcheck disable=SC2086
-        # Word splitting on $custom_args and $base_flags is intentional (user-provided flags)
-        # IMPORTANT: Do NOT use eval here — it enables shell metacharacter injection
-        $CLAUDE_BIN $custom_args $base_flags
+        launch_claude "${PARSED_ARGS[@]}"
         show_return_message
     fi
 }
@@ -453,7 +529,11 @@ main() {
     done
 }
 
-# Handle signals gracefully - prevent accidental exit
-trap 'echo ""; echo "Use option 7 to exit to bash shell."; sleep 2' INT TERM
+# Only start the menu when executed, not when sourced: tests/ sources this
+# file to exercise its functions.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    # Handle signals gracefully - prevent accidental exit
+    trap 'echo ""; echo "Use option 7 to exit to bash shell."; sleep 2' INT TERM
 
-main "$@"
+    main "$@"
+fi
