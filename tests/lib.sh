@@ -92,6 +92,44 @@ if ! command -v timeout >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# Production shell semantics
+# ---------------------------------------------------------------------------
+
+# bashio turns on four shell options for every script it runs
+# (/usr/lib/bashio/bashio: errexit, errtrace, nounset, pipefail). The suites
+# themselves run with them off so one failed assertion reports instead of
+# aborting the run - which means a helper called directly here runs under
+# looser rules than it does in the container. `((errors++))` passes here and
+# kills health-check.sh there.
+#
+# Any case asserting a helper survives production semantics goes through this,
+# rather than a hand-written `set -e` that covers one option of the four.
+#
+#   run_under_bashio <snippet> [args...]
+#
+# Bash version matters as much as the options. macOS ships bash 3.2, whose
+# errexit does not fire on a failing `(( ))` at the end of an || list; bash 5
+# (the container, and CI's runners) does. A case written for that bug passes on
+# a stock Mac against the broken code - run the suite in the add-on image to
+# see it fail (tests/README.md).
+#
+# Runs <snippet> in a fresh bash with bashio's options and silent log stubs.
+# Positional args are passed through ($1...); REPO_ROOT is exported by this
+# file, so snippets can source the script under test from it.
+BASHIO_SHELL_OPTIONS='set -o errexit -o errtrace -o nounset -o pipefail'
+
+run_under_bashio() {
+    local snippet="$1"
+    shift
+    bash -c "$BASHIO_SHELL_OPTIONS
+bashio::log.info()    { :; }
+bashio::log.warning() { :; }
+bashio::log.error()   { :; }
+bashio::log.debug()   { :; }
+$snippet" _ "$@"
+}
+
+# ---------------------------------------------------------------------------
 # Assertions
 # ---------------------------------------------------------------------------
 

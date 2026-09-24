@@ -91,6 +91,25 @@ Worth re-checking with:
 env PATH="/usr/bin:/bin:/usr/sbin:/sbin" tests/run-tests.sh
 ```
 
+### Production shell semantics — and why a green Mac run is not enough
+
+bashio runs every script with **errexit, errtrace, nounset and pipefail**. The
+suites run with them off, so an assertion failure reports instead of aborting.
+A case that asserts a helper *survives* production semantics must therefore
+opt back in, with `run_under_bashio` from `lib.sh` — not a hand-written
+`set -e`, which covers one option of the four.
+
+Portability cuts the other way here. **bash 3.2's errexit is laxer than bash
+5's**: `false || ((n++))` aborts a bash 5 script and does not abort 3.2. That
+exact line stopped `claude-doctor` at its first failing check in production,
+and a test for it passes on a stock Mac against the broken code. CI runs bash 5
+and will catch it; to see it locally, run the suite in the add-on image:
+
+```bash
+docker run --rm -v "$PWD:/repo:ro" -w /repo --entrypoint bash \
+  local/claude-terminal-prowine tests/run-tests.sh
+```
+
 ## Test seams in production code
 
 `check_claude_cli` probes absolute install paths that cannot be relocated, so

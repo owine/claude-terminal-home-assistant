@@ -107,16 +107,14 @@ assert_eq "restoring twice is a no-op" \
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "restore_persistent_libexec: errexit"
 
-# init_environment runs under `set -e`, and the "does this already exist?" test
-# legitimately fails for every file that needs restoring.
+# init_environment runs under bashio's errexit, and the "does this already
+# exist?" test legitimately fails for every file that needs restoring.
 read -r persisted target <<< "$(new_fixture)"
-# shellcheck disable=SC2016  # $1..$3 are expanded by the inner shell
-assert_status "survives errexit" 0 bash -c '
-    set -e
-    bashio::log.info() { :; }
-    . "$1/claude-terminal/run.sh"
-    export PERSIST_LIBEXEC_DIR="$2" LIBEXEC_TARGET_DIR="$3"
+# shellcheck disable=SC2016  # expanded by the inner shell
+assert_status "survives bashio's shell options" 0 run_under_bashio '
+    . "$REPO_ROOT/claude-terminal/run.sh"
+    export PERSIST_LIBEXEC_DIR="$1" LIBEXEC_TARGET_DIR="$2"
     restore_persistent_libexec
-' _ "$REPO_ROOT" "$persisted" "$target"
+' "$persisted" "$target"
 
 finish_suite
