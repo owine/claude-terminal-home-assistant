@@ -152,17 +152,15 @@ first=$(survivors)
 prune_claude_versions 2>/dev/null
 assert_eq "pruning is idempotent" "$first" "$(survivors)"
 
-# init_environment runs under `set -e`. The guard clauses inside the prune loop
-# are AND-lists whose test can legitimately fail, and errexit must not treat
-# that as fatal.
+# init_environment runs under bashio's errexit. The guard clauses inside the
+# prune loop are AND-lists whose test can legitimately fail, and errexit must
+# not treat that as fatal.
 setup_versions "$root" 2.1.100 2.1.200 2.1.240
 ln -sf "$XDG_DATA_HOME/claude/versions/2.1.100" "$HOME/.local/bin/claude"
-# shellcheck disable=SC2016  # $1 is expanded by the inner shell, not this one
-assert_status "survives errexit" 0 bash -c '
-    set -e
-    bashio::log.info() { :; }
-    . "$1/claude-terminal/run.sh"
+# shellcheck disable=SC2016  # $REPO_ROOT is expanded by the inner shell
+assert_status "survives bashio's shell options" 0 run_under_bashio '
+    . "$REPO_ROOT/claude-terminal/run.sh"
     prune_claude_versions
-' _ "$REPO_ROOT"
+'
 
 finish_suite

@@ -91,4 +91,52 @@ assert_contains "and is named as the one found" "$out" "/root/.local/bin/claude"
 
 unset CLAUDE_BIN_PREFIX
 
+# ---------------------------------------------------------------------------
+# run_diagnostics
+# ---------------------------------------------------------------------------
+# The orchestrator behind claude-doctor and the startup health check. The
+# individual checks are covered above; what matters here is that ONE failing
+# check does not hide the rest. Every case runs under bashio's shell options,
+# which is where that went wrong: `check || ((errors++))` evaluates to 0 when
+# errors is 0, and errexit ended the script at the first failure - no later
+# checks, no summary.
+printf '\n%s\n' "run_diagnostics"
+
+# Replace each check with a stub that records it ran and exits with the status
+# named for it, so the orchestrator is tested on its own.
+# shellcheck disable=SC2016  # expanded by the inner shell
+diagnostics_snippet='
+    . "$REPO_ROOT/claude-terminal/scripts/health-check.sh"
+    calls="$1"; shift
+    for spec in "$@"; do
+        name="${spec%%=*}" status="${spec#*=}"
+        eval "$name() { echo $name >> \"\$calls\"; return $status; }"
+    done
+    run_diagnostics
+'
+
+diag_dir=$(new_tmpdir)
+all_checks="check_system_resources check_cpu_capabilities check_directory_permissions check_node_installation check_claude_cli"
+
+rm -f "$diag_dir/calls"
+assert_status "a clean run returns 0" 0 run_under_bashio "$diagnostics_snippet" "$diag_dir/calls" \
+    check_system_resources=0 check_cpu_capabilities=0 check_directory_permissions=0 \
+    check_node_installation=0 check_claude_cli=0
+
+rm -f "$diag_dir/calls"
+assert_status "returns the number of failed checks" 2 run_under_bashio "$diagnostics_snippet" "$diag_dir/calls" \
+    check_system_resources=0 check_cpu_capabilities=1 check_directory_permissions=0 \
+    check_node_installation=0 check_claude_cli=1
+assert_eq "every check runs even after an early one fails" \
+    "$all_checks" "$(tr '\n' ' ' < "$diag_dir/calls" | sed 's/ $//')"
+
+# The summary is the one line a user reads. Keep the error stub audible for
+# this case only.
+# shellcheck disable=SC2016  # expanded by the inner shell
+out=$(run_under_bashio 'bashio::log.error() { printf "%s\n" "$*" >&2; }
+'"$diagnostics_snippet" "$diag_dir/calls" \
+    check_system_resources=1 check_cpu_capabilities=0 check_directory_permissions=0 \
+    check_node_installation=0 check_claude_cli=0 2>&1)
+assert_contains "and still prints the summary" "$out" "1 check(s) failed"
+
 finish_suite

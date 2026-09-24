@@ -112,19 +112,16 @@ assert_eq "an empty legacy directory is not recorded as migrated" \
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "migrate_legacy_auth_files: errexit"
 
-# init_environment calls this under `set -e`. The marker lookup legitimately
-# fails when the path has not been migrated yet, which must not be fatal.
+# init_environment calls this under bashio's errexit. The marker lookup
+# legitimately fails when the path has not been migrated yet, which must not be
+# fatal.
 read -r prefix target <<< "$(new_fixture)"
-# shellcheck disable=SC2016  # $1/$2 are expanded by the inner shell
-assert_status "survives errexit on a first and second run" 0 bash -c '
-    set -e
-    bashio::log.info() { :; }
-    bashio::log.warning() { :; }
-    bashio::log.debug() { :; }
-    . "$1/claude-terminal/run.sh"
-    export LEGACY_AUTH_PREFIX="$2"
-    migrate_legacy_auth_files "$3"
-    migrate_legacy_auth_files "$3"
-' _ "$REPO_ROOT" "$prefix" "$target"
+# shellcheck disable=SC2016  # expanded by the inner shell
+assert_status "survives bashio's shell options on a first and second run" 0 run_under_bashio '
+    . "$REPO_ROOT/claude-terminal/run.sh"
+    export LEGACY_AUTH_PREFIX="$1"
+    migrate_legacy_auth_files "$2"
+    migrate_legacy_auth_files "$2"
+' "$prefix" "$target"
 
 finish_suite
