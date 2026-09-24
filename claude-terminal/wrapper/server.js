@@ -26,6 +26,7 @@ const {
     errorResponseFor,
     INVALID_FILE_TYPE,
 } = require('./http-guards');
+const { uploadFilename, isAllowedImageMime } = require('./upload-naming');
 
 const app = express();
 const PORT = process.env.WRAPPER_PORT || 7680;
@@ -47,11 +48,17 @@ const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, UPLOAD_DIR);
     },
+    // Random suffix: two same-millisecond uploads used to collide and the
+    // second silently overwrote the first. Extension from the filter-checked
+    // mimetype, never the client's originalname: the path is typed into a
+    // shell. See upload-naming.js.
     filename: (req, file, cb) => {
-        const timestamp = Date.now();
-        const ext = path.extname(file.originalname) || '.png';
-        const filename = `pasted-${timestamp}${ext}`;
-        cb(null, filename);
+        try {
+            cb(null, uploadFilename(file.mimetype));
+        } catch (err) {
+            err.code = INVALID_FILE_TYPE;
+            cb(err);
+        }
     }
 });
 
@@ -61,9 +68,8 @@ const upload = multer({
         fileSize: 10 * 1024 * 1024 // 10MB max file size
     },
     fileFilter: (req, file, cb) => {
-        // Accept images only
-        const allowedMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
-        if (allowedMimes.includes(file.mimetype)) {
+        // Accept images only - the same table the filename is derived from
+        if (isAllowedImageMime(file.mimetype)) {
             cb(null, true);
         } else {
             const err = new Error('Only image files are allowed');
