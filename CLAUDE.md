@@ -85,7 +85,7 @@ ruff check                                                # Python (tools/)
 ### Key Components
 1. **Web Terminal** — ttyd (v1.7.7) browser-based terminal
 2. **Wrapper Service** — Express.js handling UI, WebSocket proxy to ttyd, image uploads, clipboard button
-3. **Credential Management** — Persistent auth storage in `/data/.config/claude/` with 600 permissions
+3. **Credential Management** — Claude Code keeps its login in `~/.claude/.credentials.json` and `~/.claude.json` under `HOME=/data/home` (it reads `CLAUDE_CONFIG_DIR`, unset, falling back to `~/.claude`). run.sh migrates legacy credentials there copy-if-absent, once per source, and holds both files at 600 every boot
 4. **Package Management** — Persistent installation via `persist-install` to `/data/packages/`
 5. **Home Assistant MCP** — Pre-installed ha-mcp server with locked dependencies
 6. **PWA** — Installable to home screens; relative URLs work across direct port, ingress, and reverse proxy
@@ -137,7 +137,7 @@ in 2.7.4.
 - Only `feat`, `fix`, `deps`, `perf`, and `revert` trigger releases
 
 ### Key Environment Variables
-- `ANTHROPIC_CONFIG_DIR=/data/.config/claude` — Claude config
+- `ANTHROPIC_CONFIG_DIR=/data/.config/claude` — read by Claude Code only for SDK credential profiles, not as its config dir; see Credential Management
 - `HOME=/data/home` — Persistent home directory
 - `SUPERVISOR_TOKEN` — HA Supervisor API token
 - `WRAPPER_PORT=7680` / `TTYD_PORT=7681` — Service ports (ttyd on loopback only)
@@ -149,7 +149,7 @@ in 2.7.4.
 - **CRITICAL:** `wrapper/package-lock.json` must be committed (deterministic npm builds)
 - **CRITICAL:** `ha-mcp/uv.lock` must be committed (deterministic Python builds)
 - Docker builds require `--no-cache` when npm or Python dependencies change
-- Credential persistence must survive container restarts
+- Credential persistence must survive container restarts. Never overwrite a live login (`~/.claude/.credentials.json`) from a legacy source, and never restore one after the user's `/logout` — `migrate_legacy_auth_files` enforces both
 
 ### Docker Socket Access (optional feature)
 
