@@ -241,15 +241,14 @@ RUN cd /opt/ha-mcp \
     && uv sync --locked --no-dev --no-editable \
     && echo "ha-mcp installed at /opt/ha-mcp/.venv/bin/ha-mcp"
 
-# Create directory for Claude configuration and set working directory
-RUN mkdir -p /config/claude-config
+# /config is Home Assistant's config share, mounted over this at runtime
 WORKDIR /config
 
-# Copy and install wrapper service (UI, terminal proxy, image uploads, mouse toggle)
+# Copy and install wrapper service (UI, terminal proxy, image uploads, clipboard delivery)
 # Images built in GitHub Actions with controlled environment
 COPY wrapper/package*.json /opt/wrapper/
 RUN cd /opt/wrapper \
-    && npm ci --production --ignore-scripts \
+    && npm ci --omit=dev --ignore-scripts \
     && npm cache clean --force
 
 COPY wrapper/ /opt/wrapper/

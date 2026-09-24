@@ -11,6 +11,12 @@
 # CI never hits this because it builds from a fresh checkout.
 **/node_modules
 
+# Wrapper tests run from the checkout (npm test, and the Playwright suite
+# against a running container), never from inside the image. Excluding them
+# also keeps a local integration run's screenshots (test/integration/
+# artifacts/) out of the next local build.
+wrapper/test
+
 # Python build/test artifacts (ha-mcp deps are installed from uv.lock in-image)
 **/__pycache__
 **/.pytest_cache
