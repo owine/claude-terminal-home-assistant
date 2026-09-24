@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.10.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.9.1...v2.10.0) (2026-09-24)
+
+
+### Features
+
+* serve the UI before slow startup steps, and prune old uploads ([#380](https://github.com/owine/claude-terminal-home-assistant/issues/380)) ([d685687](https://github.com/owine/claude-terminal-home-assistant/commit/d685687bcc63ac0827c76b6b1938f7523dd710c7))
+
+
+### Bug Fixes
+
+* keep the wrapper alive — crash-proof proxy errors and restart on exit ([#372](https://github.com/owine/claude-terminal-home-assistant/issues/372)) ([bd88360](https://github.com/owine/claude-terminal-home-assistant/commit/bd883605e4c4bb1c8eaa7ca0ba08ec612704f04a))
+* keep users' tmux settings across restarts via ~/.tmux.local.conf ([#381](https://github.com/owine/claude-terminal-home-assistant/issues/381)) ([1175851](https://github.com/owine/claude-terminal-home-assistant/commit/1175851aea8e800166edfaa21bf8461a76be5f33))
+* make persist-install report failed installs ([#378](https://github.com/owine/claude-terminal-home-assistant/issues/378)) ([a2e0991](https://github.com/owine/claude-terminal-home-assistant/commit/a2e0991769b894403d37d8a6282958a4f8cc788a))
+* migrate legacy credentials to where Claude Code reads them ([#377](https://github.com/owine/claude-terminal-home-assistant/issues/377)) ([8910b09](https://github.com/owine/claude-terminal-home-assistant/commit/8910b09796973ddfcf4bd49eb447a9c6db36a62c))
+* refuse cross-origin WebSocket upgrades and bind ttyd to loopback ([#371](https://github.com/owine/claude-terminal-home-assistant/issues/371)) ([8ed192d](https://github.com/owine/claude-terminal-home-assistant/commit/8ed192d3dc1789a97ce5f9d3ef13862ec70238be))
+* run every health check even after one fails ([#374](https://github.com/owine/claude-terminal-home-assistant/issues/374)) ([12316e4](https://github.com/owine/claude-terminal-home-assistant/commit/12316e4a8b470f774b9d8247db51e774c427ecdf))
+* unique upload names, offline page for the start URL, quote-aware custom command ([#379](https://github.com/owine/claude-terminal-home-assistant/issues/379)) ([e696dc3](https://github.com/owine/claude-terminal-home-assistant/commit/e696dc39a526e7372c5c5d9754f683a00bba5dad))
+
 ## [2.9.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.9.0...v2.9.1) (2026-09-22)
 
 
