@@ -656,7 +656,7 @@ prune_uploaded_images() {
     fi
 }
 
-# Start wrapper service (UI, terminal proxy, image uploads, mouse toggle)
+# Start wrapper service (UI, terminal proxy, image uploads, clipboard delivery)
 start_wrapper_service() {
     local wrapper_port=7680
     local ttyd_port=7681
@@ -694,26 +694,84 @@ start_wrapper_service() {
         fi
     fi
 
-    # Start with better error logging (run from current directory with absolute path)
+    # Start under supervise so a crash is followed by a restart rather than a
+    # permanent 502 on ingress. ttyd, exec'd later, keeps the container alive
+    # either way, so without this nothing would ever notice the wrapper died.
     bashio::log.info "Starting Node.js service from ${server_file}..."
-    node "${server_file}" 2>&1 | while IFS= read -r line; do
-        bashio::log.info "[Wrapper] $line"
-    done &
+    supervise Wrapper run_wrapper "${server_file}" &
+    bashio::log.info "Wrapper service supervisor started (PID: $!)"
 
-    # Store the PID for potential cleanup
-    local wrapper_pid=$!
-    bashio::log.info "Wrapper service started (PID: ${wrapper_pid})"
-
-    # Give it a moment to start
-    sleep 3
-
-    # Check if it's running
-    if kill -0 "${wrapper_pid}" 2>/dev/null; then
+    # Poll the health endpoint rather than checking a PID: the PID is the
+    # supervisor, which is alive whether or not node is. Not fatal - supervise
+    # keeps retrying, and failing startup here would only take ttyd down too.
+    if wait_for_http "http://127.0.0.1:${wrapper_port}/health" 15; then
         bashio::log.info "Wrapper service is running successfully"
     else
-        bashio::log.error "Wrapper service failed to start! Check logs above for errors"
-        return 1
+        bashio::log.error "Wrapper service is not answering yet - check the [Wrapper] lines above"
     fi
+}
+
+# Run the wrapper once, prefixing its output into the add-on log. Under
+# pipefail the pipeline's status is node's, which is what supervise reports.
+run_wrapper() {
+    node "$1" 2>&1 | while IFS= read -r line; do
+        bashio::log.info "[Wrapper] $line"
+    done
+}
+
+# supervise <name> <command...>
+#
+# Run a command forever, restarting it whenever it exits. Back-off doubles from
+# 1s to a 30s cap so a crash loop does not flood the log, and resets after a run
+# that stayed up for a minute - a crash after a long healthy run is not a loop.
+#
+# The command's failure is captured with `|| status=$?` rather than left to
+# errexit: under bashio's `set -e` an unguarded failing command would end the
+# loop on the first crash, which is the one thing it exists to survive.
+#
+# SUPERVISE_MAX_RUNS is a test seam, mirroring LEGACY_AUTH_PREFIX: unset in
+# production, where the loop never returns.
+supervise() {
+    local name="$1"
+    shift
+    local delay=1 max_delay=30 healthy_after=60
+    local runs=0 started status
+
+    while true; do
+        started=$SECONDS
+        status=0
+        "$@" || status=$?
+        runs=$((runs + 1))
+
+        if [ -n "${SUPERVISE_MAX_RUNS:-}" ] && [ "$runs" -ge "$SUPERVISE_MAX_RUNS" ]; then
+            bashio::log.warning "${name} exited (status ${status})"
+            return 0
+        fi
+
+        if [ $((SECONDS - started)) -ge "$healthy_after" ]; then
+            delay=1
+        fi
+        bashio::log.warning "${name} exited (status ${status}); restarting in ${delay}s"
+        sleep "$delay"
+        delay=$((delay * 2))
+        if [ "$delay" -gt "$max_delay" ]; then
+            delay=$max_delay
+        fi
+    done
+}
+
+# wait_for_http <url> <attempts>
+#
+# Poll a URL once a second until it answers with a 2xx, or give up.
+wait_for_http() {
+    local url="$1" attempts="$2" i
+    for ((i = 1; i <= attempts; i++)); do
+        if curl -sf --max-time 2 "$url" > /dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
 }
 
 # Create or attach to tmux session

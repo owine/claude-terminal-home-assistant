@@ -163,4 +163,85 @@ assert_status "survives bashio's shell options" 0 run_under_bashio '
     prune_claude_versions
 '
 
+# ---------------------------------------------------------------------------
+# supervise
+# ---------------------------------------------------------------------------
+# Keeps the wrapper alive. Nothing else restarts it: config.yaml has no
+# watchdog, and ttyd keeps the container "running" without it, so a dead
+# wrapper meant a 502 on ingress until someone restarted the add-on by hand.
+#
+# Every case runs under `set -Eeuo pipefail`, which is what bashio applies in
+# production. A restart loop is exactly the code errexit breaks: the supervised
+# command failing is the normal case, not the exceptional one.
+printf '\n%s\n' "supervise"
+
+sup_dir=$(new_tmpdir)
+# Record each back-off delay instead of sleeping through it.
+sleep() { printf '%s ' "$1" >> "$sup_dir/delays"; }
+runs() { cat "$sup_dir/runs" 2>/dev/null | wc -l | tr -d ' '; }
+reset_supervise() { rm -f "$sup_dir/runs" "$sup_dir/delays"; }
+
+exits_ok()   { echo run >> "$sup_dir/runs"; return 0; }
+exits_fail() { echo run >> "$sup_dir/runs"; return 7; }
+# A pipeline whose first stage fails - the shape of the real wrapper command,
+# `node ... | while read ...`. Under pipefail this returns node's status.
+pipeline_fail() { echo run >> "$sup_dir/runs"; false | cat; }
+
+reset_supervise
+( set -Eeuo pipefail; SUPERVISE_MAX_RUNS=3 supervise test exits_ok ) 2>/dev/null
+assert_eq "restarts a command that exits cleanly" "3" "$(runs)"
+
+reset_supervise
+( set -Eeuo pipefail; SUPERVISE_MAX_RUNS=3 supervise test exits_fail ) 2>/dev/null
+assert_eq "restarts a command that fails, under errexit" "3" "$(runs)"
+
+reset_supervise
+( set -Eeuo pipefail; SUPERVISE_MAX_RUNS=3 supervise test pipeline_fail ) 2>/dev/null
+assert_eq "restarts a failing pipeline, under pipefail" "3" "$(runs)"
+
+reset_supervise
+log=$( ( set -Eeuo pipefail; SUPERVISE_MAX_RUNS=1 supervise Wrapper exits_fail ) 2>&1 >/dev/null)
+assert_contains "logs which service exited and with what status" "$log" "Wrapper exited (status 7)"
+
+reset_supervise
+( set -Eeuo pipefail; SUPERVISE_MAX_RUNS=7 supervise test exits_fail ) 2>/dev/null
+assert_eq "backs off exponentially, capped at 30s" "1 2 4 8 16 30 " "$(cat "$sup_dir/delays")"
+
+# A crash after a long healthy run is not a crash loop; it should come back
+# quickly rather than inheriting the back-off of some earlier burst.
+reset_supervise
+long_on_third() {
+    echo run >> "$sup_dir/runs"
+    [ "$(runs)" -eq 3 ] && SECONDS=$((SECONDS + 120))
+    return 1
+}
+( set -Eeuo pipefail; SUPERVISE_MAX_RUNS=4 supervise test long_on_third ) 2>/dev/null
+assert_eq "resets the back-off after a run that stayed up" "1 2 1 " "$(cat "$sup_dir/delays")"
+
+# ---------------------------------------------------------------------------
+# wait_for_http
+# ---------------------------------------------------------------------------
+# Replaces a `kill -0` on the backgrounded pipeline, which only ever proved the
+# `while read` loop was alive - never node - and now that the wrapper runs under
+# supervise() would prove nothing at all.
+printf '\n%s\n' "wait_for_http"
+
+curl_calls="$sup_dir/curl_calls"
+curl_ok_on_third() {
+    echo call >> "$curl_calls"
+    [ "$(wc -l < "$curl_calls" | tr -d ' ')" -ge 3 ]
+}
+
+rm -f "$curl_calls"
+# shellcheck disable=SC2329  # invoked by wait_for_http
+curl() { curl_ok_on_third; }
+assert_status "succeeds once the endpoint answers" 0 wait_for_http http://127.0.0.1:7680/health 5
+assert_eq "stops polling once it has answered" "3" "$(wc -l < "$curl_calls" | tr -d ' ')"
+
+# shellcheck disable=SC2329  # invoked by wait_for_http
+curl() { return 7; }
+assert_status "fails when the endpoint never answers" 1 wait_for_http http://127.0.0.1:7680/health 3
+
+unset -f curl sleep
+
 finish_suite
