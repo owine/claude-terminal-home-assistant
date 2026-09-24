@@ -208,8 +208,16 @@ reset_install_fixtures() {
 }
 
 # persisted_fixture - "yes" when the listed fixture file reached PERSIST_BIN.
+#
+# -L as well as -f: the copy is `cp -a`, which keeps a symlink a symlink, and
+# /bin/sh is one on most hosts. On Alpine it points at /bin/busybox (absolute,
+# so -f follows it fine); on Ubuntu it is a RELATIVE link to dash, which
+# dangles once copied into PERSIST_BIN, so -f alone reported a persisted file
+# as missing and failed only on the CI runner.
 persisted_fixture() {
-    if [ -f "$PERSIST_BIN/$(basename "$FIXTURE_LISTED_FILE")" ]; then
+    local copied
+    copied="$PERSIST_BIN/$(basename "$FIXTURE_LISTED_FILE")"
+    if [ -L "$copied" ] || [ -f "$copied" ]; then
         echo yes
     else
         echo no
