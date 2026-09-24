@@ -169,9 +169,6 @@ PROFILE_EOF
     chmod 644 /etc/profile.d/persistent-packages.sh
     bashio::log.info "  - Profile script created: /etc/profile.d/persistent-packages.sh"
 
-    # Migrate any existing authentication files from legacy locations
-    migrate_legacy_auth_files "$claude_config_dir"
-
     # Install tmux configuration to user home directory
     if [ -f "/opt/scripts/tmux.conf" ]; then
         cp /opt/scripts/tmux.conf "$data_home/.tmux.conf"
@@ -206,6 +203,14 @@ PROFILE_EOF
             bashio::log.info "  - Claude Code skills & commands: already configured"
         fi
     fi
+
+    # Migrate any existing authentication files from legacy locations into
+    # HOME, where Claude Code reads them. After the skills setup above, not
+    # before: that setup only runs when ~/.claude does not exist yet, and the
+    # migration creates ~/.claude to hold a credential, which would otherwise
+    # cost a first-boot user the bundled skills and commands.
+    migrate_legacy_auth_files "$data_home"
+    secure_claude_credentials "$data_home"
 
     # Copy Claude binary to persistent home directory if not present
     # This ensures Claude is in $HOME/.local/bin (already in PATH)
@@ -314,81 +319,123 @@ prune_claude_versions() {
     fi
 }
 
-# One-time migration of existing authentication files.
+# One-time migration of existing authentication files into HOME.
 #
-# "One-time" is enforced by a marker listing the sources already migrated. It
-# used to be enforced only by the /root branch below replacing its source with
-# a symlink, which left /config/claude-config and /tmp/claude-config copying on
-# EVERY boot: a user who logged in again after the migration had the stale
-# credential in /config put back over the fresh one on the next restart.
+# Claude Code keeps its login in exactly two files, and finds them through
+# CLAUDE_CONFIG_DIR (unset here), falling back to HOME:
+#   ~/.claude/.credentials.json   OAuth credentials
+#   ~/.claude.json                account and settings
+# Earlier versions of this function copied legacy sources wholesale into
+# /data/.config/claude (ANTHROPIC_CONFIG_DIR), which Claude Code never reads
+# for either file, so the migration restored nobody's login. That directory is
+# now itself a source, recovering whatever was stranded there.
 #
-# The marker records each source path rather than a single "migration ran"
-# flag, so a legacy directory that only appears later is still picked up.
+# Two guarantees:
+#   - A live login is never overwritten. Each file is copied only if HOME has
+#     none; a user who has logged in since keeps that login.
+#   - Each source is handled once, tracked by a marker listing source paths.
+#     Without it, a /logout (which deletes the credential) would be undone on
+#     the next boot by the stale legacy copy. A source is marked even when its
+#     files were skipped for an existing login: it has been dealt with. It is
+#     not marked when it holds neither file, so one that gains a credential
+#     later is still picked up.
+#
+# The marker is new at this path, so sources the old function already
+# "migrated" get one more pass. With copy-if-absent that can only fill a gap:
+# it restores users who were silently logged out by the old target.
 migrate_legacy_auth_files() {
-    local target_dir="$1"
+    local home="$1"
     local migrated=false
-    # Lives in the target dir, which is /data and therefore survives restarts
-    # alongside the credentials whose re-copying it is there to prevent.
-    local marker="$target_dir/.legacy-auth-migrated"
+    local marker="$home/.claude/.legacy-auth-migrated"
 
     bashio::log.info "Checking for existing authentication files to migrate..."
 
-    # Check common legacy locations. LEGACY_AUTH_PREFIX is a test seam and is
-    # empty in production, mirroring CLAUDE_BIN_PREFIX in health-check.sh: these
-    # paths are absolute and cannot otherwise be pointed at a fixture tree.
+    # LEGACY_AUTH_PREFIX is a test seam and is empty in production, mirroring
+    # CLAUDE_BIN_PREFIX in health-check.sh: these paths are absolute and cannot
+    # otherwise be pointed at a fixture tree.
     local prefix="${LEGACY_AUTH_PREFIX:-}"
     local legacy_locations=(
         "$prefix/root/.config/anthropic"
         "$prefix/root/.anthropic"
         "$prefix/config/claude-config"
         "$prefix/tmp/claude-config"
+        "$prefix/data/.config/claude"
     )
 
+    local legacy_path cred_src account_src
     for legacy_path in "${legacy_locations[@]}"; do
-        if [ -d "$legacy_path" ] && [ "$(ls -A "$legacy_path" 2>/dev/null)" ]; then
-            # Already carried over on an earlier boot. Skipping is the whole
-            # point: the source is left in place for the user to inspect and
-            # remove, so it is still here and still looks migratable.
-            if grep -qxF -- "$legacy_path" "$marker" 2>/dev/null; then
-                bashio::log.debug "Already migrated, skipping: $legacy_path"
-                continue
-            fi
+        [ -d "$legacy_path" ] || continue
 
-            bashio::log.info "Migrating auth files from: $legacy_path"
+        # The original add-on mirrored /root, so a credential may sit in a
+        # .claude/ directory as it does in HOME, or loose at the top level.
+        cred_src=""
+        account_src=""
+        if [ -f "$legacy_path/.claude/.credentials.json" ]; then
+            cred_src="$legacy_path/.claude/.credentials.json"
+        elif [ -f "$legacy_path/.credentials.json" ]; then
+            cred_src="$legacy_path/.credentials.json"
+        fi
+        if [ -f "$legacy_path/.claude.json" ]; then
+            account_src="$legacy_path/.claude.json"
+        fi
+        if [ -z "$cred_src" ] && [ -z "$account_src" ]; then
+            continue
+        fi
 
-            # "$legacy_path/." rather than "$legacy_path"/* - the glob skips
-            # dotfiles, and every file this migration exists to move is one
-            # (.credentials.json, .claude.json). With the glob it matched
-            # nothing, cp was handed the literal unexpanded pattern, and the
-            # failure was swallowed by 2>/dev/null.
-            if cp -a "$legacy_path/." "$target_dir/" 2>/dev/null; then
-                # Set proper permissions
-                find "$target_dir" -type f -exec chmod 600 {} \;
+        if grep -qxF -- "$legacy_path" "$marker" 2>/dev/null; then
+            bashio::log.debug "Already migrated, skipping: $legacy_path"
+            continue
+        fi
 
-                # Create compatibility symlink if this is a standard location
-                if [[ "$legacy_path" == "$prefix/root/.config/anthropic" ]] || [[ "$legacy_path" == "$prefix/root/.anthropic" ]]; then
-                    rm -rf "$legacy_path"
-                    ln -sf "$target_dir" "$legacy_path"
-                    bashio::log.info "Created compatibility symlink: $legacy_path -> $target_dir"
-                fi
-
-                # Record the source only after a successful copy, so a failed
-                # migration is retried on the next boot rather than skipped.
-                printf '%s\n' "$legacy_path" >> "$marker"
-                chmod 600 "$marker" 2>/dev/null || true
-
-                migrated=true
-                bashio::log.info "Migration completed from: $legacy_path"
-                bashio::log.info "You can now delete $legacy_path"
-            else
-                bashio::log.warning "Failed to migrate from: $legacy_path"
-            fi
+        bashio::log.info "Migrating auth files from: $legacy_path"
+        if copy_auth_file_if_absent "$cred_src" "$home/.claude/.credentials.json" &&
+           copy_auth_file_if_absent "$account_src" "$home/.claude.json"; then
+            # Record the source only after success, so a failed copy is
+            # retried on the next boot rather than skipped.
+            mkdir -p "$(dirname "$marker")"
+            printf '%s\n' "$legacy_path" >> "$marker"
+            chmod 600 "$marker" 2>/dev/null || true
+            migrated=true
+            bashio::log.info "Migration completed from: $legacy_path (it can now be deleted)"
+        else
+            bashio::log.warning "Failed to migrate from: $legacy_path"
         fi
     done
 
     if [ "$migrated" = false ]; then
         bashio::log.info "No existing authentication files found to migrate"
     fi
+}
+
+# copy_auth_file_if_absent <source or ""> <destination>
+#
+# Copy a credential file into place, 600 from the moment it exists, unless the
+# destination is already there. An empty source is a no-op success.
+copy_auth_file_if_absent() {
+    local src="$1" dest="$2"
+    if [ -z "$src" ]; then
+        return 0
+    fi
+    if [ -e "$dest" ]; then
+        bashio::log.info "  - keeping existing $(basename "$dest"), not overwriting it"
+        return 0
+    fi
+    mkdir -p "$(dirname "$dest")" &&
+        (umask 077 && cp "$src" "$dest") &&
+        chmod 600 "$dest"
+}
+
+# secure_claude_credentials <home>
+#
+# Hold Claude Code's login files at 600 on every boot. The permission pass used
+# to cover /data/.config/claude only, which holds neither file.
+secure_claude_credentials() {
+    local home="$1" f
+    for f in "$home/.claude/.credentials.json" "$home/.claude.json"; do
+        if [ -f "$f" ]; then
+            chmod 600 "$f"
+        fi
+    done
 }
 
 # Setup session picker script
