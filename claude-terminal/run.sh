@@ -616,6 +616,46 @@ get_claude_launch_command() {
 }
 
 
+# prune_uploaded_images [dir]
+#
+# Delete pasted/dropped images older than the image_retention_days option
+# (default 30; 0 keeps them all). Nothing else ever removed them, and /data is
+# in every Home Assistant backup, so the folder grew those without bound.
+#
+# Only the wrapper's own `pasted-*` files are candidates - anything a user put
+# in the folder is left alone. A value that is not a whole number deletes
+# nothing: guessing wrong here is the one mistake that cannot be undone.
+prune_uploaded_images() {
+    local dir="${1:-/data/images}"
+    local days
+    days=$(bashio::config 'image_retention_days' '30')
+
+    # bashio::config yields "" rather than the default when the Supervisor API
+    # is unreachable. For every other option the safe reading of a missing
+    # value is its default; for a deletion it is "delete nothing".
+    case "$days" in
+        '')
+            bashio::log.info "image_retention_days could not be read; keeping all uploads this boot"
+            return 0
+            ;;
+        *[!0-9]*)
+            bashio::log.warning "image_retention_days is not a whole number (${days}); keeping all uploads"
+            return 0
+            ;;
+    esac
+    if [ "$days" -eq 0 ] || [ ! -d "$dir" ]; then
+        return 0
+    fi
+
+    # -mmin rather than -mtime: -mtime counts whole 24h periods and rounds,
+    # which makes "older than N days" off by up to a day.
+    local removed
+    removed=$(find "$dir" -maxdepth 1 -type f -name 'pasted-*' -mmin +$((days * 1440)) -print -delete | wc -l | tr -d ' ')
+    if [ "$removed" -gt 0 ]; then
+        bashio::log.info "Uploaded images: removed ${removed} older than ${days} day(s) from ${dir}"
+    fi
+}
+
 # Start wrapper service (UI, terminal proxy, image uploads, mouse toggle)
 start_wrapper_service() {
     local wrapper_port=7680
@@ -768,6 +808,7 @@ main() {
 
     init_environment
     export_oauth_token
+    prune_uploaded_images
 
     # Serve the UI before anything that reaches the network. Package installs,
     # Docker CLI setup and ha-mcp registration can take minutes on a slow

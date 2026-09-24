@@ -73,6 +73,10 @@ options:
   #   When true: cache persists at /data/home/.npm across restarts (legacy
   #     behavior); useful on slow connections to avoid re-downloading packages
   persist_npm_cache: false
+  # image_retention_days: Pasted and dropped images older than this are
+  #   deleted at startup (only the add-on's own pasted-* files in /data/images).
+  #   0 keeps them forever. /data is in every HA backup, so this bounds both.
+  image_retention_days: 30
   persistent_apk_packages: []
   persistent_pip_packages: []
   enable_docker: false
@@ -86,6 +90,7 @@ schema:
   claude_code_oauth_token: password?
   tmux_mouse_mode: bool?
   persist_npm_cache: bool?
+  image_retention_days: int(0,)?
   persistent_apk_packages:
     - str?
   persistent_pip_packages:

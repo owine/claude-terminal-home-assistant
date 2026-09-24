@@ -180,6 +180,7 @@ mapping cannot be disabled without forking the add-on.
 | `claude_code_oauth_token` | `""` | Token from `claude setup-token`, for logging in without the browser OAuth flow. Masked in the UI and never logged. See Authentication below |
 | `tmux_mouse_mode` | `true` | Mouse reporting: the wheel scrolls and a drag selects. Set `false` to disable it entirely (the wheel then sends arrow keys to full-screen apps). Flip it live with **Prefix + m**. **Changed in 2.7.3** — this defaulted to `false` before, so if you never set it, the mouse became active on upgrade |
 | `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
+| `image_retention_days` | `30` | Pasted and dropped images older than this many days are deleted at startup. Only the add-on's own uploads (`pasted-*` in `/data/images`) are touched. `0` keeps them forever. `/data` is included in every Home Assistant backup, so this also bounds backup growth |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |
 | `enable_docker` | `false` | Install the Docker CLI and enable host Docker socket access (requires Protection Mode disabled) ⚠️ |
