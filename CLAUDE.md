@@ -65,7 +65,7 @@ hadolint claude-terminal/Dockerfile
 shellcheck --external-sources claude-terminal/run.sh claude-terminal/scripts/*.sh \
   claude-terminal/scripts/persist-install tests/*.sh test-wrapper-integration.sh
 yamllint -c .yamllint.yml claude-terminal/config.yaml \
-  .trivy.yaml .github/workflows/
+  .trivy.yaml .trivyignore.yaml .github/workflows/
 actionlint
 (cd claude-terminal/wrapper && npm ci && npm run lint)   # ESLint (wrapper JS)
 ruff check                                                # Python (tools/)
@@ -176,7 +176,7 @@ Note: `.gitignore` has a specific exception for `!claude-terminal/wrapper/packag
 ```bash
 docker run --rm --entrypoint bash \
   -v $(pwd)/claude-terminal/ha-mcp:/opt/ha-mcp \
-  ghcr.io/home-assistant/aarch64-base:3.24 -c \
+  ghcr.io/home-assistant/base:3.24 -c \
   'apk add --no-cache curl > /dev/null 2>&1 && \
    curl -fsSL https://astral.sh/uv/install.sh | sh > /dev/null 2>&1 && \
    export PATH="$HOME/.local/bin:$PATH" && \
@@ -238,7 +238,7 @@ gh run list --workflow=publish.yml --limit 3
 |----------|---------|---------|
 | `release-please.yml` | Push to main | Maintain Release PR (version bump + changelog) |
 | `test.yml` | Push to main, PRs | Unit tests (shell + wrapper JS) and build validation (init → per-arch native builds, no QEMU) |
-| `lint.yml` | Push/PR to main | hadolint, shellcheck, yamllint, actionlint |
+| `lint.yml` | Push/PR to main | hadolint, shellcheck, yamllint, actionlint, ESLint, Ruff |
 | `publish.yml` | Release published | Build + sign + push images (4-job: init → per-arch → manifest → scan) |
 | `security.yml` | Push/PR to main + weekly cron | Trivy filesystem security scan; opens tracking issue on findings |
 | `claude.yml` | @claude mentions | Respond to mentions in issues/PRs (optional) |

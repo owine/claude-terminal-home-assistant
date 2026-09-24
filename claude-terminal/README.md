@@ -53,11 +53,10 @@ claude
 # Get help with available commands
 claude --help
 
-# Debug authentication if needed
-claude-auth debug
+# Diagnose environment problems (memory, disk, CPU, the Claude binary)
+claude-doctor
 
-# Log out and re-authenticate
-claude-logout
+# Log out and re-authenticate: inside Claude, run /logout, then /login
 ```
 
 ## Installation
@@ -76,18 +75,16 @@ claude-logout
 The app works with zero configuration out of the box, with optional settings available (see [DOCS.md](DOCS.md#configuration) for the full list of options):
 
 - **Port**: The web interface is reached through HA ingress. Port 7680 can also be published directly from **Configuration → Network**, but it is unauthenticated — see the warning in [DOCS.md](DOCS.md#access-methods) before turning it on
-- **Authentication**: OAuth with Anthropic (credentials stored securely in `/config/claude-config/`)
+- **Authentication**: OAuth with Anthropic (credentials persist in the add-on's private `/data` volume, under `/data/home/.claude/`)
 - **Terminal**: Full bash environment with Claude Code CLI pre-installed
 - **Volumes**: Access to your Home Assistant `/config` directory
 
 ## Troubleshooting
 
 ### Authentication Issues
-If you have authentication problems:
-```bash
-claude-auth debug    # Show credential status
-claude-logout        # Clear credentials and re-authenticate
-```
+If you have authentication problems, run `/logout` and then `/login` inside
+Claude. `claude-doctor` checks the environment around it (memory, disk, CPU
+support, and whether the Claude binary runs at all).
 
 ### Container Issues
 - Credentials are automatically saved and restored between restarts
@@ -97,8 +94,9 @@ claude-logout        # Clear credentials and re-authenticate
 ### Development
 For local development and testing:
 ```bash
-# Build and run locally (replace amd64 with aarch64 for ARM)
-docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24 \
+# Build and run locally. base:3.24 is multi-arch, so this builds for the host;
+# add --platform linux/arm64 (or linux/amd64) to cross-build.
+docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
 docker run -p 7680:7680 -v "$(pwd)/config:/config" local/claude-terminal-prowine
 
@@ -113,7 +111,7 @@ curl -X GET http://localhost:7680/  # 7680 = web UI/ingress (ttyd listens on con
 - **Container Runtime**: Docker
 - **Web Terminal**: ttyd (v1.7.7) for browser-based access
 - **Session Persistence**: tmux for terminal session management
-- **Wrapper Service**: Express.js server for UI, terminal proxy, image uploads, and mouse mode toggle
+- **Wrapper Service**: Express.js server for UI, terminal proxy, image uploads, and clipboard delivery
 - **Networking**: Ingress support with Home Assistant reverse proxy
 
 ## Security

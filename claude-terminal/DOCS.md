@@ -129,7 +129,7 @@ persistent_pip_packages:
   - requests
 ```
 
-Your OAuth credentials are stored in the `/config/claude-config` directory and will persist across app updates and restarts, so you won't need to log in again.
+Your OAuth credentials are stored in the add-on's private `/data` volume (Claude Code's own config directory, `/data/home/.claude/`) and persist across app updates and restarts, so you won't need to log in again. `/data` is not visible from your Home Assistant `/config` share. Very old versions kept credentials in `/config/claude-config`. They are carried over once, on the first start after upgrading, and never over a login you already have; after that the directory can be deleted.
 
 ### Shared Folder Access
 

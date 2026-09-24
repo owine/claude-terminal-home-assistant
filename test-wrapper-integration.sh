@@ -9,7 +9,8 @@ echo ""
 echo "1. Checking wrapper service (port 7680)..."
 if curl -s http://localhost:7680/health | jq '.status' | grep -q "ok"; then
     echo "   ✓ Wrapper service is running"
-    UPLOAD_DIR=$(curl -s http://localhost:7680/config | jq -r '.uploadDir')
+    # /config no longer reports the upload directory; run.sh exports it.
+    UPLOAD_DIR="${UPLOAD_DIR:-/data/images}"
     echo "   Upload directory: $UPLOAD_DIR"
 else
     echo "   ✗ Wrapper service not responding"

@@ -4,7 +4,7 @@ This repository uses comprehensive linting to maintain code quality and consiste
 
 ## Automated CI Linting
 
-All linting runs automatically on every push and pull request via `.github/workflows/lint.yml`:
+All linting runs automatically on every pull request, and on pushes to `main` that touch linted paths, via `.github/workflows/lint.yml`:
 
 - **hadolint** - Dockerfile best practices (via action)
 - **shellcheck** - Shell script analysis (pre-installed on runners)
@@ -35,11 +35,11 @@ hadolint -c .hadolint.yaml claude-terminal/Dockerfile
 # Note: CI runs this with `--severity=error` (see .github/workflows/lint.yml),
 # so CI only fails on errors while a bare local run also surfaces warnings.
 shellcheck --external-sources claude-terminal/run.sh claude-terminal/scripts/*.sh \
-  claude-terminal/scripts/persist-install test-wrapper-integration.sh
+  claude-terminal/scripts/persist-install tests/*.sh test-wrapper-integration.sh
 
 # YAML files
 yamllint -c .yamllint.yml claude-terminal/config.yaml \
-  .trivy.yaml .github/workflows/
+  .trivy.yaml .trivyignore.yaml .github/workflows/
 
 # GitHub Actions
 actionlint
@@ -53,7 +53,7 @@ ruff check
 
 ## Configuration Files
 
-- `.hadolint.yaml` - Dockerfile linting rules (ignores DL3018 for HA apps)
+- `.hadolint.yaml` - Dockerfile linting rules
 - `.shellcheckrc` - Shell script linting rules (handles bashio shebang)
 - `.yamllint.yml` - YAML formatting rules (120 char lines, 2-space indent)
 - `claude-terminal/wrapper/eslint.config.js` - ESLint flat config (Node + browser/service-worker)
@@ -71,13 +71,15 @@ ruff check
 
 ## Common Issues
 
-### hadolint DL3018 (Ignored)
+### hadolint DL3018 (enforced)
 
 ```dockerfile
-RUN apk add --no-cache nodejs
+RUN apk add --no-cache nodejs=24.18.1-r0
 ```
 
-This warning about pinning apk versions is ignored because Home Assistant base images manage package versions.
+Every `apk add` in the Dockerfile pins an exact version, and Renovate's
+dockerfile manager keeps those pins current (datasource `apk`). An unpinned
+package is reported by hadolint as DL3018.
 
 ### shellcheck SC1008 (Ignored)
 
