@@ -226,10 +226,29 @@ assert_eq "resets the back-off after a run that stayed up" "1 2 1 " "$(cat "$sup
 # supervise() would prove nothing at all.
 printf '\n%s\n' "wait_for_http"
 
+# Simulated clock: nothing here really waits. sleep advances SECONDS by its
+# argument, and each curl stub advances it by however long that attempt "took".
+# shellcheck disable=SC2329  # invoked by wait_for_http
+sleep() { SECONDS=$((SECONDS + $1)); }
+
 curl_calls="$sup_dir/curl_calls"
 curl_ok_on_third() {
     echo call >> "$curl_calls"
     [ "$(wc -l < "$curl_calls" | tr -d ' ')" -ge 3 ]
+}
+
+# An endpoint that accepts the connection and never answers: every attempt
+# runs until curl's own --max-time (capped at 2s, like the real call), then
+# fails with curl's timeout status.
+curl_stalls() {
+    local limit=2
+    while [ $# -gt 0 ]; do
+        [ "$1" = "--max-time" ] && limit="$2"
+        shift
+    done
+    [ "$limit" -gt 2 ] && limit=2
+    SECONDS=$((SECONDS + limit))
+    return 28
 }
 
 rm -f "$curl_calls"
@@ -241,6 +260,15 @@ assert_eq "stops polling once it has answered" "3" "$(wc -l < "$curl_calls" | tr
 # shellcheck disable=SC2329  # invoked by wait_for_http
 curl() { return 7; }
 assert_status "fails when the endpoint never answers" 1 wait_for_http http://127.0.0.1:7680/health 3
+
+# The argument is a deadline, not an attempt count. Counting attempts let a
+# stalled endpoint stretch a 15s startup wait to 45s: 15 x (2s timeout + 1s).
+# shellcheck disable=SC2329  # invoked by wait_for_http
+curl() { curl_stalls "$@"; }
+started=$SECONDS
+wait_for_http http://127.0.0.1:7680/health 15
+waited=$((SECONDS - started))
+assert_status "gives up by its deadline even when every attempt stalls" 0 test "$waited" -le 15
 
 unset -f curl sleep
 

@@ -760,15 +760,24 @@ supervise() {
     done
 }
 
-# wait_for_http <url> <attempts>
+# wait_for_http <url> <timeout seconds>
 #
-# Poll a URL once a second until it answers with a 2xx, or give up.
+# Poll a URL until it answers with a 2xx, or give up once <timeout> seconds
+# have passed. A deadline rather than an attempt count: an endpoint that
+# accepts the connection and then stalls makes each attempt cost its full
+# --max-time, so counting attempts stretched a 15s wait to 45s. No attempt is
+# allowed to run past the deadline either.
 wait_for_http() {
-    local url="$1" attempts="$2" i
-    for ((i = 1; i <= attempts; i++)); do
-        if curl -sf --max-time 2 "$url" > /dev/null 2>&1; then
+    local url="$1" timeout="$2"
+    local deadline=$((SECONDS + timeout)) remaining
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        remaining=$((deadline - SECONDS))
+        [ "$remaining" -gt 2 ] && remaining=2
+        if curl -sf --max-time "$remaining" "$url" > /dev/null 2>&1; then
             return 0
         fi
+        [ "$SECONDS" -lt "$deadline" ] || break
         sleep 1
     done
     return 1
