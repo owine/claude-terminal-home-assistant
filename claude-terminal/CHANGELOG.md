@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.10.0...v2.10.1) (2026-10-01)
+
+
+### Dependencies
+
+* update python3 apk package to v3.14.8-r0 ([#389](https://github.com/owine/claude-terminal-home-assistant/issues/389)) ([fa610de](https://github.com/owine/claude-terminal-home-assistant/commit/fa610de00d703f2dd97c3b7f47d28cc520451123))
+
 ## [2.10.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.9.1...v2.10.0) (2026-09-29)
 
 
