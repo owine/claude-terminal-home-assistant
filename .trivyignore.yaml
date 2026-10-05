@@ -1,7 +1,7 @@
 ---
 # Trivy vulnerability ignore list.
 #
-# Every entry below is a real, fixed-upstream CVE that this repo cannot remediate
+# Every vulnerability entry below is a real, fixed-upstream CVE this repo cannot remediate
 # on its own - the fix lives in a binary we don't compile (a new HA base image for
 # tempio, a new ha-cli release for ha, a new gh release for gh) or behind a
 # dependency cap we don't control. Review periodically and prune each entry when
@@ -166,3 +166,17 @@ vulnerabilities:
   - id: CVE-2026-56865
     paths:
       - "usr/bin/gh"
+
+# Misconfiguration (IaC) findings. Unlike the CVEs above, these are deliberate
+# design choices and not waiting on an upstream fix, so there is nothing to prune.
+misconfigurations:
+  # DS-0002: "Specify at least 1 USER command in Dockerfile with non-root user".
+  # Home Assistant add-ons run as root by design. The image boots through the HA
+  # base image's s6-overlay init and bashio, run.sh installs packages with apk
+  # through persist-install, and the optional Docker socket feature needs root.
+  # The Supervisor's AppArmor profile and container isolation provide the
+  # sandboxing. Scoped to the add-on Dockerfile, so a new Dockerfile elsewhere
+  # still gets checked.
+  - id: DS-0002
+    paths:
+      - "claude-terminal/Dockerfile"
