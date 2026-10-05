@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.10.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.10.0...v2.10.1) (2026-10-05)
+
+
+### Dependencies
+
+* update dependency eslint to v10.12.0 ([#399](https://github.com/owine/claude-terminal-home-assistant/issues/399)) ([f3f4085](https://github.com/owine/claude-terminal-home-assistant/commit/f3f4085eaab5ebee5cf4f1ac61c2a4aaa5fbdb72))
+* update python3 apk package to v3.14.8-r0 ([#389](https://github.com/owine/claude-terminal-home-assistant/issues/389)) ([fa610de](https://github.com/owine/claude-terminal-home-assistant/commit/fa610de00d703f2dd97c3b7f47d28cc520451123))
+
 ## [2.10.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.9.1...v2.10.0) (2026-09-29)
 
 
