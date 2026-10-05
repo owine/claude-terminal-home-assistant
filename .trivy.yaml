@@ -1,25 +1,35 @@
 ---
 # Trivy security scanner configuration
-# Used by both filesystem and image scans in CI/CD
+# Used by the filesystem scan (security.yml). The image scan in publish.yml
+# does not read this file; it sets its options as action inputs.
+#
+# Only some options belong at the top level. The rest must be nested under the
+# section Trivy's config-file reference puts them in (`scan:`, `vulnerability:`).
+# A misplaced key fails silently: Trivy ignores it, logs no warning, and falls
+# back to the default. Every key below other than severity and exit-code once sat
+# at the top level. The result was that unfixed CVEs were reported, misconfig
+# never ran, and skip-dirs/skip-files did nothing.
 
 severity:
   - CRITICAL
   - HIGH
 
 exit-code: 1
-ignore-unfixed: true
 
-# Scan types for filesystem scanning
-# (image scans override scanners via workflow args)
-scanners:
-  - vuln
-  - secret
-  - misconfig
+vulnerability:
+  ignore-unfixed: true
 
-# Skip paths that don't contain scannable code
-skip-dirs:
-  - docs
-  - .git
+scan:
+  # Image scans override scanners via workflow args
+  scanners:
+    - vuln
+    - secret
+    - misconfig
 
-skip-files:
-  - "*.md"
+  # Skip paths that don't contain scannable code
+  skip-dirs:
+    - docs
+    - .git
+
+  skip-files:
+    - "*.md"
