@@ -101,7 +101,7 @@ docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
 # No Supervisor outside Home Assistant: the stub serves the add-on options
 python3 tests/stub-supervisor.py &
 docker run -p 7680:7680 -v "$(pwd)/config:/config" \
-  -e SUPERVISOR_TOKEN=fake -e SUPERVISOR_API=http://host.docker.internal:8099 \
+  -e SUPERVISOR_API=http://host.docker.internal:8099 \
   --add-host=host.docker.internal:host-gateway local/claude-terminal-prowine
 
 # Lint and validate

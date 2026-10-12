@@ -33,7 +33,7 @@ docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
 # bashio aborts startup, so start the stub first (tests/stub-supervisor.py header)
 python3 tests/stub-supervisor.py &
 docker run -p 7680:7680 -v "$(pwd)/config:/config" \
-  -e SUPERVISOR_TOKEN=fake -e SUPERVISOR_API=http://host.docker.internal:8099 \
+  -e SUPERVISOR_API=http://host.docker.internal:8099 \
   --add-host=host.docker.internal:host-gateway local/claude-terminal-prowine
 curl -X GET http://localhost:7680/
 
@@ -54,7 +54,7 @@ tests/run-tests.sh health     # filter by filename
 # and Chromium, against the direct port AND an ingress-shaped harness.
 # Needs the stub Supervisor running, as above.
 docker run -d --name ctp -p 7680:7680 \
-  -e SUPERVISOR_TOKEN=fake -e SUPERVISOR_API=http://host.docker.internal:8099 \
+  -e SUPERVISOR_API=http://host.docker.internal:8099 \
   --add-host=host.docker.internal:host-gateway local/claude-terminal-prowine
 mkdir -p /tmp/pw && (cd /tmp/pw && npm i playwright && npx playwright install webkit chromium)
 CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \

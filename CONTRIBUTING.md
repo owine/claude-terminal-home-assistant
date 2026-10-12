@@ -42,7 +42,7 @@ docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
 # so start the stub first or the container exits at boot.
 python3 tests/stub-supervisor.py &
 docker run -d --name test-claude-dev -p 7680:7680 \
-  -e SUPERVISOR_TOKEN=fake -e SUPERVISOR_API=http://host.docker.internal:8099 \
+  -e SUPERVISOR_API=http://host.docker.internal:8099 \
   --add-host=host.docker.internal:host-gateway \
   -v $(pwd)/config:/config local/claude-terminal:test
 
