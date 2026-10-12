@@ -7,10 +7,18 @@ and since bashio 2026.08 (shopt -s inherit_errexit) a failed lookup no longer
 degrades to an empty value: it aborts run.sh and the container exits. Point the
 container at this stub instead:
 
-    python3 tests/stub-supervisor.py --options options.json &
-    docker run -e SUPERVISOR_TOKEN=fake \\
-      -e SUPERVISOR_API=http://host.docker.internal:8099 \\
+    python3 tests/stub-supervisor.py &
+    docker run -e SUPERVISOR_API=http://host.docker.internal:8099 \\
       --add-host=host.docker.internal:host-gateway ...
+
+It listens on loopback by default, which Docker Desktop forwards
+host.docker.internal to. Docker on Linux does not: there, bind the bridge
+gateway that host-gateway resolves to, still unreachable from off the host:
+
+    --bind "$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')"
+
+Leave SUPERVISOR_TOKEN unset for a local run: with a token set, setup-ha-mcp.sh
+registers an MCP server aimed at a Home Assistant that does not exist.
 
 --options takes a JSON object of add-on options, e.g. the defaults from
 config.yaml: yq -o=json '.options' claude-terminal/config.yaml > options.json.
@@ -57,9 +65,8 @@ def make_handler(options):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=8099)
-    # 0.0.0.0, not loopback: on Linux the container reaches the host through the
-    # docker bridge address, which a loopback-only listener does not answer on.
-    parser.add_argument("--bind", default="0.0.0.0")
+    # Loopback by default: a wider bind serves whatever --options holds to the network.
+    parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--options", help="JSON file holding the add-on options object")
     args = parser.parse_args()
 
