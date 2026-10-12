@@ -98,7 +98,11 @@ For local development and testing:
 # add --platform linux/arm64 (or linux/amd64) to cross-build.
 docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
-docker run -p 7680:7680 -v "$(pwd)/config:/config" local/claude-terminal-prowine
+# No Supervisor outside Home Assistant: the stub serves the add-on options
+python3 tests/stub-supervisor.py &
+docker run -p 7680:7680 -v "$(pwd)/config:/config" \
+  -e SUPERVISOR_API=http://host.docker.internal:8099 \
+  --add-host=host.docker.internal:host-gateway local/claude-terminal-prowine
 
 # Lint and validate
 hadolint claude-terminal/Dockerfile

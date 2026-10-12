@@ -123,14 +123,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Start container with a fake Supervisor token.
-          # bashio::config returns its default argument when the Supervisor API
-          # is unreachable, so startup proceeds with sane defaults.
+          # run.sh reads every option from the Supervisor API, and since bashio
+          # 2026.08 an unreachable Supervisor aborts startup instead of yielding
+          # "" (see tests/stub-supervisor.py). Serve config.yaml's own defaults,
+          # so the container boots the way a fresh install does. The stub stays
+          # up for the rest of the job; the runner reaps it at the end.
+          # It binds the docker bridge gateway - what host-gateway resolves to -
+          # since Linux Docker does not forward host.docker.internal to loopback.
+          # The fake token below is deliberate here, unlike in a local run: it
+          # takes setup-ha-mcp.sh down its registration path, which CI then covers.
+          yq -o=json '.options' claude-terminal/config.yaml > "$RUNNER_TEMP/options.json"
+          STUB_HOST=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
+          STUB_URL="http://${STUB_HOST}:8099/addons/self/options/config"
+          python3 tests/stub-supervisor.py --bind "$STUB_HOST" \
+            --options "$RUNNER_TEMP/options.json" \
+            > "$RUNNER_TEMP/stub-supervisor.log" 2>&1 &
+          for _ in $(seq 1 10); do
+            curl -sf --max-time 1 "$STUB_URL" > /dev/null && break
+            sleep 0.5
+          done
+          curl -sf --max-time 1 "$STUB_URL" > /dev/null || {
+            echo "ERROR: stub Supervisor did not start"; cat "$RUNNER_TEMP/stub-supervisor.log"; exit 1;
+          }
+
           docker run -d \
             --name smoke-test \
             -p 7680:7680 \
             -p 7681:7681 \
             -e SUPERVISOR_TOKEN=smoke-test-fake-token \
+            -e SUPERVISOR_API=http://host.docker.internal:8099 \
+            --add-host=host.docker.internal:host-gateway \
             "$IMAGE"
 
           # Poll until the wrapper (7680) and ttyd behind it both respond, or
@@ -296,7 +318,10 @@ jobs:
 
       - name: Show container logs
         if: always()
-        run: docker logs smoke-test 2>&1 || true
+        run: |
+          docker logs smoke-test 2>&1 || true
+          echo "=== stub Supervisor ==="
+          cat "$RUNNER_TEMP/stub-supervisor.log" 2>/dev/null || true
 
       - name: Cleanup
         if: always()

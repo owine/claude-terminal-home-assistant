@@ -28,8 +28,13 @@ docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
 # Add --no-cache when npm or Python dependencies change
 
-# Run locally (7680 = web UI/ingress; ttyd is loopback-only inside the container), then test the web UI
-docker run -p 7680:7680 -v "$(pwd)/config:/config" local/claude-terminal-prowine
+# Run locally (7680 = web UI/ingress; ttyd is loopback-only inside the container), then test the web UI.
+# run.sh reads every option from the Supervisor API; outside HA there is none and
+# bashio aborts startup, so start the stub first (tests/stub-supervisor.py header)
+python3 tests/stub-supervisor.py &
+docker run -p 7680:7680 -v "$(pwd)/config:/config" \
+  -e SUPERVISOR_API=http://host.docker.internal:8099 \
+  --add-host=host.docker.internal:host-gateway local/claude-terminal-prowine
 curl -X GET http://localhost:7680/
 
 # Shell unit tests for the startup scripts (run.sh, health-check.sh). No deps,
@@ -47,7 +52,10 @@ tests/run-tests.sh health     # filter by filename
 # browser, xterm.js, ttyd and tmux that unit tests cannot see - every
 # mouse/clipboard bug of 2.7.0-2.7.4 lived there and passed CI. Runs both WebKit
 # and Chromium, against the direct port AND an ingress-shaped harness.
-docker run -d --name ctp -p 7680:7680 local/claude-terminal-prowine
+# Needs the stub Supervisor running, as above.
+docker run -d --name ctp -p 7680:7680 \
+  -e SUPERVISOR_API=http://host.docker.internal:8099 \
+  --add-host=host.docker.internal:host-gateway local/claude-terminal-prowine
 mkdir -p /tmp/pw && (cd /tmp/pw && npm i playwright && npx playwright install webkit chromium)
 CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \
   node claude-terminal/wrapper/test/integration/mouse-and-clipboard.mjs
