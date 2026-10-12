@@ -12,7 +12,10 @@
 //
 //   docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
 //     -t local/ctp ./claude-terminal
-//   docker run -d --name ctp -p 7680:7680 local/ctp
+//   python3 tests/stub-supervisor.py &   # no Supervisor outside HA
+//   docker run -d --name ctp -p 7680:7680 \
+//     -e SUPERVISOR_TOKEN=fake -e SUPERVISOR_API=http://host.docker.internal:8099 \
+//     --add-host=host.docker.internal:host-gateway local/ctp
 //   mkdir -p /tmp/pw && cd /tmp/pw && npm i playwright && npx playwright install webkit chromium
 //   CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \
 //     node claude-terminal/wrapper/test/integration/mouse-and-clipboard.mjs
