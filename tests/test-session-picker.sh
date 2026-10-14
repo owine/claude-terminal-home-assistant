@@ -153,4 +153,58 @@ unset CLAUDE_DANGEROUS_MODE
 assert_eq "without dangerous mode, neither is passed" \
     "IS_SANDBOX=<unset>" "$(launch run_claude_new)"
 
+# --- terminal reset ----------------------------------------------------------
+#
+# Background: a Claude Code that dies in raw mode (crash, OOM, kill -9) left
+# icrnl off, so Enter never ended the menu's `read` and the picker looked
+# frozen until the page was reloaded (ESJavadex/claude-code-ha #32, #36).
+
+printf '\n%s\n' "reset_terminal"
+
+reset_out=$(reset_terminal </dev/null)
+for seq in '\033[<u' '\033[>4;0m' '\033[?2004l' '\033[?1004l' '\033[?9l' '\033[?1000l' \
+           '\033[?1002l' '\033[?1003l' '\033[?1006l' '\033[?1049l' '\033[?25h'; do
+    expected=$(printf '%b' "$seq")
+    assert_contains "emits ${seq#\\033}" "$reset_out" "$expected"
+done
+
+# stty only runs against a terminal: under test, stdin is not one, and stty on
+# a pipe would only print an error.
+stty() { printf 'stty %s\n' "$*" >> "$fixture/stty"; }
+rm -f "$fixture/stty"
+reset_terminal </dev/null >/dev/null
+assert_eq "stty is not run when stdin is not a terminal" "no" \
+    "$([ -e "$fixture/stty" ] && echo yes || echo no)"
+unset -f stty
+
+banner_out=$(show_banner </dev/null)
+assert_eq "show_banner resets the terminal before drawing" \
+    "$(printf '\033[<u')" "${banner_out:0:4}"
+
+# Claude's exit is followed by prompts that read input before the next
+# show_banner: the return message, and the YOLO error branch's "Press Enter".
+# The reset must come before those, not only before the menu.
+failing_claude="$fixture/claude-fails"
+cat > "$failing_claude" <<'EOF'
+#!/bin/sh
+exit "${CLAUDE_EXIT:-1}"
+EOF
+chmod +x "$failing_claude"
+
+reset_terminal() { printf 'RESET\n'; }
+
+saved_bin="$CLAUDE_BIN"
+CLAUDE_BIN="$failing_claude"
+
+out=$(CLAUDE_EXIT=3 launch_claude 2>&1; printf 'status=%s\n' "$?")
+assert_eq "launch_claude resets after claude and keeps its exit status" \
+    "RESET${nl}status=3" "$out"
+
+out=$(printf 'YOLO\n1\n\n' | ALLOW_YOLO_MODE=1 run_claude_yolo 2>&1)
+assert_contains "the YOLO error path resets the terminal" "$out" "RESET"
+before_prompt=${out%%Press Enter to return to menu*}
+assert_contains "and does so before its Press Enter prompt" "$before_prompt" "RESET"
+
+CLAUDE_BIN="$saved_bin"
+
 finish_suite
