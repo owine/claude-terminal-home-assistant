@@ -97,7 +97,25 @@ parse_command_line() {
     fi
 }
 
+# Undo whatever terminal state a dead Claude Code left behind. It runs the pane
+# in raw mode with bracketed paste, focus events, extended keys and mouse
+# reporting on; a crash, OOM kill or `kill -9` skips its cleanup. With icrnl
+# still off, Enter sends a bare CR that `read` never sees as end of line, so
+# the menu looks frozen (ESJavadex/claude-code-ha #32, #36).
+# The mouse modes are switched off here because the menu does not want the
+# mouse - a request from a dead process is stale. tmux stays the authority:
+# this is the pane's application speaking, as Claude Code did when it asked.
+reset_terminal() {
+    if [ -t 0 ]; then
+        stty sane 2>/dev/null || true
+    fi
+    # Kitty keyboard pop, modifyOtherKeys off, bracketed paste, focus events,
+    # mouse tracking (X10/button/any/SGR), alternate screen; cursor visible
+    printf '\033[<u\033[>4;0m\033[?2004l\033[?1004l\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1049l\033[?25h'
+}
+
 show_banner() {
+    reset_terminal
     clear
     echo "╔════════════════════════════════════════╗"
     echo "║         🤖  Claude Terminal Menu       ║"
