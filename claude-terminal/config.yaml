@@ -60,6 +60,11 @@ options:
   #   and never written to the log. Leave empty to log in interactively.
   #   Note: token auth cannot establish Remote Control sessions.
   claude_code_oauth_token: ""
+  # login_notification: Post Claude's login link as a Home Assistant
+  #   notification (also reaches the Companion app) while a browser login is
+  #   waiting, and dismiss it once the login succeeds. Skipped when
+  #   claude_code_oauth_token is set.
+  login_notification: true
   # tmux_mouse_mode: Enable mouse support in tmux
   #   When true (default): the wheel scrolls tmux history and a drag selects and
   #     copies. To select with the terminal's own selection instead, hold Shift
@@ -95,6 +100,7 @@ schema:
   enable_ha_mcp: bool?
   working_directory: str?
   claude_code_oauth_token: password?
+  login_notification: bool?
   tmux_mouse_mode: bool?
   persist_npm_cache: bool?
   image_retention_days: int(0,)?

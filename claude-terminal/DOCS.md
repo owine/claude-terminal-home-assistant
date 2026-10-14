@@ -205,6 +205,7 @@ mapping cannot be disabled without forking the add-on.
 | `enable_ha_mcp` | `true` | Enable Home Assistant MCP server integration |
 | `working_directory` | `""` | Directory the terminal session starts in. Empty means `/config`, which is where it already started. A path that does not exist logs a warning and falls back to `/config` |
 | `claude_code_oauth_token` | `""` | Token from `claude setup-token`, for logging in without the browser OAuth flow. Masked in the UI and never logged. See Authentication below |
+| `login_notification` | `true` | Post Claude's login link as a Home Assistant notification while a browser login is waiting, and dismiss it once the login succeeds. See Authentication below |
 | `tmux_mouse_mode` | `true` | Mouse reporting: the wheel scrolls and a drag selects. Set `false` to disable it entirely (the wheel then sends arrow keys to full-screen apps). Flip it live with **Prefix + m**. **Changed in 2.7.3** — this defaulted to `false` before, so if you never set it, the mouse became active on upgrade |
 | `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
 | `image_retention_days` | `30` | Pasted and dropped images older than this many days are deleted at startup. Only the add-on's own uploads (`pasted-*` in `/data/images`) are touched. `0` keeps them forever. `/data` is included in every Home Assistant backup, so this also bounds backup growth. Caches and the Claude binary are always left out of backups; after a restore the add-on reinstalls the Claude version bundled with the image, and Claude updates itself again from there |
@@ -220,7 +221,23 @@ By default Claude prompts you to log in through your browser the first time you
 use it. That flow requires copying a long URL out of the terminal, which the
 browser clipboard does not always carry intact.
 
-To skip it, set `claude_code_oauth_token`:
+Two things help with that:
+
+- **Home Assistant notification**: while Claude is waiting for a login, the
+  add-on posts the link as a "Claude Code login" notification, which also
+  reaches the Companion app. Open it, sign in, then paste the code the browser
+  shows into the terminal. The notification goes away by itself once the login
+  succeeds. Turn it off with `login_notification: false`.
+- **The "Login link ready" banner** in the add-on's web UI, with Open and Copy
+  buttons for the same link, whenever the terminal is open in a browser.
+
+The code still has to be pasted into the terminal either way: Claude receives
+it through a callback inside the container, which your browser cannot reach.
+Notifications are visible to every Home Assistant user, not only admins, but
+the link alone cannot log anyone in without that terminal.
+
+To skip the browser login entirely, set `claude_code_oauth_token` (no
+notification is posted then):
 
 1. On a machine where you are already logged in to Claude Code, run
    `claude setup-token`

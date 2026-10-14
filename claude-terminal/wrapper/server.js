@@ -29,6 +29,7 @@ const {
     INVALID_FILE_TYPE,
 } = require('./http-guards');
 const { uploadFilename, isAllowedImageMime } = require('./upload-naming');
+const { loginNotifierFromEnv } = require('./login-notifier');
 
 const app = express();
 const PORT = process.env.WRAPPER_PORT || 7680;
@@ -186,3 +187,11 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`Terminal proxy available at /terminal/`);
     console.log(`WebSocket upgrade handler registered`);
 });
+
+// Post Claude's login link as an HA notification. start() never rejects; the
+// catch is only so a future change cannot turn into an unhandled rejection.
+const loginNotifier = loginNotifierFromEnv();
+if (loginNotifier) {
+    console.log('Login notifier: watching for a Claude Code login link');
+    loginNotifier.start().catch((err) => console.log(`Login notifier: ${err.message}`));
+}

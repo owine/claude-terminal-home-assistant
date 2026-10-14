@@ -703,6 +703,23 @@ export_oauth_token() {
     fi
 }
 
+# Hand the login_notification option to the wrapper, which posts Claude's
+# login link as a Home Assistant notification (wrapper/login-notifier.js).
+# Anything but an explicit false keeps it on, matching the option's default.
+# The wrapper also stays quiet when CLAUDE_CODE_OAUTH_TOKEN is set, so
+# export_oauth_token must run first - main() calls both before the wrapper.
+export_login_notification() {
+    local enabled
+    enabled=$(bashio::config 'login_notification' 'true')
+
+    if [ "$enabled" = "false" ]; then
+        export LOGIN_NOTIFICATION="false"
+        bashio::log.info "Login link notification: disabled"
+    else
+        export LOGIN_NOTIFICATION="true"
+    fi
+}
+
 # Directory the terminal session starts in.
 #
 # Defaults to /config, which is what the container already used: the Dockerfile
@@ -1032,6 +1049,7 @@ main() {
 
     init_environment
     export_oauth_token
+    export_login_notification
     prune_uploaded_images
 
     # Serve the UI before anything that reaches the network. Package installs,
