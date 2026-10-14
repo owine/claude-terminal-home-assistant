@@ -526,6 +526,57 @@ auto_install_packages() {
     fi
 }
 
+# Run the user's init_commands once per start, after packages and Docker CLI
+# are in place and before the terminal (adapted from ESJavadex/claude-code-ha
+# #33). They come only from the add-on options, which only HA admins can
+# change; nothing under /config is ever run, since other add-ons can write
+# there. Each command gets INIT_COMMAND_TIMEOUT seconds so a mistake cannot
+# hold the terminal back: long-running services must background themselves
+# (nohup ... &). A failure warns and startup carries on.
+#
+# ADDON_OPTIONS_FILE and INIT_COMMANDS_DIR are test seams; production uses the
+# defaults.
+run_init_commands() {
+    local options="${ADDON_OPTIONS_FILE:-/data/options.json}"
+    local workdir="${INIT_COMMANDS_DIR:-/config}"
+    local timeout_seconds="${INIT_COMMAND_TIMEOUT:-120}"
+    local count=0 index=0 command status output_file line
+
+    [ -f "$options" ] || return 0
+    # Same reading as auto_install_packages: straight from options.json, since
+    # bashio::config mangles lists, and anything but an array counts as none.
+    count=$(jq -r '.init_commands | if type == "array" then length else 0 end' "$options" 2>/dev/null) || count=0
+    [ "$count" -gt 0 ] 2>/dev/null || return 0
+
+    bashio::log.info "Running ${count} init command(s) from configuration..."
+    while [ "$index" -lt "$count" ]; do
+        # One jq call per entry rather than splitting a listing on newlines:
+        # a command may itself span several lines.
+        command=$(jq -r --argjson i "$index" '.init_commands[$i] // empty' "$options" 2>/dev/null) || command=""
+        index=$((index + 1))
+        [ -n "$command" ] || continue
+
+        bashio::log.info "  Running: $command"
+        # Output goes to a file, not a pipe: a service started in the
+        # background inherits stdout, and a pipe reader would wait for it.
+        output_file=$(mktemp)
+        status=0
+        (cd "$workdir" && timeout "$timeout_seconds" bash -c "$command") \
+            < /dev/null > "$output_file" 2>&1 || status=$?
+        while IFS= read -r line || [ -n "$line" ]; do
+            bashio::log.info "  [init] $line"
+        done < "$output_file"
+        rm -f "$output_file"
+
+        # 124 from coreutils timeout, 143 (SIGTERM) from BusyBox's
+        if [ "$status" -eq 124 ] || [ "$status" -eq 143 ]; then
+            bashio::log.warning "  Stopped after ${timeout_seconds}s (use 'nohup ... &' for services): $command"
+        elif [ "$status" -ne 0 ]; then
+            bashio::log.warning "  Exited with status ${status}: $command"
+        fi
+    done
+}
+
 # Optional Docker CLI support.
 # Installs docker-cli (+ compose, optional buildx) via persist-install and
 # validates access to the host Docker socket. Requires Protection Mode OFF.
@@ -943,6 +994,7 @@ main() {
     setup_persistent_packages
     init_docker
     setup_ha_mcp
+    run_init_commands
 
     # Last: ha-mcp must be registered, and persistent packages on PATH, before
     # the first Claude session launches inside tmux.

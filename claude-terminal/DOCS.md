@@ -83,6 +83,29 @@ Both require `dangerously_skip_permissions: true`. The difference is how the fla
 - Configure APK and pip packages to auto-install on startup
 - Packages are stored in `/data/packages` and survive restarts
 
+### Init Commands
+
+`init_commands` is a list of shell commands run on every start of the app,
+after persistent packages and the Docker CLI are installed and before the
+terminal opens. Use it to start something that should be running whether or
+not anyone has the terminal open.
+
+```yaml
+init_commands:
+  - nohup /config/my-bridge/start.sh > /config/my-bridge/bridge.log 2>&1 &
+  - git -C /share/projects/notes pull --ff-only
+```
+
+- Commands run as **root**, one at a time, in `bash`, from `/config`.
+- Each command gets **120 seconds**. One that runs longer is stopped and a
+  warning is logged, so a mistake can't hold the terminal back. A service must
+  put itself in the background with `nohup ... &`, and should redirect its own
+  output, as above.
+- Output goes to the app log. A command that fails logs a warning, and startup
+  carries on.
+- Only the app configuration is used. Nothing under `/config` is run
+  automatically, because other add-ons can write there.
+
 ### Docker Access
 
 The app can optionally provide access to the host Docker socket, letting you manage containers directly from the terminal — including the Home Assistant core container, other app containers, and any Docker workloads running on the host.
@@ -183,6 +206,7 @@ mapping cannot be disabled without forking the add-on.
 | `image_retention_days` | `30` | Pasted and dropped images older than this many days are deleted at startup. Only the add-on's own uploads (`pasted-*` in `/data/images`) are touched. `0` keeps them forever. `/data` is included in every Home Assistant backup, so this also bounds backup growth |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |
+| `init_commands` | `[]` | Shell commands run as root on every start, 120 seconds each. See Init Commands above |
 | `enable_docker` | `false` | Install the Docker CLI and enable host Docker socket access (requires Protection Mode disabled) ⚠️ |
 | `enable_docker_buildx` | `false` | Also install `docker buildx` for image builds (only meaningful with `enable_docker`) |
 
