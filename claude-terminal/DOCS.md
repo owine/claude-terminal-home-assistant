@@ -227,7 +227,11 @@ Two things help with that:
   add-on posts the link as a "Claude Code login" notification, which also
   reaches the Companion app. Open it, sign in, then paste the code the browser
   shows into the terminal. The notification goes away by itself once the login
-  succeeds. Turn it off with `login_notification: false`.
+  succeeds, or once the login screen is gone (a cancelled login, or a Console
+  login, which does not leave the credentials it watches for). Notifications
+  live in Home Assistant's memory, so if HA restarts mid-login the same link
+  is not posted again; use the banner below instead. Turn it off with
+  `login_notification: false`.
 - **The "Login link ready" banner** in the add-on's web UI, with Open and Copy
   buttons for the same link, whenever the terminal is open in a browser.
 

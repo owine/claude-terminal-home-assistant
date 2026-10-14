@@ -27,9 +27,14 @@ function world() {
         status: 200,           // Supervisor response status; 'throw' = network error
         calls: [],             // [{ service, body, headers }]
         logs: [],
+        captures: 0,           // capture-pane calls, i.e. ticks that got that far
+        gate: null,            // a promise execFile waits on, to hold a tick in flight
+        fetchGate: null,       // the same for fetch
     };
-    w.execFile = (file, args, opts, cb) => {
+    w.execFile = async (file, args, opts, cb) => {
         assert.strictEqual(file, 'tmux');
+        if (args[0] === 'capture-pane') w.captures++;
+        if (w.gate) await w.gate;
         if (w.screen === null) return cb(new Error('no server running'));
         if (args[0] === 'capture-pane') return cb(null, w.screen);
         if (args[0] === 'display-message') return cb(null, `${w.width}\n`);
@@ -43,10 +48,11 @@ function world() {
     w.fetch = async (url, init) => {
         const service = url.split('/').pop();
         w.calls.push({ url, service, body: JSON.parse(init.body), headers: init.headers });
+        if (w.fetchGate) await w.fetchGate;
         if (w.status === 'throw') throw new Error('connect ECONNREFUSED');
         return { ok: w.status >= 200 && w.status < 300, status: w.status };
     };
-    w.notifier = () => createLoginNotifier({
+    w.notifier = (opts = {}) => createLoginNotifier({
         supervisorToken: 'SUPTOKEN',
         homeDir: '/home',
         execFile: w.execFile,
@@ -54,6 +60,7 @@ function world() {
         fetch: w.fetch,
         now: () => NOW,
         log: { log: (m) => w.logs.push(m) },
+        ...opts,
     });
     w.loggedIn = (expiresAt = NOW + 3600_000) => {
         w.credentials = JSON.stringify({ claudeAiOauth: { accessToken: 'x', expiresAt } });
@@ -177,6 +184,134 @@ test('a failed create is retried on the next poll', async () => {
     await n.tick();
     await n.tick();
     assert.deepStrictEqual(w.services(), ['create', 'create']);
+});
+
+// A Console (API-billing) login stores an API key in ~/.claude.json and never
+// writes claudeAiOauth, so the credentials check never sees it finish. The
+// login screen going away is what ends it.
+test('Console login: dismissed once the URL has left the pane for two polls', async () => {
+    const w = world();
+    w.credentials = '{}';
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = 'Login successful. Press Enter to continue\n> ';
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create'], 'not after one poll');
+    await n.tick();
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+    assert.ok(w.logs.some((m) => /login screen gone/.test(m)));
+});
+
+test('aborted login (claude exited to a shell): dismissed after two polls', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = 'root@ha:/config# ';
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+    // The used link is not eligible again even if it reappears on screen
+    w.loginScreen(URL_A);
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
+test('a single blank capture between good ones does not dismiss', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = '';
+    await n.tick();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = '';
+    await n.tick();
+    w.loginScreen(URL_A);
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+});
+
+test('failed captures do not count towards dismissal', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = null; // tmux unreachable
+    for (let i = 0; i < 5; i++) await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+});
+
+// --- logging ---
+
+test('a Supervisor that keeps failing logs once, then once on recovery', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    w.status = 502;
+    for (let i = 0; i < 10; i++) await n.tick();
+    assert.strictEqual(w.calls.length, 10, 'still retried every poll');
+    assert.strictEqual(w.logs.filter((m) => /HTTP 502/.test(m)).length, 1);
+    w.status = 401;
+    await n.tick();
+    await n.tick();
+    assert.strictEqual(w.logs.filter((m) => /HTTP 401/.test(m)).length, 1, 'a new failure is logged');
+    w.status = 200;
+    await n.tick();
+    assert.strictEqual(w.logs.filter((m) => /working again/.test(m)).length, 1);
+    assert.ok(w.logs.some((m) => /posted/.test(m)));
+});
+
+// --- polling loop ---
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('the loop keeps polling until stop(), then stops', async () => {
+    const w = world();
+    const n = w.notifier({ pollMs: 5 });
+    await n.start();
+    await sleep(60);
+    n.stop();
+    const seen = w.captures;
+    assert.ok(seen >= 3, `polled ${seen} times`);
+    await sleep(40);
+    assert.strictEqual(w.captures, seen, 'no polls after stop()');
+});
+
+test('stop() during start()\'s dismiss leaves no loop behind', async () => {
+    const w = world();
+    let release;
+    w.fetchGate = new Promise((r) => { release = r; });
+    const n = w.notifier({ pollMs: 5 });
+    const starting = n.start();
+    n.stop();
+    w.fetchGate = null;
+    release();
+    await starting;
+    await sleep(40);
+    assert.strictEqual(w.captures, 0);
+});
+
+test('stop() then start() during an in-flight tick runs one loop, not two', async () => {
+    const w = world();
+    const n = w.notifier({ pollMs: 5 });
+    await n.start();
+    let release;
+    w.gate = new Promise((r) => { release = r; });
+    await sleep(20);            // first loop's tick is now held in execFile
+    n.stop();
+    await n.start();            // second loop
+    w.gate = null;
+    release();                  // first loop's tick finishes
+    await sleep(30);
+    n.stop();                   // stops the second loop; an orphaned first would carry on
+    const seen = w.captures;
+    await sleep(40);
+    assert.strictEqual(w.captures, seen, 'no loop survives stop()');
 });
 
 test('start() clears a stale notification before polling', async () => {

@@ -97,8 +97,23 @@ function createLoginNotifier({
     // the user to a login whose code nobody is waiting for. A new login always
     // prints a new URL (fresh state/PKCE challenge), so it is still posted.
     const posted = new Set();
-    let showing = false;
+    let shownUrl = null;  // URL of the notification currently up, if any
+    let missing = 0;      // consecutive captures without shownUrl on screen
     let timer = null;
+    let generation = 0;   // bumped by start() and stop(); a stale loop exits
+    // Last failure per service, so a Supervisor that keeps failing (HA Core
+    // restarting, a 401) logs once per change instead of every poll.
+    const lastFailure = {};
+
+    function noteOutcome(service, failure) {
+        const prefix = `Login notifier: persistent_notification.${service}`;
+        if (failure && failure !== lastFailure[service]) {
+            log.log(`${prefix} ${failure}`);
+        } else if (!failure && lastFailure[service]) {
+            log.log(`${prefix} working again`);
+        }
+        lastFailure[service] = failure;
+    }
 
     // Returns whether the Supervisor accepted the call; never throws.
     async function callService(service, body) {
@@ -112,10 +127,10 @@ function createLoginNotifier({
                 body: JSON.stringify(body),
                 signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
             });
-            if (!res.ok) log.log(`Login notifier: persistent_notification.${service} returned HTTP ${res.status}`);
+            noteOutcome(service, res.ok ? null : `returned HTTP ${res.status}`);
             return res.ok;
         } catch (err) {
-            log.log(`Login notifier: persistent_notification.${service} failed: ${err.message}`);
+            noteOutcome(service, `failed: ${err.message}`);
             return false;
         }
     }
@@ -124,13 +139,18 @@ function createLoginNotifier({
         return callService('dismiss', { notification_id: NOTIFICATION_ID });
     }
 
+    async function dismissShown(reason) {
+        if (await dismiss()) {
+            shownUrl = null;
+            missing = 0;
+            log.log(`Login notifier: ${reason}, notification dismissed`);
+        }
+    }
+
     async function tick() {
         try {
             if (await isLoggedIn({ readFile, homeDir, now })) {
-                if (showing && (await dismiss())) {
-                    showing = false;
-                    log.log('Login notifier: login complete, notification dismissed');
-                }
+                if (shownUrl) await dismissShown('login complete');
                 return;
             }
 
@@ -140,22 +160,38 @@ function createLoginNotifier({
             } catch {
                 return; // no tmux session yet, or tmux busy - try next tick
             }
-            if (!url || posted.has(url)) return;
 
-            if (await callService('create', notificationBody(url))) {
-                posted.add(url);
-                showing = true;
-                log.log('Login notifier: login link posted as a Home Assistant notification');
+            if (url && !posted.has(url)) {
+                if (await callService('create', notificationBody(url))) {
+                    posted.add(url);
+                    shownUrl = url;
+                    missing = 0;
+                    log.log('Login notifier: login link posted as a Home Assistant notification');
+                }
+                return;
+            }
+
+            // The credentials file is not the only way a login ends. A Console
+            // (API-billing) login stores an API key in ~/.claude.json and
+            // never writes claudeAiOauth, and an aborted one (Esc, claude
+            // exiting) writes nothing. Both take the login screen away, so a
+            // link that has left the pane for two polls in a row is done
+            // with. Two, so one odd capture mid-redraw does not count; a
+            // failed capture returned above and does not count either.
+            if (shownUrl) {
+                missing = url === shownUrl ? 0 : missing + 1;
+                if (missing >= 2) await dismissShown('login screen gone');
             }
         } catch (err) {
             log.log(`Login notifier: ${err.message}`);
         }
     }
 
-    function schedule() {
+    function schedule(gen) {
         timer = setTimeout(async () => {
+            if (gen !== generation) return;
             await tick();
-            if (timer) schedule();
+            if (gen === generation) schedule(gen);
         }, pollMs);
         timer.unref?.();
     }
@@ -164,11 +200,16 @@ function createLoginNotifier({
         // A notification outlives the container, and its URL belongs to the
         // claude process that printed it. One left from a previous run points
         // at a login nobody is waiting for, so clear it before polling.
+        // The generation check covers a stop() (or another start()) while
+        // that dismiss or a tick is in flight: only the newest loop runs.
         async start() {
+            const gen = ++generation;
+            clearTimeout(timer);
             await dismiss();
-            schedule();
+            if (gen === generation) schedule(gen);
         },
         stop() {
+            generation++;
             clearTimeout(timer);
             timer = null;
         },
