@@ -17,13 +17,17 @@ CLAUDE_BIN="claude"
 # IS_SANDBOX is scoped to the claude command, as in run_claude_yolo(). This
 # used to be an `export` inside a function that every caller ran as
 # $(get_claude_flags) - a subshell - so it never reached claude at all.
+# Returns claude's exit status, after reset_terminal has cleaned up the pane.
 launch_claude() {
+    local status=0
     if [ "${CLAUDE_DANGEROUS_MODE}" = "true" ]; then
         echo "⚠️  Running in DANGEROUS mode (unrestricted file access)" >&2
-        IS_SANDBOX=1 "$CLAUDE_BIN" "$@" --dangerously-skip-permissions
+        IS_SANDBOX=1 "$CLAUDE_BIN" "$@" --dangerously-skip-permissions || status=$?
     else
-        "$CLAUDE_BIN" "$@"
+        "$CLAUDE_BIN" "$@" || status=$?
     fi
+    reset_terminal
+    return "$status"
 }
 
 # Split a typed command line into words the way a shell would quote them, and
@@ -102,6 +106,9 @@ parse_command_line() {
 # reporting on; a crash, OOM kill or `kill -9` skips its cleanup. With icrnl
 # still off, Enter sends a bare CR that `read` never sees as end of line, so
 # the menu looks frozen (ESJavadex/claude-code-ha #32, #36).
+# Run straight after every claude invocation, before anything reads input -
+# the return message and the YOLO error prompt both come before the next
+# show_banner - and again in show_banner, which covers the bash shell too.
 # The mouse modes are switched off here because the menu does not want the
 # mouse - a request from a dead process is stale. tmux stays the authority:
 # this is the pane's application speaking, as Claude Code did when it asked.
@@ -110,8 +117,9 @@ reset_terminal() {
         stty sane 2>/dev/null || true
     fi
     # Kitty keyboard pop, modifyOtherKeys off, bracketed paste, focus events,
-    # mouse tracking (X10/button/any/SGR), alternate screen; cursor visible
-    printf '\033[<u\033[>4;0m\033[?2004l\033[?1004l\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1049l\033[?25h'
+    # mouse tracking (X10, normal, button-event, any-event, SGR encoding),
+    # alternate screen; cursor visible
+    printf '\033[<u\033[>4;0m\033[?2004l\033[?1004l\033[?9l\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1049l\033[?25h'
 }
 
 show_banner() {
@@ -464,6 +472,9 @@ run_claude_yolo() {
             yolo_exit_code=$?
             ;;
     esac
+    # Before the error branch's `read`, which would otherwise wait on a pane
+    # still in raw mode. launch_claude does this for the other paths.
+    reset_terminal
 
     # Handle Claude exit: 0=success, 1-128=errors, >128=signal exits (e.g. 130=Ctrl+C)
     if [ "$yolo_exit_code" -eq 0 ]; then
