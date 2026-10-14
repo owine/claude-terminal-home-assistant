@@ -97,12 +97,16 @@ init_commands:
 ```
 
 - Commands run as **root**, one at a time, in `bash`, from `/config`.
-- Each command gets **120 seconds**. One that runs longer is stopped and a
-  warning is logged, so a mistake can't hold the terminal back. A service must
-  put itself in the background with `nohup ... &`, and should redirect its own
-  output, as above.
-- Output goes to the app log. A command that fails logs a warning, and startup
-  carries on.
+- Each command gets **120 seconds**. After that its shell is stopped and a
+  warning is logged, so a mistake can't hold the terminal back. Programs the
+  shell started may keep running: in `npm ci && npm run build`, a stuck build
+  outlives the timeout.
+- A service must put itself in the background with `nohup ... &` **and**
+  redirect its own output, as above.
+- Output goes to the app log (the last 200 lines per command). A command that
+  fails logs a warning, and startup carries on.
+- The command text and its output are logged, so keep secrets out of both:
+  put them in a file under `/config` and have the command source it.
 - Only the app configuration is used. Nothing under `/config` is run
   automatically, because other add-ons can write there.
 

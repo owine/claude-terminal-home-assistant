@@ -81,9 +81,10 @@ options:
   persistent_apk_packages: []
   persistent_pip_packages: []
   # init_commands: Shell commands run as root, in order, on every start - after
-  #   packages and the Docker CLI are installed, before the terminal. Each gets
-  #   120 seconds; start services in the background (nohup ... &). Output goes
-  #   to the app log, and a failing command only warns.
+  #   packages and the Docker CLI are installed, before the terminal. Each
+  #   shell gets 120 seconds (programs it started may outlive it); start
+  #   services in the background with their output redirected (nohup ... &).
+  #   Command and output go to the app log, and a failing command only warns.
   init_commands: []
   enable_docker: false
   enable_docker_buildx: false
