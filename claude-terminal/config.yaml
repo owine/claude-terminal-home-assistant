@@ -103,6 +103,8 @@ schema:
 # Supervisor tests each pattern with PurePath.match against the file's full
 # path, which matches from the right, so each one is anchored on the data
 # folder - whose name ends in the slug - to keep it from matching elsewhere.
+# Supervisor marks full-path matching as legacy; if it moves to relative
+# paths these stop matching, which fails safe (backups just grow again).
 #   .cache: XDG_CACHE_HOME, caches only
 #   home/.claude/cache: Claude Code's own cache
 #   home/.local/bin/claude, .local/share/claude/versions: the Claude binary.

@@ -275,10 +275,12 @@ EOF
 #
 # Once Claude self-updates, the launcher becomes a symlink into
 # $XDG_DATA_HOME/claude/versions. config.yaml leaves both the launcher and
-# versions/ out of HA backups, so a restore normally brings back neither - but
-# a launcher whose target is gone (a backup taken before that exclusion, or
-# versions/ removed by hand) is a dangling link: [ -f ] is false for it, and
-# cp would then try to write through it. Remove it so the copy starts clean.
+# versions/ out of HA backups, so a restore brings back neither. A launcher
+# whose target is gone anyway (versions/ removed by hand) is a dangling link:
+# [ -f ] is false for it, so the copy below runs against it. BusyBox cp
+# replaces the link, but GNU cp - first on PATH once a user persists coreutils
+# - refuses to write through it and fails, aborting startup under set -e.
+# Remove it so the copy starts clean whichever cp runs.
 install_bundled_claude() {
     local data_home="$1"
     local source="${CLAUDE_BUNDLED_BIN:-/root/.local/bin/claude}"

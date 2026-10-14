@@ -108,8 +108,17 @@ install_bundled_claude "$home_dir" 2>/dev/null
 assert_eq "a launcher symlinked to a live version is left alone" \
     "self-updated" "$(cat "$home_dir/.local/bin/claude")"
 
-# What a restore looks like when versions/ was left out of the backup but the
-# launcher was not (a backup from before both were excluded).
+home_dir=$(new_tmpdir)
+mkdir -p "$home_dir/.local/bin"
+printf 'older-copy\n' > "$home_dir/.local/bin/claude"
+install_bundled_claude "$home_dir" 2>/dev/null
+assert_eq "an existing copied launcher is not overwritten by the image's" \
+    "older-copy" "$(cat "$home_dir/.local/bin/claude")"
+
+# versions/ removed by hand, leaving the launcher dangling. Not reachable
+# through a restore - a backup holds both paths or neither - but GNU cp (on
+# PATH when coreutils is persisted) fails on such a link, as does the BSD cp
+# these tests may run under; BusyBox cp happens to cope.
 home_dir=$(new_tmpdir)
 mkdir -p "$home_dir/.local/bin"
 ln -s "$home_dir/versions/2.9.0" "$home_dir/.local/bin/claude"
