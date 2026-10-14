@@ -85,6 +85,48 @@ assert_contains "but the log records that one was set" "$logged" "CLAUDE_CODE_OA
 unset CLAUDE_CODE_OAUTH_TOKEN
 
 # ---------------------------------------------------------------------------
+# install_bundled_claude
+# ---------------------------------------------------------------------------
+printf '\n%s\n' "install_bundled_claude"
+
+bundled_dir=$(new_tmpdir)
+export CLAUDE_BUNDLED_BIN="$bundled_dir/claude"
+printf 'image-binary\n' > "$CLAUDE_BUNDLED_BIN"
+
+home_dir=$(new_tmpdir)
+install_bundled_claude "$home_dir" 2>/dev/null
+assert_eq "a fresh home gets a copy of the image's binary" \
+    "image-binary" "$(cat "$home_dir/.local/bin/claude" 2>/dev/null)"
+assert_eq "the copy is executable" "yes" \
+    "$([ -x "$home_dir/.local/bin/claude" ] && echo yes || echo no)"
+
+home_dir=$(new_tmpdir)
+mkdir -p "$home_dir/.local/bin" "$home_dir/versions"
+printf 'self-updated\n' > "$home_dir/versions/2.9.0"
+ln -s "$home_dir/versions/2.9.0" "$home_dir/.local/bin/claude"
+install_bundled_claude "$home_dir" 2>/dev/null
+assert_eq "a launcher symlinked to a live version is left alone" \
+    "self-updated" "$(cat "$home_dir/.local/bin/claude")"
+
+# What a restore looks like when versions/ was left out of the backup but the
+# launcher was not (a backup from before both were excluded).
+home_dir=$(new_tmpdir)
+mkdir -p "$home_dir/.local/bin"
+ln -s "$home_dir/versions/2.9.0" "$home_dir/.local/bin/claude"
+(set -e; install_bundled_claude "$home_dir" 2>/dev/null)
+assert_eq "a dangling launcher does not abort startup under set -e" "0" "$?"
+assert_eq "a dangling launcher is replaced by the image's binary" \
+    "image-binary" "$(cat "$home_dir/.local/bin/claude" 2>/dev/null)"
+assert_eq "and the replacement is a regular file, not a link" "no" \
+    "$([ -L "$home_dir/.local/bin/claude" ] && echo yes || echo no)"
+
+home_dir=$(new_tmpdir)
+CLAUDE_BUNDLED_BIN="$bundled_dir/missing" install_bundled_claude "$home_dir" 2>/dev/null
+assert_eq "no image binary, nothing installed" "no" \
+    "$([ -e "$home_dir/.local/bin/claude" ] && echo yes || echo no)"
+unset CLAUDE_BUNDLED_BIN
+
+# ---------------------------------------------------------------------------
 # prune_claude_versions
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "prune_claude_versions"

@@ -212,14 +212,7 @@ PROFILE_EOF
     migrate_legacy_auth_files "$data_home"
     secure_claude_credentials "$data_home"
 
-    # Copy Claude binary to persistent home directory if not present
-    # This ensures Claude is in $HOME/.local/bin (already in PATH)
-    if [ -f "/root/.local/bin/claude" ] && [ ! -f "$data_home/.local/bin/claude" ]; then
-        mkdir -p "$data_home/.local/bin"
-        cp /root/.local/bin/claude "$data_home/.local/bin/claude"
-        chmod +x "$data_home/.local/bin/claude"
-        bashio::log.info "  - Claude binary installed to persistent home"
-    fi
+    install_bundled_claude "$data_home"
 
     bashio::log.info "Environment initialized:"
     bashio::log.info "  - Home: $HOME"
@@ -275,6 +268,33 @@ EOF
     if [ "$restored" -gt 0 ]; then
         bashio::log.info "  - Persistent packages: restored $restored libexec helper(s)"
     fi
+}
+
+# Copy the image's Claude binary into the persistent home if none is there.
+# /root/.local/bin is not on PATH; $HOME/.local/bin is.
+#
+# Once Claude self-updates, the launcher becomes a symlink into
+# $XDG_DATA_HOME/claude/versions. config.yaml leaves both the launcher and
+# versions/ out of HA backups, so a restore normally brings back neither - but
+# a launcher whose target is gone (a backup taken before that exclusion, or
+# versions/ removed by hand) is a dangling link: [ -f ] is false for it, and
+# cp would then try to write through it. Remove it so the copy starts clean.
+install_bundled_claude() {
+    local data_home="$1"
+    local source="${CLAUDE_BUNDLED_BIN:-/root/.local/bin/claude}"
+    local launcher="$data_home/.local/bin/claude"
+
+    [ -f "$source" ] || return 0
+    if [ -L "$launcher" ] && [ ! -e "$launcher" ]; then
+        rm -f "$launcher"
+        bashio::log.info "  - Claude launcher pointed at a missing version; replacing it"
+    fi
+    [ -f "$launcher" ] && return 0
+
+    mkdir -p "$data_home/.local/bin"
+    cp "$source" "$launcher"
+    chmod +x "$launcher"
+    bashio::log.info "  - Claude binary installed to persistent home"
 }
 
 # Reclaim persistent storage taken by superseded Claude Code binaries.

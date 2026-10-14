@@ -99,6 +99,23 @@ schema:
   enable_docker: bool?
   enable_docker_buildx: bool?
 
+# Left out of HA backups: everything here is rebuilt or downloaded again.
+# Supervisor tests each pattern with PurePath.match against the file's full
+# path, which matches from the right, so each one is anchored on the data
+# folder - whose name ends in the slug - to keep it from matching elsewhere.
+#   .cache: XDG_CACHE_HOME, caches only
+#   home/.claude/cache: Claude Code's own cache
+#   home/.local/bin/claude, .local/share/claude/versions: the Claude binary.
+#     run.sh copies the image's one in at startup when the launcher is
+#     missing, and Claude's self-update replaces it with a link into
+#     versions/. Excluded together, so a restore never brings back a link
+#     without its target - about 250 MB per backup.
+backup_exclude:
+  - "*_claude_terminal_prowine/.cache"
+  - "*_claude_terminal_prowine/home/.claude/cache"
+  - "*_claude_terminal_prowine/home/.local/bin/claude"
+  - "*_claude_terminal_prowine/.local/share/claude/versions"
+
 # Volume mappings for file access
 map:
   # path: /config keeps HA's config dir at today's mount (drop-in for legacy "config:rw")
