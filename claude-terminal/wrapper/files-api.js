@@ -380,8 +380,10 @@ function createFilesApi({
     }
 
     /**
-     * Open a file for reading. `real` must come from resolve() or from a
-     * walk that never follows symlinks, never straight from a request.
+     * Open a file for reading. `requestedPath` is normalised here with
+     * path.resolve() and classified before the open, so it may come from
+     * resolve(), from a walk that never follows symlinks, or straight from a
+     * request.
      *
      * O_NONBLOCK so a FIFO cannot hang the open. O_NOFOLLOW refuses a
      * symlink in the FINAL component only: a parent folder swapped for a
