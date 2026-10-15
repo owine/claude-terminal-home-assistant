@@ -586,3 +586,64 @@ test('routes: the rate limiter applies', async () => {
         assert.strictEqual((await fetch(`${url}/files/list`)).status, 429);
     });
 });
+
+// --- protected=1: the "Show protected files" toggle ---
+
+test('allowSensitive lifts the sensitive tier for preview, and nothing else', async () => {
+    assert.strictEqual((await api.preview('.env', { allowSensitive: true })).content, 'TOKEN=1\n');
+    assert.strictEqual((await api.preview('.storage/auth', { allowSensitive: true })).content, '{"refresh_tokens": []}\n');
+    assert.strictEqual((await api.preview('claude-config/.credentials.json', { allowSensitive: true })).content, '{"token": "t"}\n');
+    // a symlink named innocently, pointing at .env
+    assert.strictEqual((await api.preview('innocent.yaml', { allowSensitive: true })).content, 'TOKEN=1\n');
+    // never-shown and outside the root stay refused
+    await refused(api.preview('.git/config', { allowSensitive: true }));
+    await refused(api.preview('repo-meta/config', { allowSensitive: true }));
+    await refused(api.preview('../data/.credentials.json', { allowSensitive: true }));
+    await refused(api.preview('creds-link', { allowSensitive: true }));
+});
+
+test('openFile: a regular file comes back open, with its stat', async () => {
+    const { handle, stat } = await api.openFile(path.join(root, 'configuration.yaml'));
+    try {
+        assert.strictEqual(stat.isFile(), true);
+        assert.strictEqual(stat.size, 'homeassistant:\n  name: Home\n'.length);
+    } finally {
+        await handle.close();
+    }
+});
+
+test('openFile refuses a symlink as the last component, and a folder', async () => {
+    await refused(api.openFile(path.join(root, 'autos-link.yaml')), 400);   // O_NOFOLLOW
+    await refused(api.openFile(path.join(root, 'packages')), 400);
+});
+
+test('the descriptor check honours allowSensitive, never for hidden or outside', async () => {
+    const at = (p) => createFilesApi({ root, fdPath: async () => p });
+    const storage = path.join(root, '.storage', 'auth');
+    assert.match((await at(storage).preview('configuration.yaml', { allowSensitive: true })).content, /name: Home/);
+    await refused(at(storage).openFile(path.join(root, 'configuration.yaml')), 403);
+    await refused(at(path.join(root, '.git', 'config')).preview('configuration.yaml', { allowSensitive: true }));
+    await refused(at(path.join(outside, 'f.txt')).preview('configuration.yaml', { allowSensitive: true }));
+});
+
+test('routes: protected=1 lifts the refusal for preview; list ignores it', async () => {
+    await withServer({}, async (url) => {
+        let res = await fetch(`${url}/files/preview?path=.env&protected=1`);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual((await res.json()).content, 'TOKEN=1\n');
+
+        // only exactly '1' counts; a repeated flag arrives as an array
+        for (const flag of ['0', 'true', 'yes', '1&protected=1']) {
+            res = await fetch(`${url}/files/preview?path=.env&protected=${flag}`);
+            assert.strictEqual(res.status, 403, `protected=${flag}`);
+            assert.match((await res.json()).error, /Show protected files/);
+        }
+
+        res = await fetch(`${url}/files/preview?path=${encodeURIComponent('.git/config')}&protected=1`);
+        assert.strictEqual(res.status, 404);
+
+        const plain = await (await fetch(`${url}/files/list`)).json();
+        const flagged = await (await fetch(`${url}/files/list?protected=1`)).json();
+        assert.deepStrictEqual(flagged, plain);
+    });
+});

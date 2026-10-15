@@ -160,6 +160,9 @@ class FilesError extends Error {
     }
 }
 const notAllowed = () => new FilesError(404, 'Not found or not allowed');
+// The sensitive tier's refusal. The UI lifts it with "Show protected files",
+// which adds protected=1 to preview and download requests.
+const secretRefusal = () => new FilesError(403, 'This file may hold secrets. Turn on "Show protected files" to open it.');
 
 /**
  * Looks binary if the sample holds a NUL byte or is not valid UTF-8. A
@@ -374,20 +377,23 @@ function createFilesApi({
         return { path: real, root: rootReal, entries, truncated };
     }
 
-    async function preview(requested) {
-        const { real, kind } = await resolve(requested);
-        if (kind === 'sensitive') throw new FilesError(403, 'This file may hold secrets and is not previewed');
-
-        if (onResolved) await onResolved(real);
-
-        // O_NONBLOCK so a FIFO cannot hang the open. O_NOFOLLOW refuses a
-        // symlink in the FINAL component only: a parent folder swapped for a
-        // symlink between resolve() and here is still followed. That case is
-        // caught after the open, by asking the kernel which file the
-        // descriptor actually is (/proc/self/fd, Linux) and checking that
-        // path again. Where /proc is unavailable the check is skipped and
-        // only the last component is protected. The type is checked on the
-        // open descriptor, not the path.
+    /**
+     * Open a file for reading. `real` must come from resolve() or from a
+     * walk that never follows symlinks, never straight from a request.
+     *
+     * O_NONBLOCK so a FIFO cannot hang the open. O_NOFOLLOW refuses a
+     * symlink in the FINAL component only: a parent folder swapped for a
+     * symlink between resolve() and here is still followed. That case is
+     * caught after the open, by asking the kernel which file the
+     * descriptor actually is (/proc/self/fd, Linux) and checking that
+     * path again. Where /proc is unavailable the check is skipped and
+     * only the last component is protected. The type is checked on the
+     * open descriptor, not the path.
+     *
+     * Resolves to { handle, stat }; the caller closes the handle. Hidden
+     * is always refused, sensitive unless `allowSensitive`.
+     */
+    async function openFile(real, { allowSensitive = false } = {}) {
         let handle;
         try {
             handle = await fsp.open(real, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_NOFOLLOW || 0));
@@ -402,10 +408,26 @@ function createFilesApi({
                 if (!inside(rootReal, opened)) throw notAllowed();
                 const openedKind = classifyRelative(path.relative(rootReal, opened));
                 if (openedKind === 'hidden') throw notAllowed();
-                if (openedKind === 'sensitive') throw new FilesError(403, 'This file may hold secrets and is not previewed');
+                if (openedKind === 'sensitive' && !allowSensitive) throw secretRefusal();
             }
             const stat = await handle.stat();
             if (!stat.isFile()) throw new FilesError(400, 'Not a file');
+            return { handle, stat };
+        } catch (err) {
+            await handle.close().catch(() => {});
+            if (err instanceof FilesError) throw err;
+            throw new FilesError(400, `Cannot read file (${err.code || 'error'})`);
+        }
+    }
+
+    async function preview(requested, { allowSensitive = false } = {}) {
+        const { real, kind } = await resolve(requested);
+        if (kind === 'sensitive' && !allowSensitive) throw secretRefusal();
+
+        if (onResolved) await onResolved(real);
+
+        const { handle, stat } = await openFile(real, { allowSensitive });
+        try {
             const length = Math.min(stat.size, maxPreviewBytes);
             const buffer = Buffer.alloc(length);
             let read = 0;
@@ -495,7 +517,29 @@ function createFilesApi({
         };
     }
 
-    return { resolve, list, preview, recent };
+    return { resolve, list, preview, recent, openFile };
+}
+
+/**
+ * protected=1, sent by the UI only while "Show protected files" is on, lifts
+ * the sensitive tier's refusal for preview and download. Exactly '1': an
+ * array (?protected=1&protected=1) or any other value is off. list never
+ * reads it: a sensitive folder's names were always listable.
+ */
+const allowsProtected = (req) => req.query.protected === '1';
+
+/**
+ * Answer a failed request with JSON: a FilesError's own status and message,
+ * anything else a logged 500. Shared with files-download.js, so every Files
+ * route fails the same way.
+ */
+function sendError(res, err, log = console.error) {
+    if (err instanceof FilesError) {
+        res.status(err.status).json({ error: err.message });
+    } else {
+        log(`Files API error: ${err && err.message}`);
+        res.status(500).json({ error: 'Internal error' });
+    }
 }
 
 /**
@@ -517,12 +561,7 @@ function createFilesRouter({ api, haCheck, readLimiter, checkLimiter, log = cons
         try {
             res.json(await handler(req));
         } catch (err) {
-            if (err instanceof FilesError) {
-                res.status(err.status).json({ error: err.message });
-            } else {
-                log(`Files API error: ${err && err.message}`);
-                res.status(500).json({ error: 'Internal error' });
-            }
+            sendError(res, err, log);
         }
     };
 
@@ -531,7 +570,7 @@ function createFilesRouter({ api, haCheck, readLimiter, checkLimiter, log = cons
     const queryPath = (req) => req.query.path;
 
     router.get('/list', readLimiter, reply((req) => api.list(queryPath(req))));
-    router.get('/preview', readLimiter, reply((req) => api.preview(queryPath(req))));
+    router.get('/preview', readLimiter, reply((req) => api.preview(queryPath(req), { allowSensitive: allowsProtected(req) })));
     router.get('/recent', readLimiter, reply((req) => api.recent(req.query.hours)));
 
     router.post('/ha-check', checkLimiter, async (req, res) => {
@@ -557,6 +596,12 @@ module.exports = {
     looksBinary,
     procFdPath,
     FilesError,
+    allowsProtected,
+    sendError,
+    PARTIAL_FILE,
     MAX_ENTRIES,
     MAX_PREVIEW_BYTES,
+    MAX_RECENT_DEPTH,
+    MAX_RECENT_VISITS,
+    RECENT_TIME_BUDGET_MS,
 };
