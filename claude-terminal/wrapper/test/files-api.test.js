@@ -20,6 +20,8 @@ const {
     classifyRelative,
     looksBinary,
     procFdPath,
+    sendError,
+    FilesError,
 } = require('../files-api.js');
 const { createRateLimiter } = require('../http-guards.js');
 
@@ -646,4 +648,40 @@ test('routes: protected=1 lifts the refusal for preview; list ignores it', async
         const flagged = await (await fetch(`${url}/files/list?protected=1`)).json();
         assert.deepStrictEqual(flagged, plain);
     });
+});
+
+// --- openFile checks the path itself, not only the descriptor ---
+
+test('openFile enforces the tiers without /proc (fdPath unavailable)', async () => {
+    const bare = createFilesApi({ root, fdPath: async () => null });
+    await refused(bare.openFile(path.join(root, '.env')), 403);
+    const { handle } = await bare.openFile(path.join(root, '.env'), { allowSensitive: true });
+    await handle.close();
+    await refused(bare.openFile(path.join(root, '.git', 'config')), 404);
+    await refused(bare.openFile(path.join(root, '.git', 'config'), { allowSensitive: true }), 404);
+    await refused(bare.openFile(path.join(outside, 'f.txt')), 404);
+    await refused(bare.openFile(path.join(outside, 'f.txt'), { allowSensitive: true }), 404);
+});
+
+test('a refused openFile leaks no descriptor', { skip: !hasProcFd && 'needs /proc/self/fd (Linux)' }, async () => {
+    const count = () => fs.readdirSync('/proc/self/fd').length;
+    const gitConfig = path.join(root, '.git', 'config');
+    const viaFd = createFilesApi({ root, fdPath: async () => gitConfig });
+    const before = count();
+    await refused(viaFd.openFile(path.join(root, 'configuration.yaml')));   // refused after the open
+    await refused(api.openFile(path.join(root, 'packages')), 400);          // a folder
+    assert.strictEqual(count(), before);
+});
+
+test('sendError destroys the response instead of throwing once headers are sent', () => {
+    const logged = [];
+    let destroyed = false;
+    const res = {
+        headersSent: true,
+        destroy() { destroyed = true; },
+        status() { throw new Error('must not write after headers'); },
+    };
+    assert.doesNotThrow(() => sendError(res, new FilesError(403, 'x'), (m) => logged.push(m)));
+    assert.strictEqual(destroyed, true);
+    assert.strictEqual(logged.length, 1);
 });

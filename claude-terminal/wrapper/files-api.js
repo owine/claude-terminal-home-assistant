@@ -37,6 +37,8 @@ const MAX_PREVIEW_BYTES = 256 * 1024;
 const BINARY_SNIFF_BYTES = 8000;
 // Recent changes: result size, folder depth, entries visited and wall clock.
 // Whichever runs out first ends the walk; the response says it was cut short.
+// The zip walk in files-download.js shares MAX_RECENT_DEPTH, MAX_RECENT_VISITS
+// and RECENT_TIME_BUDGET_MS.
 const MAX_RECENT = 100;
 const MAX_RECENT_DEPTH = 8;
 const MAX_RECENT_VISITS = 20000;
@@ -386,14 +388,24 @@ function createFilesApi({
      * symlink between resolve() and here is still followed. That case is
      * caught after the open, by asking the kernel which file the
      * descriptor actually is (/proc/self/fd, Linux) and checking that
-     * path again. Where /proc is unavailable the check is skipped and
-     * only the last component is protected. The type is checked on the
-     * open descriptor, not the path.
+     * path again. Where /proc is unavailable only that second check is
+     * skipped. The type is checked on the open descriptor, not the path.
+     *
+     * Both checks apply the tiers: `real` is classified BEFORE the open (so
+     * this is safe to call from anywhere, with or without /proc), and the
+     * descriptor's path again AFTER it, as the race guard.
      *
      * Resolves to { handle, stat }; the caller closes the handle. Hidden
-     * is always refused, sensitive unless `allowSensitive`.
+     * and outside-the-root are always refused, sensitive unless
+     * `allowSensitive`.
      */
     async function openFile(real, { allowSensitive = false } = {}) {
+        const rootBefore = await realRoot();
+        if (!inside(rootBefore, real)) throw notAllowed();
+        const kindBefore = classifyRelative(path.relative(rootBefore, real));
+        if (kindBefore === 'hidden') throw notAllowed();
+        if (kindBefore === 'sensitive' && !allowSensitive) throw secretRefusal();
+
         let handle;
         try {
             handle = await fsp.open(real, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_NOFOLLOW || 0));
@@ -534,6 +546,13 @@ const allowsProtected = (req) => req.query.protected === '1';
  * route fails the same way.
  */
 function sendError(res, err, log = console.error) {
+    if (res.headersSent) {
+        // Mid-stream: a JSON body can no longer be sent. Cut the connection
+        // so the client sees a failed transfer, not a truncated "success".
+        log(`Files API error after headers were sent: ${err && err.message}`);
+        res.destroy();
+        return;
+    }
     if (err instanceof FilesError) {
         res.status(err.status).json({ error: err.message });
     } else {
