@@ -80,15 +80,25 @@ reset_config() {
 # on a stock Mac the probe would fail with status 127 and report a healthy
 # fixture binary as broken - a suite failure that says nothing about the code.
 #
-# Define a shim only when no real timeout exists. It ignores the duration and
-# runs the command directly, which is correct for test fixtures: every stub
-# under test exits immediately. The production path is unaffected, and the
+# Define a shim only when no real timeout exists. It ignores the options and
+# duration and runs the command directly, which is correct for test fixtures:
+# every stub under test exits immediately. Suites that test the timeout itself
+# skip when they find this shim. The production path is unaffected, and the
 # container's busybox timeout is used whenever it is present.
 if ! command -v timeout >/dev/null 2>&1; then
     timeout() {
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                -k|-s) shift 2 ;;   # options that take a value
+                -*)    shift ;;
+                *)     break ;;
+            esac
+        done
         shift          # discard the duration
         "$@"
     }
+    # ...and into the fresh shells run_under_bashio starts
+    export -f timeout
 fi
 
 # ---------------------------------------------------------------------------

@@ -526,6 +526,88 @@ auto_install_packages() {
     fi
 }
 
+# Run the user's init_commands once per start, after packages and Docker CLI
+# are in place and before the terminal (adapted from ESJavadex/claude-code-ha
+# #33). They come only from the add-on options, which only HA admins can
+# change; nothing under /config is ever run, since other add-ons can write
+# there. A failure warns and startup carries on.
+#
+# Each command's shell gets INIT_COMMAND_TIMEOUT seconds, then SIGTERM, then
+# SIGKILL INIT_COMMAND_KILL_AFTER seconds later if it ignores that - so a
+# mistake cannot hold the terminal back. Only that shell is signalled: BusyBox
+# timeout targets one PID, and a group kill is not an option because init
+# commands share run.sh's process group with the wrapper supervisor. Programs
+# the shell started (`sleep 30; true`, `npm ci && npm run build`) may keep
+# running after it is stopped. Long-running services must background
+# themselves (nohup ... &) and redirect their own output.
+#
+# ADDON_OPTIONS_FILE and INIT_COMMANDS_DIR are test seams; production uses the
+# defaults.
+run_init_commands() {
+    local options="${ADDON_OPTIONS_FILE:-/data/options.json}"
+    local workdir="${INIT_COMMANDS_DIR:-/config}"
+    local timeout_seconds="${INIT_COMMAND_TIMEOUT:-120}"
+    local kill_after="${INIT_COMMAND_KILL_AFTER:-10}"
+    local count=0 index=0 command status output_file
+
+    [ -f "$options" ] || return 0
+    # Same reading as auto_install_packages: straight from options.json, since
+    # bashio::config mangles lists, and anything but an array counts as none.
+    count=$(jq -r '.init_commands | if type == "array" then length else 0 end' "$options" 2>/dev/null) || count=0
+    [ "$count" -gt 0 ] 2>/dev/null || return 0
+
+    bashio::log.info "Running ${count} init command(s) from configuration..."
+    while [ "$index" -lt "$count" ]; do
+        # One jq call per entry rather than splitting a listing on newlines:
+        # a command may itself span several lines.
+        command=$(jq -r --argjson i "$index" '.init_commands[$i] // empty' "$options" 2>/dev/null) || command=""
+        index=$((index + 1))
+        [ -n "$command" ] || continue
+
+        # bashio logs with printf '%b': unescaped, a `\c` in the command would
+        # cut the line short and `\t` would become a tab.
+        bashio::log.info "  Running: ${command//\\/\\\\}"
+        # Output goes to a file, not a pipe: a service started in the
+        # background inherits stdout, and a pipe reader would wait for it.
+        if ! output_file=$(mktemp 2>/dev/null); then
+            bashio::log.warning "  Skipped, could not create a temporary file: ${command//\\/\\\\}"
+            continue
+        fi
+        status=0
+        (cd "$workdir" && timeout -k "$kill_after" "$timeout_seconds" bash -c "$command") \
+            < /dev/null > "$output_file" 2>&1 || status=$?
+        log_init_output "$output_file"
+        rm -f "$output_file"
+
+        # 124 from coreutils timeout, 143 (SIGTERM) from BusyBox's, 137 when
+        # the shell ignored SIGTERM and was killed
+        if [ "$status" -eq 124 ] || [ "$status" -eq 143 ] || [ "$status" -eq 137 ]; then
+            bashio::log.warning "  Stopped after ${timeout_seconds}s (use 'nohup ... &' for services): ${command//\\/\\\\}"
+        elif [ "$status" -ne 0 ]; then
+            bashio::log.warning "  Exited with status ${status}: ${command//\\/\\\\}"
+        fi
+    done
+}
+
+# Replay one init command's output into the log - only the last
+# INIT_COMMAND_LOG_LINES lines, since replay is not covered by the timeout and
+# every line costs a bashio call. Never fails: the command may have deleted
+# its own output file (rm -rf /tmp/tmp.*), and under errexit an unguarded
+# redirection from a missing file would abort startup on every boot.
+log_init_output() {
+    local file="$1" max="${INIT_COMMAND_LOG_LINES:-200}" total line
+
+    # awk, not wc -l: it also counts a last line with no trailing newline
+    total=$(awk 'END { print NR }' "$file" 2>/dev/null) || total=0
+    [ "$total" -gt 0 ] 2>/dev/null || return 0
+    if [ "$total" -gt "$max" ]; then
+        bashio::log.info "  [init] ... $((total - max)) earlier line(s) omitted"
+    fi
+    while IFS= read -r line || [ -n "$line" ]; do
+        bashio::log.info "  [init] ${line//\\/\\\\}"
+    done < <(tail -n "$max" "$file" 2>/dev/null) || true
+}
+
 # Optional Docker CLI support.
 # Installs docker-cli (+ compose, optional buildx) via persist-install and
 # validates access to the host Docker socket. Requires Protection Mode OFF.
@@ -943,6 +1025,7 @@ main() {
     setup_persistent_packages
     init_docker
     setup_ha_mcp
+    run_init_commands
 
     # Last: ha-mcp must be registered, and persistent packages on PATH, before
     # the first Claude session launches inside tmux.
