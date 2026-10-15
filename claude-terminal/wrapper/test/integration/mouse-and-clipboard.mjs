@@ -1,5 +1,6 @@
 // Integration test: mouse ownership and clipboard delivery, in a real browser
-// against a real tmux.
+// against a real tmux - plus the Files sidebar, which resizes the terminal
+// iframe and so has to be proven not to disturb either.
 //
 // This exists because the unit tests cannot see any of it. Three consecutive
 // releases shipped a broken mouse mode while every unit test passed: the bugs
@@ -115,6 +116,11 @@ const PNG_SIGNATURE = Buffer.from('89504e470d0a1a0a', 'hex');
 const PNG_A = Buffer.concat([PNG_SIGNATURE, Buffer.from('first')]);
 const PNG_B = Buffer.concat([PNG_SIGNATURE, Buffer.from('second')]);
 const PICK_DIR = mkdtempSync(join(tmpdir(), 'ctp-upload-'));
+
+// Files sidebar fixture, inside the container's /config. The file name has a
+// space so Insert path has something to quote.
+const SIDEBAR_DIR = '/config/ctp-sidebar-fixture';
+const SIDEBAR_FILE = 'with space.yaml';
 
 // Leave the pane at a plain shell prompt with plenty of scrollback.
 //
@@ -428,6 +434,108 @@ async function run(engine, mode, url) {
     }
     check('a second image picked at the same path still uploads', uploaded, 2);
 
+    // 6. The Files sidebar. It narrows the terminal iframe, so what matters
+    //    most is that the terminal follows (xterm AND tmux resize) and that
+    //    the wheel still reaches tmux with the sidebar open. The fixture is
+    //    made through docker exec, like every other terminal-side state here.
+    await resetPane();
+    dexec(['rm', '-rf', SIDEBAR_DIR]);
+    dexec(['mkdir', '-p', SIDEBAR_DIR]);
+    dexec(['sh', '-c', 'printf "sidebar: ok\\n" > "$1"; printf "k: v\\n" > "$2"; '
+        + 'mkdir "$3"; printf "ref: x\\n" > "$3/HEAD"; printf partial > "$4"', 'sh',
+        `${SIDEBAR_DIR}/${SIDEBAR_FILE}`, `${SIDEBAR_DIR}/secrets.yaml`,
+        `${SIDEBAR_DIR}/.git`, `${SIDEBAR_DIR}/download.part`]);
+
+    const cols = () => wrapper.evaluate(`${TERM}.cols`);
+    const windowWidth = () => Number(tmux('#{window_width}'));
+    const sidebarOpen = () => wrapper.evaluate(
+        '!document.getElementById("files-sidebar").classList.contains("collapsed")');
+    const colsClosed = await cols();
+    const tmuxClosed = windowWidth();
+
+    await wrapper.locator('#files-btn').click();
+    check('the Files button opens the sidebar', await waitFor(sidebarOpen), true);
+    check('opening the sidebar refits xterm and tmux',
+        await waitFor(async () => (await cols()) < colsClosed && windowWidth() < tmuxClosed), true);
+    const colsOpen = await cols();
+
+    // Hidden files on, so a missing .git is the server's doing, not the
+    // client's dotfile filter.
+    await wrapper.locator('#files-show-hidden').check();
+    const list = wrapper.locator('#files-list');
+    const folderRow = list.locator('.files-row', { hasText: SIDEBAR_DIR.split('/').pop() });
+    check('the tree lists /config', await waitFor(async () => (await folderRow.count()) === 1), true);
+    await folderRow.click();
+    const fileRow = list.locator('.files-row', { hasText: SIDEBAR_FILE });
+    check('a folder expands to its files', await waitFor(async () => (await fileRow.count()) === 1), true);
+    const names = await list.locator('.files-name').allTextContents();
+    check('the tree hides .git and *.part, and shows secrets.yaml',
+        { git: names.includes('.git'), part: names.includes('download.part'), secrets: names.includes('secrets.yaml') },
+        (v) => !v.git && !v.part && v.secrets);
+
+    await fileRow.click();
+    const previewBody = () => wrapper.evaluate(
+        'document.getElementById("files-preview").classList.contains("active") '
+        + '&& document.getElementById("files-preview-body").textContent');
+    check('clicking a file previews it as text',
+        await waitFor(async () => (await previewBody()) === 'sidebar: ok\n'), true);
+
+    // Typed at the prompt, quoted, and NOT submitted: the line is still the
+    // last thing on screen and bash has not tried to run it.
+    await wrapper.locator('#files-insert-btn').click();
+    const quoted = `'${SIDEBAR_DIR}/${SIDEBAR_FILE}'`;
+    const promptLine = () => dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop();
+    check('Insert path types the quoted path at the prompt',
+        await waitFor(() => promptLine().endsWith(quoted)), true);
+    await sleep(500);
+    check('Insert path does not press Enter', promptLine().endsWith(quoted), true);
+    sendKeys('C-u');
+
+    const openBox = await wrapper.locator('#terminal-frame').boundingBox();
+    await page.mouse.move(openBox.x + openBox.width / 2, openBox.y + openBox.height / 2);
+    for (let i = 0; i < 5; i++) {
+        await page.mouse.wheel(0, -120);
+        await sleep(150);
+    }
+    check('with the sidebar open, the wheel still scrolls tmux history',
+        await waitFor(() => Number(tmux('#{scroll_position}')) > 0), true);
+    cancelCopyMode();
+
+    // Drag the left edge 120px to the left: wider sidebar, narrower terminal,
+    // and nothing left behind that would keep the pointer from the iframe.
+    const sidebarWidth = () => wrapper.evaluate(
+        'document.getElementById("files-sidebar").getBoundingClientRect().width');
+    const widthBefore = await sidebarWidth();
+    const colsBeforeDrag = await cols();
+    const handle = await wrapper.locator('#files-resizer').boundingBox();
+    const grip = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
+    await page.mouse.move(grip.x, grip.y);
+    await page.mouse.down();
+    await page.mouse.move(grip.x - 120, grip.y, { steps: 12 });
+    await page.mouse.up();
+    check('dragging the edge resizes the sidebar',
+        Math.round((await sidebarWidth()) - widthBefore), (d) => d >= 100 && d <= 140);
+    check('resizing refits the terminal',
+        await waitFor(async () => (await cols()) < colsBeforeDrag), true);
+    check('a finished drag gives the iframe the pointer back',
+        await wrapper.evaluate(`JSON.stringify({
+            resizing: document.body.classList.contains('files-resizing'),
+            pointer: getComputedStyle(document.getElementById('terminal-frame')).pointerEvents,
+        })`), JSON.stringify({ resizing: false, pointer: 'auto' }));
+    check('open state and width are remembered',
+        await wrapper.evaluate(`JSON.stringify([localStorage.getItem('filesSidebar.open'),
+            Number(localStorage.getItem('filesSidebar.width')) > 300])`), JSON.stringify(['1', true]));
+
+    await wrapper.locator('#files-hide').click();
+    // Not compared with the width at load: ttyd under-fits on first load (a
+    // column count ~20 short of what fits) until its first resize event, on
+    // main as well, so the closed width can legitimately be the larger one.
+    const widthBack = async () => (await cols()) > colsOpen && windowWidth() === (await cols());
+    await waitFor(widthBack);
+    check('hiding the sidebar gives the terminal its width back, in xterm and tmux',
+        { cols: await cols(), tmux: windowWidth(), colsOpen }, (v) => v.cols > v.colsOpen && v.tmux === v.cols);
+    dexec(['rm', '-rf', SIDEBAR_DIR]);
+
     if (failures > failuresBefore) {
         await saveArtifacts(page, consoleLog, `${engine.name()}-${mode}`);
     }
@@ -445,6 +553,7 @@ try {
     ingress.close();
     cancelCopyMode();
     rmSync(PICK_DIR, { recursive: true, force: true });
+    try { dexec(['rm', '-rf', SIDEBAR_DIR]); } catch { /* container gone */ }
 }
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`);

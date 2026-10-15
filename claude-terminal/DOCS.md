@@ -320,6 +320,7 @@ The terminal starts directly in your `/config` directory, giving you immediate a
 - **Auto-Launching**: Claude starts automatically when you open the terminal (configurable)
 - **Claude AI**: Access Claude's AI capabilities for programming, troubleshooting and more
 - **Image Paste Support**: Paste images (Ctrl+V), drag-drop, or upload for Claude analysis
+- **Files Sidebar**: Browse and preview `/config`, see recently changed files, and run Home Assistant's configuration check
 - **Direct Config Access**: Terminal starts in `/config` for immediate access to all Home Assistant files
 - **Simple Setup**: Uses OAuth for easy authentication
 - **Home Assistant Integration**: Access directly from your dashboard
@@ -514,6 +515,42 @@ df -h /data                   # Check disk space
 **Browser Compatibility:**
 - ✅ Chrome/Edge 90+, Firefox 90+, Safari 14+
 - ⚠️ Older browsers: use drag-drop or upload button
+
+#### Files Sidebar
+
+The **🗂️** button in the header opens a sidebar on the right of the terminal.
+Hide it with **»** and it shrinks to a thin rail with buttons to open it again;
+drag its left edge to resize it. It remembers whether it was open and how wide
+it was. On a phone it covers the terminal while open and is out of the way
+entirely when closed.
+
+- **Files** is a tree of `/config`. Click a file to preview it, then **Insert
+  path** types its path at the prompt (quoted if it has spaces, never followed
+  by Enter) so you can hand it to Claude. **Copy path** puts it on the
+  clipboard. Dotfiles appear when you tick **Hidden files**.
+- **Recent changes** lists the files in `/config` changed in the last hour,
+  day or week, newest first, so you can see what Claude just edited. What Home
+  Assistant rewrites by itself is left out: `.storage`, `deps`, `tts`,
+  `backups`, databases and logs.
+- **✓ Check HA configuration** runs `ha core check` and shows the result, so
+  you can validate an edit before restarting Home Assistant.
+
+The sidebar is read-only and limited to `/config`. Paths are resolved through
+symlinks and must stay inside it, so `/data`, where your Claude login lives, is
+not reachable. Which files it shows follows Studio Code Server's defaults:
+
+- `.git` is never listed or previewed: remote URLs in `.git/config` can carry
+  access tokens.
+- `secrets.yaml` is an ordinary file, listed and previewed like any other.
+- Files that are typically credentials are listed with a 🔒 but not
+  previewed: `.storage`, `.cloud`, `.ssh`, `.gnupg`, `claude-config`, `.env`
+  files, keys and certificates (`*.key`, `*.pem`, `*.p12`, `id_rsa` and
+  friends), `.git-credentials`, `.gitconfig`, `.netrc`, `.npmrc`, `.pypirc`,
+  and Claude Code's own `.credentials.json` and `.claude.json`.
+- Unfinished downloads (`*.part`) are not listed.
+
+Previews show at most the first 256 KB of a file, as plain text; binary files
+are recognised and not shown. A folder lists at most 1000 entries.
 
 #### Persistent Package Management
 - **System packages**: Install APK packages that survive restarts
