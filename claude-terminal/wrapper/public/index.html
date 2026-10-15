@@ -95,6 +95,20 @@
             transition: all 0.2s ease;
         }
 
+        /* Muted, and dropped on narrow screens where the header has no room */
+        #addon-version {
+            font-size: 11px;
+            color: #6a6a6a;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        @media (max-width: 600px) {
+            #addon-version {
+                display: none;
+            }
+        }
+
         /* Available to assistive technology, absent from the visual layout.
            clip-rect rather than display:none or visibility:hidden, both of
            which remove the element from the accessibility tree entirely. */
@@ -468,6 +482,7 @@
             <!-- Status and existing buttons -->
             <span id="term-indicator" style="width: 8px; height: 8px; border-radius: 50%; background: #f48771; flex-shrink: 0;" title="Terminal loading..."></span>
             <span id="status"></span>
+            <span id="addon-version" hidden></span>
             <button id="clipboard-btn" class="header-btn" title="Nothing copied yet"
                     aria-label="Clipboard: nothing copied yet">
                 <span aria-hidden="true">&#128203;</span>
@@ -537,6 +552,7 @@
             .then(res => res.json())
             .then(config => {
                 ttydPort = config.ttydPort;
+                showAddonVersion(config.version);
                 console.log('Config loaded:', config);
                 // Load ttyd via proxy endpoint
                 loadTerminal();
@@ -546,6 +562,14 @@
                 // Fallback: load terminal anyway
                 loadTerminal();
             });
+
+        function showAddonVersion(version) {
+            if (typeof version !== 'string' || !version) return;
+            const el = document.getElementById('addon-version');
+            el.textContent = 'v' + version;
+            el.title = 'Claude Terminal Prowine ' + version;
+            el.hidden = false;
+        }
 
         function loadTerminal() {
             const iframe = document.getElementById('terminal-frame');

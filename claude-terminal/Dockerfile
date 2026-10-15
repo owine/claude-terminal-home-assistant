@@ -261,5 +261,14 @@ COPY .claude/ /opt/.claude/
 RUN chmod +x /run.sh \
     && chmod +x /opt/scripts/*.sh
 
+# The add-on version, shown in the panel header and in /health. The HA builder
+# passes it as BUILD_VERSION; local and CI test builds leave it empty and the
+# header shows nothing. Baked in rather than asked of the Supervisor at boot
+# (bashio::addon.version): bashio aborts run.sh on a failed Supervisor call,
+# and a version label is no reason to risk startup. Declared last so it
+# invalidates no earlier layer.
+ARG BUILD_VERSION=""
+ENV ADDON_VERSION="${BUILD_VERSION}"
+
 # Use exec form for better signal handling
 CMD ["/run.sh"]

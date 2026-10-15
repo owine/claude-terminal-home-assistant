@@ -33,6 +33,9 @@ const { loginNotifierFromEnv } = require('./login-notifier');
 
 const app = express();
 const PORT = process.env.WRAPPER_PORT || 7680;
+// Baked into the image from the builder's BUILD_VERSION (see Dockerfile);
+// empty in local and CI test builds.
+const ADDON_VERSION = process.env.ADDON_VERSION || '';
 const TTYD_PORT = process.env.TTYD_PORT || 7681;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/data/images';
 
@@ -93,13 +96,14 @@ app.use(createOriginGuard());
 
 // Health check endpoint
 app.get('/health', generalLimiter, (req, res) => {
-    res.json({ status: 'ok' });
+    res.json({ status: 'ok', version: ADDON_VERSION });
 });
 
 // Provide ttyd port to frontend (no longer exposes internal paths)
 app.get('/config', generalLimiter, (req, res) => {
     res.json({
-        ttydPort: TTYD_PORT
+        ttydPort: TTYD_PORT,
+        version: ADDON_VERSION
     });
 });
 
