@@ -107,6 +107,14 @@
             #addon-version {
                 display: none;
             }
+
+            /* Four icon buttons in the space three had: without this the
+               Files button pushed a 360px-wide phone's header onto a third
+               row. Only the side padding shrinks; the height is unchanged. */
+            .header-btn {
+                padding-left: 8px;
+                padding-right: 8px;
+            }
         }
 
         /* Available to assistive technology, absent from the visual layout.
@@ -460,6 +468,359 @@
             background: #1e1e1e; color: #d4d4d4; border: 1px solid #3c3c3c; border-radius: 4px;
         }
         .login-paste[hidden], .login-btn[hidden] { display: none; }
+
+        /* ========================================
+           Files sidebar (ported from ESJavadex/claude-code-ha 2.2.0/2.2.1)
+           ========================================
+           Sits to the right of the terminal. Collapsed, it is a thin rail of
+           buttons; open, it is resizable from its left edge. Nothing here
+           reaches into the terminal iframe: the iframe just gets narrower,
+           and ttyd refits on its own window's resize event. */
+        #main {
+            flex: 1;
+            display: flex;
+            min-height: 0;
+            position: relative;
+        }
+
+        /* min-width: 0 lets the terminal shrink below its content width when
+           the sidebar opens, instead of pushing the sidebar off screen. */
+        #main > #terminal-container {
+            min-width: 0;
+        }
+
+        #files-sidebar {
+            width: 300px;
+            max-width: calc(100% - 200px);
+            flex-shrink: 0;
+            background: #252526;
+            border-left: 1px solid #3d3d3d;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            font-size: 13px;
+            position: relative;
+            color-scheme: dark;   /* dark scrollbars and form controls, here only */
+        }
+
+        #files-sidebar.collapsed {
+            width: 36px !important;
+        }
+
+        #files-sidebar.collapsed > :not(#files-rail) {
+            display: none !important;
+        }
+
+        #files-rail {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            padding-top: 6px;
+        }
+
+        #files-sidebar.collapsed #files-rail {
+            display: flex;
+        }
+
+        .files-rail-btn {
+            width: 28px;
+            height: 28px;
+            background: none;
+            border: none;
+            border-radius: 4px;
+            color: #aaa;
+            cursor: pointer;
+            font-size: 15px;
+            line-height: 1;
+        }
+
+        .files-rail-btn:hover {
+            background: #37373d;
+            color: #fff;
+        }
+
+        #files-tabs {
+            display: flex;
+            border-bottom: 1px solid #3d3d3d;
+            flex-shrink: 0;
+        }
+
+        .files-tab {
+            flex: 1;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #aaa;
+            padding: 8px 4px;
+            cursor: pointer;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .files-tab[aria-selected="true"] {
+            color: #fff;
+            border-bottom-color: #007acc;
+        }
+
+        #files-hide {
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #888;
+            padding: 8px 10px;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1;
+        }
+
+        #files-hide:hover {
+            color: #fff;
+        }
+
+        /* Drag handle on the sidebar's left edge */
+        #files-resizer {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: -3px;
+            width: 6px;
+            cursor: col-resize;
+            background: transparent;
+            z-index: 6;
+            touch-action: none;
+        }
+
+        #files-resizer:hover,
+        #files-resizer.dragging {
+            background: #007acc;
+        }
+
+        /* During a drag only: the iframe would otherwise swallow the pointer
+           as soon as it crosses into the terminal. Removed on pointerup,
+           pointercancel and lost capture, so the terminal never keeps it. */
+        body.files-resizing #terminal-frame {
+            pointer-events: none;
+        }
+
+        body.files-resizing {
+            cursor: col-resize;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #files-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 8px;
+            border-bottom: 1px solid #333;
+            color: #888;
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+
+        #files-toolbar label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+        }
+
+        #files-toolbar [hidden] {
+            display: none;
+        }
+
+        #files-refresh {
+            margin-left: auto;
+            background: none;
+            border: 1px solid #444;
+            color: #ccc;
+            border-radius: 3px;
+            cursor: pointer;
+            padding: 2px 8px;
+            font-size: 11px;
+        }
+
+        #files-list {
+            flex: 1;
+            overflow: auto;
+            padding: 4px 0;
+        }
+
+        .files-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            width: 100%;
+            padding: 3px 8px;
+            background: none;
+            border: none;
+            font: inherit;
+            text-align: left;
+            cursor: pointer;
+            white-space: nowrap;
+            color: #ddd;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .files-row:hover {
+            background: #2a2d2e;
+        }
+
+        .files-row.selected {
+            background: #094771;
+        }
+
+        .files-row.sensitive .files-name {
+            color: #999;
+        }
+
+        .files-twisty {
+            width: 12px;
+            color: #888;
+            flex-shrink: 0;
+            text-align: center;
+        }
+
+        .files-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .files-meta {
+            margin-left: auto;
+            padding-left: 8px;
+            color: #777;
+            font-size: 11px;
+        }
+
+        .files-note {
+            color: #777;
+            padding: 6px 12px;
+            font-style: italic;
+        }
+
+        #files-footer {
+            border-top: 1px solid #3d3d3d;
+            padding: 8px;
+            flex-shrink: 0;
+        }
+
+        #ha-check-btn {
+            width: 100%;
+            background: #1a7f37;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 7px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        #ha-check-btn:disabled {
+            opacity: 0.6;
+            cursor: wait;
+        }
+
+        #ha-check-result {
+            margin-top: 6px;
+            font-size: 11px;
+            color: #aaa;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 120px;
+            overflow: auto;
+        }
+
+        #ha-check-result:empty {
+            display: none;
+        }
+
+        #ha-check-result.ok { color: #4ec9b0; }
+        #ha-check-result.error { color: #f48771; }
+
+        #files-preview {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            color-scheme: dark;
+        }
+
+        #files-preview.active {
+            display: flex;
+        }
+
+        #files-preview-content {
+            background: #2d2d2d;
+            border: 1px solid #3d3d3d;
+            border-radius: 8px;
+            padding: 16px;
+            width: 94%;
+            max-width: 900px;
+            max-height: 90%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #files-preview-title {
+            font-size: 14px;
+            color: #ddd;
+            word-break: break-all;
+            margin-bottom: 4px;
+        }
+
+        #files-preview-meta {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 8px;
+        }
+
+        /* textContent only, in a <pre>: a file is shown as text, never parsed
+           as HTML. */
+        #files-preview-body {
+            flex: 1;
+            overflow: auto;
+            background: #1e1e1e;
+            border: 1px solid #3d3d3d;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 12px;
+            font-family: 'SF Mono', Menlo, Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.45;
+            white-space: pre;
+            color: #d4d4d4;
+            min-height: 120px;
+        }
+
+        /* Phones: the sidebar covers the terminal instead of squeezing it, and
+           collapsed it gets out of the way entirely - the header button opens
+           it, and a 36px rail is a tenth of a phone's width. */
+        @media (max-width: 700px) {
+            #files-resizer {
+                display: none !important;
+            }
+
+            #files-sidebar.collapsed {
+                display: none;
+            }
+
+            #files-sidebar:not(.collapsed) {
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                right: 0;
+                width: 100% !important;
+                max-width: none;
+                z-index: 1500;
+            }
+        }
     </style>
 </head>
 <body>
@@ -500,6 +861,11 @@
             <button id="upload-btn" class="header-btn" title="Upload Image">
                 <span>&#128206;</span>
             </button>
+            <button id="files-btn" class="header-btn" type="button"
+                    title="Files: browse /config, recent changes, check the HA configuration"
+                    aria-label="Files sidebar" aria-controls="files-sidebar" aria-expanded="false">
+                <span aria-hidden="true">&#128450;&#65039;</span>
+            </button>
         </div>
         <div id="login-banner" hidden>
             <span id="login-banner-icon">&#128273;</span>
@@ -516,15 +882,58 @@
             <button id="login-dismiss" class="login-btn login-btn-subtle" type="button"
                     title="Dismiss">&times;</button>
         </div>
-        <div id="terminal-container">
-            <iframe id="terminal-frame" src="about:blank"></iframe>
-            <div id="touch-scroll-overlay"></div>
-            <div id="drop-zone">
-                <div id="drop-zone-text">Drop image here to upload</div>
+        <div id="main">
+            <div id="terminal-container">
+                <iframe id="terminal-frame" src="about:blank"></iframe>
+                <div id="touch-scroll-overlay"></div>
+                <div id="drop-zone">
+                    <div id="drop-zone-text">Drop image here to upload</div>
+                </div>
             </div>
+            <aside id="files-sidebar" class="collapsed" aria-label="Files">
+                <div id="files-resizer" title="Drag to resize"></div>
+                <div id="files-rail">
+                    <button type="button" class="files-rail-btn" id="files-expand" title="Show the sidebar">&laquo;</button>
+                    <button type="button" class="files-rail-btn" data-open-tab="files" title="Files">&#128193;</button>
+                    <button type="button" class="files-rail-btn" data-open-tab="recent" title="Recent changes">&#128338;</button>
+                </div>
+                <div id="files-tabs" role="tablist">
+                    <button type="button" class="files-tab" role="tab" data-tab="files" aria-selected="true">&#128193; Files</button>
+                    <button type="button" class="files-tab" role="tab" data-tab="recent" aria-selected="false">&#128338; Recent changes</button>
+                    <button type="button" id="files-hide" title="Hide the sidebar" aria-label="Hide the sidebar">&raquo;</button>
+                </div>
+                <div id="files-toolbar">
+                    <label id="files-hidden-toggle"><input type="checkbox" id="files-show-hidden"> Hidden files</label>
+                    <select id="files-recent-hours" aria-label="Period" hidden>
+                        <option value="1">Last hour</option>
+                        <option value="24" selected>Last 24 hours</option>
+                        <option value="168">Last 7 days</option>
+                    </select>
+                    <button type="button" id="files-refresh" title="Refresh" aria-label="Refresh">&#8635;</button>
+                </div>
+                <div id="files-list" role="tree"></div>
+                <div id="files-footer">
+                    <button type="button" id="ha-check-btn" title="Run Home Assistant's configuration check (ha core check)">&#10003; Check HA configuration</button>
+                    <div id="ha-check-result" role="status" aria-live="polite"></div>
+                </div>
+            </aside>
         </div>
     </div>
     <input type="file" id="file-input" accept="image/*">
+
+    <!-- File preview (read-only) -->
+    <div id="files-preview" role="dialog" aria-modal="true" aria-labelledby="files-preview-title">
+        <div id="files-preview-content">
+            <div id="files-preview-title"></div>
+            <div id="files-preview-meta"></div>
+            <pre id="files-preview-body"></pre>
+            <div class="modal-buttons">
+                <button type="button" id="files-insert-btn" class="modal-btn modal-btn-primary" title="Type the path at the terminal prompt">Insert path</button>
+                <button type="button" id="files-copy-btn" class="modal-btn modal-btn-secondary">Copy path</button>
+                <button type="button" id="files-close-btn" class="modal-btn modal-btn-secondary">Close</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Voice Input Modal -->
     <div id="voice-modal">
@@ -543,6 +952,7 @@
 
     <script src="login-link.js"></script>
     <script src="terminal-clipboard.js"></script>
+    <script src="files-sidebar.js"></script>
     <script>
         let ttydPort = 7681;
 
@@ -1611,6 +2021,352 @@
         });
 
         console.log('Voice input module loaded');
+
+        // ========================================
+        // Files sidebar: /config tree, recent changes, HA config check
+        // ========================================
+        // Read-only (files-api.js on the server). Every name and every file
+        // body goes in through textContent, never as HTML. Nothing here
+        // touches the terminal iframe except through sendInput(), the same
+        // path the upload button uses to type a file path, and the iframe's
+        // width: ttyd refits itself on its window's resize event.
+        (function () {
+            const helpers = window.FilesSidebar;
+            const sidebar = document.getElementById('files-sidebar');
+            const filesBtn = document.getElementById('files-btn');
+            if (!helpers || !sidebar) {
+                console.error('[wrapper] files-sidebar.js did not load');
+                if (filesBtn) filesBtn.style.display = 'none';
+                return;
+            }
+
+            const list = document.getElementById('files-list');
+            const tabs = Array.from(document.querySelectorAll('.files-tab'));
+            const showHidden = document.getElementById('files-show-hidden');
+            const hiddenToggle = document.getElementById('files-hidden-toggle');
+            const recentHours = document.getElementById('files-recent-hours');
+            const refreshBtn = document.getElementById('files-refresh');
+            const checkBtn = document.getElementById('ha-check-btn');
+            const checkResult = document.getElementById('ha-check-result');
+            const resizer = document.getElementById('files-resizer');
+            const preview = document.getElementById('files-preview');
+            const previewTitle = document.getElementById('files-preview-title');
+            const previewMeta = document.getElementById('files-preview-meta');
+            const previewBody = document.getElementById('files-preview-body');
+
+            const PHONE = window.matchMedia('(max-width: 700px)');
+            const STORE = { open: 'filesSidebar.open', width: 'filesSidebar.width', tab: 'filesSidebar.tab' };
+
+            // localStorage can throw (private mode, blocked storage) or be
+            // absent; the sidebar works the same without it.
+            function load(key) {
+                try { return window.localStorage.getItem(key); } catch { return null; }
+            }
+            function save(key, value) {
+                try { window.localStorage.setItem(key, String(value)); } catch { /* not persisted */ }
+            }
+
+            let currentTab = load(STORE.tab) === 'recent' ? 'recent' : 'files';
+            let rootPath = '/config';
+            let previewPath = null;
+            let selectedRow = null;
+
+            async function getJson(url) {
+                const res = await fetch(url, { cache: 'no-store' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || data.message || res.statusText || 'Request failed');
+                return data;
+            }
+
+            function note(text, depth = 0) {
+                const el = document.createElement('div');
+                el.className = 'files-note';
+                el.style.paddingLeft = (12 + depth * 14) + 'px';
+                el.textContent = text;
+                return el;
+            }
+
+            function makeRow(entry, depth, label, meta) {
+                const row = document.createElement('button');
+                row.type = 'button';
+                row.className = 'files-row' + (entry.sensitive ? ' sensitive' : '');
+                row.setAttribute('role', 'treeitem');
+                row.style.paddingLeft = (8 + depth * 14) + 'px';
+                row.title = entry.sensitive ? entry.path + ' (not previewed: may hold secrets)' : entry.path;
+                const twisty = document.createElement('span');
+                twisty.className = 'files-twisty';
+                twisty.textContent = entry.type === 'dir' ? '▸' : '';
+                const icon = document.createElement('span');
+                icon.setAttribute('aria-hidden', 'true');
+                icon.textContent = entry.sensitive ? '\u{1F512}' : entry.type === 'dir' ? '\u{1F4C1}' : '\u{1F4C4}';
+                const name = document.createElement('span');
+                name.className = 'files-name';
+                name.textContent = label;
+                row.append(twisty, icon, name);
+                if (meta) {
+                    const metaEl = document.createElement('span');
+                    metaEl.className = 'files-meta';
+                    metaEl.textContent = meta;
+                    row.append(metaEl);
+                }
+                return row;
+            }
+
+            function select(row) {
+                if (selectedRow) selectedRow.classList.remove('selected');
+                selectedRow = row;
+                row.classList.add('selected');
+            }
+
+            // Generation of the view in #files-list. Every refresh() bumps it,
+            // and a renderer whose generation is no longer current drops its
+            // response: otherwise a slow Recent answer could land on top of the
+            // Files tree after the user switched tabs (or changed the period,
+            // or toggled Hidden files) while it was in flight.
+            let viewGen = 0;
+
+            // One folder level into `container`; subfolders load on expand.
+            // `gen` is passed for the top level only: a subfolder renders into
+            // its own container, which a refresh detaches rather than reuses.
+            async function renderFolder(folderPath, container, depth, gen) {
+                const stale = () => gen !== undefined && gen !== viewGen;
+                container.replaceChildren(note('Loading…', depth));
+                let data;
+                try {
+                    data = await getJson('api/files/list?path=' + encodeURIComponent(folderPath));
+                } catch (err) {
+                    if (stale()) return;
+                    container.replaceChildren(note('⚠️ ' + err.message, depth));
+                    return;
+                }
+                if (stale()) return;
+                if (depth === 0 && data.root) rootPath = data.root;
+                const entries = data.entries.filter((e) => showHidden.checked || !e.name.startsWith('.'));
+                container.replaceChildren();
+                if (!entries.length) container.append(note('(empty)', depth));
+                for (const entry of entries) {
+                    const meta = entry.type === 'file' ? helpers.formatSize(entry.size) : '';
+                    const row = makeRow(entry, depth, entry.name, meta);
+                    container.append(row);
+                    if (entry.type === 'dir') {
+                        const children = document.createElement('div');
+                        children.setAttribute('role', 'group');
+                        children.hidden = true;
+                        container.append(children);
+                        row.setAttribute('aria-expanded', 'false');
+                        let loaded = false;
+                        row.addEventListener('click', () => {
+                            select(row);
+                            const open = children.hidden;
+                            children.hidden = !open;
+                            row.setAttribute('aria-expanded', String(open));
+                            row.firstChild.textContent = open ? '▾' : '▸';
+                            if (open && !loaded) {
+                                loaded = true;
+                                renderFolder(entry.path, children, depth + 1);
+                            }
+                        });
+                    } else {
+                        row.addEventListener('click', () => { select(row); openPreview(entry.path); });
+                    }
+                }
+                if (data.truncated) container.append(note('… more entries not shown', depth));
+            }
+
+            async function renderRecent(gen) {
+                list.replaceChildren(note('Loading…'));
+                let data;
+                try {
+                    data = await getJson('api/files/recent?hours=' + encodeURIComponent(recentHours.value));
+                } catch (err) {
+                    if (gen !== viewGen) return;
+                    list.replaceChildren(note('⚠️ ' + err.message));
+                    return;
+                }
+                if (gen !== viewGen) return;
+                if (data.root) rootPath = data.root;
+                list.replaceChildren();
+                if (!data.entries.length) list.append(note('Nothing changed in this period'));
+                for (const entry of data.entries) {
+                    const row = makeRow(entry, 0, helpers.relativeTo(rootPath, entry.path), helpers.formatAgo(entry.mtime));
+                    row.addEventListener('click', () => { select(row); openPreview(entry.path); });
+                    list.append(row);
+                }
+                if (data.truncated || data.incomplete) list.append(note('… showing the newest found; the search stopped early'));
+            }
+
+            function refresh() {
+                tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === currentTab)));
+                hiddenToggle.hidden = currentTab !== 'files';
+                recentHours.hidden = currentTab !== 'recent';
+                selectedRow = null;
+                const gen = ++viewGen;
+                if (currentTab === 'files') renderFolder(rootPath, list, 0, gen);
+                else renderRecent(gen);
+            }
+
+            async function openPreview(filePath) {
+                previewPath = filePath;
+                previewTitle.textContent = filePath;
+                previewMeta.textContent = '';
+                previewBody.textContent = 'Loading…';
+                preview.classList.add('active');
+                try {
+                    const data = await getJson('api/files/preview?path=' + encodeURIComponent(filePath));
+                    if (previewPath !== filePath) return;   // another file was opened meanwhile
+                    const parts = [helpers.formatSize(data.size), 'modified ' + new Date(data.mtime).toLocaleString()];
+                    if (data.truncated) parts.push('showing the first ' + helpers.formatSize(data.limit));
+                    previewMeta.textContent = parts.join(' · ');
+                    previewBody.textContent = data.binary ? '(binary file, no preview)' : data.content;
+                } catch (err) {
+                    if (previewPath !== filePath) return;
+                    previewBody.textContent = '⚠️ ' + err.message;
+                }
+            }
+
+            function closePreview() {
+                preview.classList.remove('active');
+            }
+
+            function setOpen(open, { persist = true } = {}) {
+                sidebar.classList.toggle('collapsed', !open);
+                filesBtn.setAttribute('aria-expanded', String(open));
+                if (persist) save(STORE.open, open ? '1' : '0');
+                if (open && !list.childElementCount) refresh();
+            }
+
+            function switchTab(tab) {
+                if (tab !== 'files' && tab !== 'recent') return;
+                currentTab = tab;
+                save(STORE.tab, tab);
+                refresh();
+            }
+
+            filesBtn.addEventListener('click', () => setOpen(sidebar.classList.contains('collapsed')));
+            document.getElementById('files-hide').addEventListener('click', () => setOpen(false));
+            document.getElementById('files-expand').addEventListener('click', () => setOpen(true));
+            document.querySelectorAll('[data-open-tab]').forEach((btn) => btn.addEventListener('click', () => {
+                const wasEmpty = !list.childElementCount;
+                if (currentTab !== btn.dataset.openTab) {
+                    currentTab = btn.dataset.openTab;
+                    save(STORE.tab, currentTab);
+                    if (!wasEmpty) refresh();
+                }
+                setOpen(true);
+            }));
+            tabs.forEach((tab) => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
+            showHidden.addEventListener('change', refresh);
+            recentHours.addEventListener('change', refresh);
+            refreshBtn.addEventListener('click', refresh);
+
+            // Insert path: types the quoted path at the prompt, no Enter - the
+            // same sendInput() the upload button uses. On a phone the open
+            // sidebar covers the terminal, so it closes first.
+            document.getElementById('files-insert-btn').addEventListener('click', async () => {
+                if (!previewPath) return;
+                const text = helpers.shellQuote(previewPath);
+                closePreview();
+                if (PHONE.matches) setOpen(false);
+                if (injectIntoTerminal(text)) {
+                    try { document.getElementById('terminal-frame').contentWindow.term.focus(); } catch { /* not ready */ }
+                } else if (await copyToClipboard(text)) {
+                    setStatus('Copied path: ' + text + ' — paste in terminal', 'success');
+                } else {
+                    setStatus('Path: ' + text, 'success', true);
+                }
+            });
+            document.getElementById('files-copy-btn').addEventListener('click', async () => {
+                if (!previewPath) return;
+                const ok = await copyToClipboard(previewPath);
+                setStatus(ok ? 'Path copied' : 'Copy failed', ok ? 'success' : 'error');
+            });
+            document.getElementById('files-close-btn').addEventListener('click', closePreview);
+            preview.addEventListener('click', (e) => { if (e.target === preview) closePreview(); });
+            preview.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePreview(); });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && preview.classList.contains('active')) closePreview();
+            });
+
+            checkBtn.addEventListener('click', async () => {
+                checkBtn.disabled = true;
+                checkResult.className = '';
+                checkResult.textContent = 'Checking… (this can take a minute)';
+                try {
+                    const res = await fetch('api/files/ha-check', { method: 'POST' });
+                    const data = await res.json().catch(() => ({}));
+                    const ok = res.ok && data.ok === true;
+                    checkResult.className = ok ? 'ok' : 'error';
+                    checkResult.textContent = (ok ? '✅ ' : '❌ ') + (data.message || data.error || res.statusText || 'Check failed');
+                } catch (err) {
+                    checkResult.className = 'error';
+                    checkResult.textContent = '❌ ' + err.message;
+                } finally {
+                    checkBtn.disabled = false;
+                }
+            });
+
+            // Resize by dragging the left edge. Pointer capture keeps the drag
+            // on the handle; the body class stops the iframe from swallowing
+            // the pointer if capture does not hold across the frame boundary.
+            // Every way a drag can end clears both, so the terminal is never
+            // left without the pointer.
+            function applyWidth(width) {
+                sidebar.style.width = helpers.clampWidth(width, document.getElementById('main').clientWidth) + 'px';
+            }
+            applyWidth(load(STORE.width));
+
+            let drag = null;
+            function endDrag() {
+                const ending = drag;
+                if (!ending) return;
+                drag = null;   // first: releasing capture re-enters via lostpointercapture
+                window.removeEventListener('pointermove', ending.onMove);
+                window.removeEventListener('pointerup', endDrag);
+                window.removeEventListener('pointercancel', endDrag);
+                window.removeEventListener('blur', endDrag);
+                resizer.classList.remove('dragging');
+                document.body.classList.remove('files-resizing');
+                try { resizer.releasePointerCapture(ending.pointerId); } catch { /* already released */ }
+                save(STORE.width, parseInt(sidebar.style.width, 10));
+            }
+            resizer.addEventListener('pointerdown', (e) => {
+                // One drag at a time. A second pointer going down mid-drag
+                // used to replace `drag`, orphaning the first onMove listener
+                // so the sidebar kept following the pointer after pointerup.
+                if (drag) return;
+                if (e.button !== 0 || sidebar.classList.contains('collapsed') || PHONE.matches) return;
+                e.preventDefault();
+                const right = sidebar.getBoundingClientRect().right;
+                drag = {
+                    pointerId: e.pointerId,
+                    onMove: (ev) => applyWidth(right - ev.clientX),
+                };
+                try { resizer.setPointerCapture(e.pointerId); } catch { /* best effort */ }
+                resizer.classList.add('dragging');
+                document.body.classList.add('files-resizing');
+                window.addEventListener('pointermove', drag.onMove);
+                window.addEventListener('pointerup', endDrag);
+                window.addEventListener('pointercancel', endDrag);
+                window.addEventListener('blur', endDrag);
+            });
+            resizer.addEventListener('lostpointercapture', endDrag);
+            // Switching tabs or apps mid-drag can swallow the pointerup.
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') endDrag();
+            });
+            // A narrower window may no longer fit a remembered width.
+            window.addEventListener('resize', () => {
+                if (!drag) applyWidth(parseInt(sidebar.style.width, 10));
+            });
+
+            // Restore. A phone never reopens on load: there the sidebar
+            // covers the terminal, which is not what someone opening the
+            // add-on expects to see.
+            tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === currentTab)));
+            hiddenToggle.hidden = currentTab !== 'files';
+            recentHours.hidden = currentTab !== 'recent';
+            if (load(STORE.open) === '1' && !PHONE.matches) setOpen(true, { persist: false });
+        })();
     </script>
     <script>
         if ('serviceWorker' in navigator) {

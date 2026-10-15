@@ -1,5 +1,6 @@
 // Integration test: mouse ownership and clipboard delivery, in a real browser
-// against a real tmux.
+// against a real tmux - plus the Files sidebar, which resizes the terminal
+// iframe and so has to be proven not to disturb either.
 //
 // This exists because the unit tests cannot see any of it. Three consecutive
 // releases shipped a broken mouse mode while every unit test passed: the bugs
@@ -116,6 +117,11 @@ const PNG_A = Buffer.concat([PNG_SIGNATURE, Buffer.from('first')]);
 const PNG_B = Buffer.concat([PNG_SIGNATURE, Buffer.from('second')]);
 const PICK_DIR = mkdtempSync(join(tmpdir(), 'ctp-upload-'));
 
+// Files sidebar fixture, inside the container's /config. The file name has a
+// space so Insert path has something to quote.
+const SIDEBAR_DIR = '/config/ctp-sidebar-fixture';
+const SIDEBAR_FILE = 'with space.yaml';
+
 // Leave the pane at a plain shell prompt with plenty of scrollback.
 //
 // respawn-pane rather than driving the add-on's session menu: the menu loops on
@@ -163,6 +169,46 @@ async function saveArtifacts(page, consoleLog, name) {
         console.log(`       artifacts: ${name}.png, ${name}.log`);
     } catch (e) {
         console.log(`       could not save artifacts: ${e.message}`);
+    }
+}
+
+// A slow answer for a view the user already left must not land. Recent is
+// held for 2.5 s while Files is clicked; before the fix the Recent rows then
+// overwrote the tree with the Files tab still selected.
+//
+// Its own context with service workers blocked: a request the service worker
+// fetches is invisible to page.route, so with it running the delay never
+// applied and this check passed against the broken code.
+async function checkStaleView(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        await wrapper.locator('#files-btn').click();
+        const folderRow = wrapper.locator('#files-list .files-row', { hasText: SIDEBAR_DIR.split('/').pop() });
+        await waitFor(async () => (await folderRow.count()) === 1);
+
+        let held = 0;
+        await page.route('**/api/files/recent*', async (route) => {
+            held++;
+            await sleep(2500);
+            await route.continue().catch(() => {});
+        });
+        await wrapper.locator('.files-tab[data-tab="recent"]').click();
+        await sleep(200);
+        await wrapper.locator('.files-tab[data-tab="files"]').click();
+        await sleep(3500);
+        check('fixture: the Recent request was held back', held, (n) => n >= 1);
+        check('a slow Recent answer does not overwrite the Files tree',
+            await wrapper.evaluate(`JSON.stringify({
+                filesSelected: document.querySelector('.files-tab[data-tab="files"]').getAttribute('aria-selected'),
+                recentRows: [...document.querySelectorAll('#files-list .files-meta')]
+                    .filter((m) => /ago|just now/.test(m.textContent)).length,
+            })`), JSON.stringify({ filesSelected: 'true', recentRows: 0 }));
+        check('the tree is still there after the stale answer', await folderRow.count(), 1);
+    } finally {
+        await context.close();
     }
 }
 
@@ -428,6 +474,146 @@ async function run(engine, mode, url) {
     }
     check('a second image picked at the same path still uploads', uploaded, 2);
 
+    // 6. The Files sidebar. It narrows the terminal iframe, so what matters
+    //    most is that the terminal follows (xterm AND tmux resize) and that
+    //    the wheel still reaches tmux with the sidebar open. The fixture is
+    //    made through docker exec, like every other terminal-side state here.
+    await resetPane();
+    dexec(['rm', '-rf', SIDEBAR_DIR]);
+    dexec(['mkdir', '-p', SIDEBAR_DIR]);
+    dexec(['sh', '-c', 'printf "sidebar: ok\\n" > "$1"; printf "k: v\\n" > "$2"; '
+        + 'mkdir "$3"; printf "ref: x\\n" > "$3/HEAD"; printf partial > "$4"', 'sh',
+        `${SIDEBAR_DIR}/${SIDEBAR_FILE}`, `${SIDEBAR_DIR}/secrets.yaml`,
+        `${SIDEBAR_DIR}/.git`, `${SIDEBAR_DIR}/download.part`]);
+
+    const cols = () => wrapper.evaluate(`${TERM}.cols`);
+    const windowWidth = () => Number(tmux('#{window_width}'));
+    const sidebarOpen = () => wrapper.evaluate(
+        '!document.getElementById("files-sidebar").classList.contains("collapsed")');
+    const colsClosed = await cols();
+    const tmuxClosed = windowWidth();
+
+    await wrapper.locator('#files-btn').click();
+    check('the Files button opens the sidebar', await waitFor(sidebarOpen), true);
+    check('opening the sidebar refits xterm and tmux',
+        await waitFor(async () => (await cols()) < colsClosed && windowWidth() < tmuxClosed), true);
+    const colsOpen = await cols();
+
+    // Hidden files on, so a missing .git is the server's doing, not the
+    // client's dotfile filter.
+    await wrapper.locator('#files-show-hidden').check();
+    const list = wrapper.locator('#files-list');
+    const folderRow = list.locator('.files-row', { hasText: SIDEBAR_DIR.split('/').pop() });
+    check('the tree lists /config', await waitFor(async () => (await folderRow.count()) === 1), true);
+    await folderRow.click();
+    const fileRow = list.locator('.files-row', { hasText: SIDEBAR_FILE });
+    check('a folder expands to its files', await waitFor(async () => (await fileRow.count()) === 1), true);
+    const names = await list.locator('.files-name').allTextContents();
+    check('the tree hides .git and *.part, and shows secrets.yaml',
+        { git: names.includes('.git'), part: names.includes('download.part'), secrets: names.includes('secrets.yaml') },
+        (v) => !v.git && !v.part && v.secrets);
+
+    await fileRow.click();
+    const previewBody = () => wrapper.evaluate(
+        'document.getElementById("files-preview").classList.contains("active") '
+        + '&& document.getElementById("files-preview-body").textContent');
+    check('clicking a file previews it as text',
+        await waitFor(async () => (await previewBody()) === 'sidebar: ok\n'), true);
+
+    // Typed at the prompt, quoted, and NOT submitted: the line is still the
+    // last thing on screen and bash has not tried to run it.
+    await wrapper.locator('#files-insert-btn').click();
+    const quoted = `'${SIDEBAR_DIR}/${SIDEBAR_FILE}'`;
+    const promptLine = () => dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop();
+    check('Insert path types the quoted path at the prompt',
+        await waitFor(() => promptLine().endsWith(quoted)), true);
+    await sleep(500);
+    check('Insert path does not press Enter', promptLine().endsWith(quoted), true);
+    sendKeys('C-u');
+
+    const openBox = await wrapper.locator('#terminal-frame').boundingBox();
+    await page.mouse.move(openBox.x + openBox.width / 2, openBox.y + openBox.height / 2);
+    for (let i = 0; i < 5; i++) {
+        await page.mouse.wheel(0, -120);
+        await sleep(150);
+    }
+    check('with the sidebar open, the wheel still scrolls tmux history',
+        await waitFor(() => Number(tmux('#{scroll_position}')) > 0), true);
+    cancelCopyMode();
+
+    // Drag the left edge 120px to the left: wider sidebar, narrower terminal,
+    // and nothing left behind that would keep the pointer from the iframe.
+    const sidebarWidth = () => wrapper.evaluate(
+        'document.getElementById("files-sidebar").getBoundingClientRect().width');
+    const widthBefore = await sidebarWidth();
+    const colsBeforeDrag = await cols();
+    const handle = await wrapper.locator('#files-resizer').boundingBox();
+    const grip = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
+    await page.mouse.move(grip.x, grip.y);
+    await page.mouse.down();
+    await page.mouse.move(grip.x - 120, grip.y, { steps: 12 });
+    await page.mouse.up();
+    check('dragging the edge resizes the sidebar',
+        Math.round((await sidebarWidth()) - widthBefore), (d) => d >= 100 && d <= 140);
+    check('resizing refits the terminal',
+        await waitFor(async () => (await cols()) < colsBeforeDrag), true);
+    check('a finished drag gives the iframe the pointer back',
+        await wrapper.evaluate(`JSON.stringify({
+            resizing: document.body.classList.contains('files-resizing'),
+            pointer: getComputedStyle(document.getElementById('terminal-frame')).pointerEvents,
+        })`), JSON.stringify({ resizing: false, pointer: 'auto' }));
+    // Guards on the drag itself, driven with synthetic pointer events: a
+    // second pointerdown mid-drag must not orphan the first drag's move
+    // listener, and the page going hidden must end a drag.
+    check('a second pointerdown mid-drag leaves nothing following the pointer',
+        await wrapper.evaluate(`(() => {
+            const r = document.getElementById('files-resizer');
+            const sb = document.getElementById('files-sidebar');
+            const box = r.getBoundingClientRect();
+            const ev = (type, id, dx) => new PointerEvent(type, { pointerId: id, button: 0, bubbles: true,
+                clientX: box.left + dx, clientY: box.top + 50 });
+            r.dispatchEvent(ev('pointerdown', 21, 0));
+            r.dispatchEvent(ev('pointerdown', 22, 0));
+            window.dispatchEvent(ev('pointermove', 21, -40));
+            window.dispatchEvent(ev('pointerup', 21, -40));
+            const after = sb.getBoundingClientRect().width;
+            window.dispatchEvent(ev('pointermove', 21, -140));
+            return JSON.stringify({ follows: sb.getBoundingClientRect().width !== after,
+                resizing: document.body.classList.contains('files-resizing') });
+        })()`), JSON.stringify({ follows: false, resizing: false }));
+    check('the page going hidden ends a drag',
+        await wrapper.evaluate(`(() => {
+            const r = document.getElementById('files-resizer');
+            const sb = document.getElementById('files-sidebar');
+            const box = r.getBoundingClientRect();
+            const ev = (type, dx) => new PointerEvent(type, { pointerId: 31, button: 0, bubbles: true,
+                clientX: box.left + dx, clientY: box.top + 50 });
+            r.dispatchEvent(ev('pointerdown', 0));
+            Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+            document.dispatchEvent(new Event('visibilitychange'));
+            delete document.visibilityState;
+            const after = sb.getBoundingClientRect().width;
+            window.dispatchEvent(ev('pointermove', -100));
+            return JSON.stringify({ follows: sb.getBoundingClientRect().width !== after,
+                resizing: document.body.classList.contains('files-resizing') });
+        })()`), JSON.stringify({ follows: false, resizing: false }));
+
+    check('open state and width are remembered',
+        await wrapper.evaluate(`JSON.stringify([localStorage.getItem('filesSidebar.open'),
+            Number(localStorage.getItem('filesSidebar.width')) > 300])`), JSON.stringify(['1', true]));
+
+    await wrapper.locator('#files-hide').click();
+    // Not compared with the width at load: ttyd under-fits on first load (a
+    // column count ~20 short of what fits) until its first resize event, on
+    // main as well, so the closed width can legitimately be the larger one.
+    const widthBack = async () => (await cols()) > colsOpen && windowWidth() === (await cols());
+    await waitFor(widthBack);
+    check('hiding the sidebar gives the terminal its width back, in xterm and tmux',
+        { cols: await cols(), tmux: windowWidth(), colsOpen }, (v) => v.cols > v.colsOpen && v.tmux === v.cols);
+
+    await checkStaleView(browser, url);
+    dexec(['rm', '-rf', SIDEBAR_DIR]);
+
     if (failures > failuresBefore) {
         await saveArtifacts(page, consoleLog, `${engine.name()}-${mode}`);
     }
@@ -445,6 +631,7 @@ try {
     ingress.close();
     cancelCopyMode();
     rmSync(PICK_DIR, { recursive: true, force: true });
+    try { dexec(['rm', '-rf', SIDEBAR_DIR]); } catch { /* container gone */ }
 }
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`);

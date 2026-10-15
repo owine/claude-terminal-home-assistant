@@ -7,7 +7,7 @@ module.exports = [
     js.configs.recommended,
     {
         // Node-side Express service, its helper modules, and this config file.
-        files: ['server.js', 'cache-policy.js', 'http-guards.js', 'upload-naming.js', 'proxy-error.js', 'login-notifier.js', 'eslint.config.js'],
+        files: ['server.js', 'cache-policy.js', 'http-guards.js', 'upload-naming.js', 'proxy-error.js', 'login-notifier.js', 'files-api.js', 'eslint.config.js'],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: 'commonjs',
@@ -27,7 +27,7 @@ module.exports = [
         // Dual-target UMD modules: shipped to the browser AND required by the Node test harness.
         // The public/**/*.js block above already grants browser + serviceworker globals;
         // this adds the CommonJS globals they need for `module.exports`.
-        files: ['public/login-link.js', 'public/terminal-clipboard.js'],
+        files: ['public/login-link.js', 'public/terminal-clipboard.js', 'public/files-sidebar.js'],
         languageOptions: {
             globals: { module: 'writable', exports: 'writable', Buffer: 'readonly' },
         },
