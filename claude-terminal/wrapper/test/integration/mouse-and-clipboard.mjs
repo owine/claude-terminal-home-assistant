@@ -33,7 +33,9 @@
 // one mistyped shell command.
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { startIngress } from './ingress-harness.mjs';
 
 // Playwright is deliberately NOT a devDependency: CI cannot run this test (it
@@ -105,6 +107,14 @@ const APP_RELEASES_MOUSE = String.raw`printf '\033[?1000l\033[?1006l'`;
 const SEED_TEXT = 'SEED-NOT-A-DRAG';
 const SEED_CLIPBOARD = String.raw`printf '\033]52;c;U0VFRC1OT1QtQS1EUkFH\007'`;
 const TERM = 'document.getElementById("terminal-frame").contentWindow.term';
+
+// Two distinct "images" for the upload button to pick. The server trusts the
+// declared type, which the browser derives from the .png extension, so the
+// bytes only have to differ -- that difference is the whole point.
+const PNG_SIGNATURE = Buffer.from('89504e470d0a1a0a', 'hex');
+const PNG_A = Buffer.concat([PNG_SIGNATURE, Buffer.from('first')]);
+const PNG_B = Buffer.concat([PNG_SIGNATURE, Buffer.from('second')]);
+const PICK_DIR = mkdtempSync(join(tmpdir(), 'ctp-upload-'));
 
 // Leave the pane at a plain shell prompt with plenty of scrollback.
 //
@@ -391,6 +401,33 @@ async function run(engine, mode, url) {
         console.log('skip  - clipboard readback (no clipboard-read permission in WebKit)');
     }
 
+    // 5. A second image picked through the upload button must upload too. The
+    //    file input used to keep its last selection, and both engines compare a
+    //    new pick against it by PATH: one at the same path fires `cancel`, not
+    //    `change`, so the handler never ran and the button looked dead until a
+    //    reload. Orion on macOS did this with two different images, so a picker
+    //    can hand back one path for two files -- rewriting one path with new
+    //    bytes between picks is that case exactly.
+    //
+    //    Two uploads per run, eight per suite, against the server's limit of
+    //    ten a minute, which every run shares. Mind it before adding picks.
+    let uploaded = 0;
+    page.on('response', (r) => {
+        if (r.request().method() === 'POST'
+            && new URL(r.url()).pathname.endsWith('/upload') && r.ok()) uploaded++;
+    });
+    const pickPath = join(PICK_DIR, 'pick.png');
+    for (const [i, image] of [PNG_A, PNG_B].entries()) {
+        writeFileSync(pickPath, image);
+        const [chooser] = await Promise.all([
+            page.waitForEvent('filechooser'),
+            wrapper.locator('#upload-btn').click(),
+        ]);
+        await chooser.setFiles(pickPath);
+        await waitFor(() => uploaded > i);
+    }
+    check('a second image picked at the same path still uploads', uploaded, 2);
+
     if (failures > failuresBefore) {
         await saveArtifacts(page, consoleLog, `${engine.name()}-${mode}`);
     }
@@ -407,6 +444,7 @@ try {
 } finally {
     ingress.close();
     cancelCopyMode();
+    rmSync(PICK_DIR, { recursive: true, force: true });
 }
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`);

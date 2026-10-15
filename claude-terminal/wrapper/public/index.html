@@ -958,9 +958,17 @@
         });
 
         // File input change
+        //
+        // Cleared after every pick. Left holding its selection, the input
+        // compares the next pick against it by path, and one at the same path
+        // fires `cancel` instead of `change` -- so a second upload silently did
+        // nothing until a reload. Orion on macOS did that even for a different
+        // image. From empty, every pick is a change.
         fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                uploadImage(e.target.files[0]);
+            const file = e.target.files[0];
+            e.target.value = '';
+            if (file) {
+                uploadImage(file);
             }
         });
 
