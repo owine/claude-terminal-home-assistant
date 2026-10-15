@@ -136,6 +136,37 @@ assert_eq "no image binary, nothing installed" "no" \
 unset CLAUDE_BUNDLED_BIN
 
 # ---------------------------------------------------------------------------
+# export_login_notification
+# ---------------------------------------------------------------------------
+printf '\n%s\n' "export_login_notification"
+
+reset_config
+unset LOGIN_NOTIFICATION
+export_login_notification 2>/dev/null
+assert_eq "unset defaults to on" "true" "${LOGIN_NOTIFICATION:-}"
+
+reset_config
+set_config login_notification "null"
+unset LOGIN_NOTIFICATION
+export_login_notification 2>/dev/null
+assert_eq "the string null stays on" "true" "${LOGIN_NOTIFICATION:-}"
+
+reset_config
+set_config login_notification "true"
+unset LOGIN_NOTIFICATION
+export_login_notification 2>/dev/null
+assert_eq "true is exported as true" "true" "${LOGIN_NOTIFICATION:-}"
+
+reset_config
+set_config login_notification "false"
+unset LOGIN_NOTIFICATION
+export_login_notification 2>/dev/null
+assert_eq "false is exported as false" "false" "${LOGIN_NOTIFICATION:-}"
+logged=$(export_login_notification 2>&1)
+assert_contains "turning it off is logged" "$logged" "disabled"
+unset LOGIN_NOTIFICATION
+
+# ---------------------------------------------------------------------------
 # prune_claude_versions
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "prune_claude_versions"
