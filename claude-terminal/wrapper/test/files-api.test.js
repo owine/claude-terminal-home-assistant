@@ -19,6 +19,7 @@ const {
     createHaCheck,
     classifyRelative,
     looksBinary,
+    procFdPath,
 } = require('../files-api.js');
 const { createRateLimiter } = require('../http-guards.js');
 
@@ -55,6 +56,8 @@ fs.symlinkSync(path.join(root, '.env'), path.join(root, 'innocent.yaml'));
 fs.symlinkSync(path.join(root, '.git'), path.join(root, 'repo-meta'));
 fs.symlinkSync(path.join(root, 'automations.yaml'), path.join(root, 'autos-link.yaml'));
 fs.symlinkSync(path.join(root, 'nowhere'), path.join(root, 'dangling'));
+fs.symlinkSync(path.join(root, '.storage', 'auth'), path.join(root, 'notes.txt'));
+write('f.txt', 'OUTSIDE\n', outside);
 
 const api = createFilesApi({ root });
 
@@ -67,8 +70,8 @@ async function refused(promise, status = 404) {
 
 // --- classification ---
 
-test('hidden: .git anywhere, any case', () => {
-    for (const p of ['.git', '.git/config', 'sub/.git/HEAD', '.GIT/config']) {
+test('hidden: .git anywhere, any case, and bare repositories', () => {
+    for (const p of ['.git', '.git/config', 'sub/.git/HEAD', '.GIT/config', 'homeassistant.git', 'backup.git/config', 'x/Repo.GIT/HEAD']) {
         assert.strictEqual(classifyRelative(p), 'hidden', p);
     }
 });
@@ -76,7 +79,8 @@ test('hidden: .git anywhere, any case', () => {
 test('sensitive: keys, .env, credential stores, .storage, .cloud, claude-config', () => {
     for (const p of ['.storage', '.storage/auth', '.cloud/x', 'sub/.ssh/id_rsa', 'id_ed25519', 'certs/a.pem', 'certs/server.key',
         '.env', '.env.local', '.git-credentials', '.gitconfig', '.netrc', 'x/.npmrc', '.credentials.json', '.claude.json',
-        'claude-config', 'claude-config/.credentials.json', 'x.p12']) {
+        'claude-config', 'claude-config/.credentials.json', 'x.p12', '.envrc', 'sub/.envrc',
+        'service_account.json', 'google/SERVICE_ACCOUNT.JSON']) {
         assert.strictEqual(classifyRelative(p), 'sensitive', p);
     }
 });
@@ -84,7 +88,7 @@ test('sensitive: keys, .env, credential stores, .storage, .cloud, claude-config'
 test('ordinary config files are neither', () => {
     // secrets.yaml is an ordinary file, as in Studio Code Server
     for (const p of ['', 'configuration.yaml', 'packages/climate.yaml', 'secrets.yaml', 'packages/secrets.yml', 'secrets_example.md', 'storage.yaml', 'keyboard.yaml',
-        '.gitignore', '.github/workflows/ci.yaml', 'environment.yaml', 'sub/claude-config/notes.md', 'home-assistant_v2.db']) {
+        '.gitignore', '.github/workflows/ci.yaml', 'my.github', 'service_account.json.example', 'envrc', 'environment.yaml', 'sub/claude-config/notes.md', 'home-assistant_v2.db']) {
         assert.strictEqual(classifyRelative(p), 'ok', p);
     }
 });
@@ -154,6 +158,18 @@ test('a missing path is a 404, not a crash', async () => {
 
 // --- hidden and sensitive entries ---
 
+test('a symlink is locked if its name OR its target is secret-shaped', async () => {
+    const entries = (await api.list('')).entries;
+    const notes = entries.find((e) => e.name === 'notes.txt');
+    assert.ok(notes, 'notes.txt listed');
+    assert.strictEqual(notes.sensitive, true);
+    const innocent = entries.find((e) => e.name === 'innocent.yaml');
+    assert.strictEqual(innocent.sensitive, true);
+    const autos = entries.find((e) => e.name === 'autos-link.yaml');
+    assert.strictEqual(autos.sensitive, undefined);
+    await refused(api.preview('notes.txt'), 403);
+});
+
 test('listing leaves out .git, *.part and escaping or hidden symlinks', async () => {
     const names = (await api.list('')).entries.map((e) => e.name);
     for (const gone of ['.git', 'backup.tar.part', 'data-link', 'creds-link', 'repo-meta', 'dangling']) {
@@ -184,6 +200,84 @@ test('sensitive files are listed, flagged, and refused for preview', async () =>
     assert.ok(storage && storage.sensitive);
     for (const p of ['.storage/auth', '.cloud/x', '.env', 'certs/server.key', 'claude-config/.credentials.json']) {
         await refused(api.preview(p), 403);
+    }
+});
+
+// --- parent folder swapped after resolve() ---
+//
+// O_NOFOLLOW only covers the last component. A folder swapped for a symlink
+// between resolve() and open() is followed by the open, and only the
+// descriptor check (/proc/self/fd) catches it.
+
+const hasProcFd = fs.existsSync(`/proc/self/fd`);
+
+function swapApi(target, opts = {}) {
+    write('swap/f.txt', 'inside\n');
+    const dir = path.join(root, 'swap');
+    return {
+        api: createFilesApi({
+            root,
+            onResolved: async () => {
+                fs.renameSync(dir, path.join(root, 'swap-old'));
+                fs.symlinkSync(target, dir);
+            },
+            ...opts,
+        }),
+        cleanup: () => {
+            fs.rmSync(dir, { force: true });
+            fs.rmSync(path.join(root, 'swap-old'), { recursive: true, force: true });
+        },
+    };
+}
+
+test('negative control: without the descriptor check a parent swap escapes', async () => {
+    const { api: swapping, cleanup } = swapApi(outside, { fdPath: async () => null });
+    try {
+        assert.strictEqual((await swapping.preview('swap/f.txt')).content, 'OUTSIDE\n');
+    } finally {
+        cleanup();
+    }
+});
+
+test('a parent folder swapped for a symlink out of the root is refused',
+    { skip: !hasProcFd && 'needs /proc/self/fd (Linux)' }, async () => {
+        const { api: swapping, cleanup } = swapApi(outside);
+        try {
+            await refused(swapping.preview('swap/f.txt'));
+        } finally {
+            cleanup();
+        }
+    });
+
+test('a parent folder swapped for a symlink into .storage is refused',
+    { skip: !hasProcFd && 'needs /proc/self/fd (Linux)' }, async () => {
+        write('.storage/f.txt', 'token\n');
+        const { api: swapping, cleanup } = swapApi(path.join(root, '.storage'));
+        try {
+            await refused(swapping.preview('swap/f.txt'), 403);
+        } finally {
+            cleanup();
+            fs.rmSync(path.join(root, '.storage', 'f.txt'));
+        }
+    });
+
+test('the descriptor check rejects what the descriptor really is', async () => {
+    const at = (p) => createFilesApi({ root, fdPath: async () => p });
+    await refused(at(path.join(outside, 'f.txt')).preview('configuration.yaml'));
+    await refused(at(path.join(root, '.git', 'config')).preview('configuration.yaml'));
+    await refused(at(path.join(root, '.storage', 'auth')).preview('configuration.yaml'), 403);
+    // unknown (no /proc): falls back to the path checks
+    assert.match((await at(null).preview('configuration.yaml')).content, /name: Home/);
+    assert.match((await at(path.join(root, 'configuration.yaml')).preview('configuration.yaml')).content, /name: Home/);
+});
+
+test('procFdPath names the open file on Linux, and is null elsewhere', async () => {
+    const file = path.join(root, 'configuration.yaml');
+    const handle = await fs.promises.open(file, 'r');
+    try {
+        assert.strictEqual(await procFdPath(handle.fd), hasProcFd ? file : null);
+    } finally {
+        await handle.close();
     }
 });
 
@@ -291,12 +385,23 @@ test('recent changes: newest first, inside the window, noise and secret-shaped f
     touch('home-assistant.log.1', 0.1);
     touch('.env', 0.1);
     touch('claude-config/.credentials.json', 0.1);
+    touch('service_account.json', 0.1);
+    touch('.envrc', 0.1);
+    touch('backup.git/HEAD', 0.1);
+    touch('venv/lib/x.py', 0.1);
+    touch('.venv/lib/x.py', 0.1);
+    touch('node_modules/x/index.js', 0.1);
+    touch('esphome/.esphome/build/node/src/main.cpp', 0.1);
+    touch('esphome/.pio/x', 0.1);
+    touch('esphome/.pioenvs/x', 0.1);
+    // `build` is only skipped under .esphome
+    touch('www/build/card.js', 1.5);
     fs.symlinkSync(outside, path.join(recentRoot, 'data-link'));
 
     const recentApi = createFilesApi({ root: recentRoot, now: () => NOW });
     const day = await recentApi.recent(24);
     assert.deepStrictEqual(day.entries.map((e) => e.relative),
-        ['secrets.yaml', 'automations.yaml', path.join('packages', 'climate.yaml')]);
+        ['secrets.yaml', 'automations.yaml', path.join('www', 'build', 'card.js'), path.join('packages', 'climate.yaml')]);
     assert.strictEqual(day.hours, 24);
 
     const hour = await recentApi.recent(1);
@@ -304,7 +409,7 @@ test('recent changes: newest first, inside the window, noise and secret-shaped f
 
     const week = await recentApi.recent(168);
     assert.deepStrictEqual(week.entries.map((e) => e.relative),
-        ['secrets.yaml', 'automations.yaml', path.join('packages', 'climate.yaml'), 'scripts.yaml']);
+        ['secrets.yaml', 'automations.yaml', path.join('www', 'build', 'card.js'), path.join('packages', 'climate.yaml'), 'scripts.yaml']);
 });
 
 test('recent changes clamps the window', async () => {

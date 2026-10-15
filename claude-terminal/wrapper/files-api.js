@@ -57,7 +57,11 @@ const HA_CHECK_MAX_MESSAGE = 4000;
 // (hassio-addons/addon-vscode), whose default files.exclude hides .git and
 // leaves secrets.yaml an ordinary file: it is a file the user edits by hand,
 // and the terminal next to this sidebar can read it anyway.
-const HIDDEN_NAMES = new Set(['.git']);
+//
+// A bare repository (`homeassistant.git/`) holds the same config, so any name
+// ending in `.git` is hidden too. A plain file so named is hidden with it;
+// that is rare enough not to be worth telling the two apart.
+const HIDDEN_NAME = /\.git$/i;
 
 // In-progress downloads and partial writes: left out of listings and recent
 // changes, since they are about to be renamed or deleted.
@@ -82,6 +86,8 @@ const SENSITIVE_ROOT_DIRS = new Set(['claude-config']);
 // credential stores, and private keys that do not use a .key/.pem suffix.
 const SENSITIVE_FILE = new RegExp([
     '^\\.env(\\..+)?$',
+    '^\\.envrc$',
+    '^service_account\\.json$',   // Google Assistant's private key
     '^\\.git-credentials$',
     '^\\.gitconfig$',
     '^\\.netrc$',
@@ -94,16 +100,22 @@ const SENSITIVE_FILE = new RegExp([
 ].join('|'), 'i');
 
 // Recent changes leaves out what HA (or a package manager) rewrites by itself,
-// so the list shows what a person or Claude edited.
+// so the list shows what a person or Claude edited. Build and dependency trees
+// are skipped too: the walk has an entry and time budget, and one ESPHome
+// build folder or virtualenv could spend all of it before reaching a single
+// real edit.
 const RECENT_SKIP_DIRS = new Set([
-    'deps', 'tts', 'backups', 'node_modules', '__pycache__', '.cache',
+    'deps', 'tts', 'backups', '.cache',
+    'node_modules', '__pycache__', '.venv', 'venv', '.pio', '.pioenvs',
 ]);
+// Skipped only under the named parent: `build` is an ordinary name elsewhere.
+const RECENT_SKIP_NESTED = [['.esphome', 'build']];
 const RECENT_SKIP_FILE = /\.(db|db-shm|db-wal|sqlite|sqlite3)$|\.log(\.\d+|\.fault|\.old)?$/i;
 
 const lower = (name) => name.toLowerCase();
 
 function isHiddenName(name) {
-    return HIDDEN_NAMES.has(lower(name));
+    return HIDDEN_NAME.test(name);
 }
 
 /**
@@ -123,6 +135,22 @@ function classifyRelative(relative) {
 }
 
 const inside = (root, p) => p === root || p.startsWith(root + path.sep);
+
+// Linux: /proc/self/fd/N links to the file descriptor N refers to; a file
+// deleted since the open reads as "<path> (deleted)", and is judged by its
+// path. No /proc, or a non-absolute answer, is "unknown" (null), and
+// preview() then relies on its path checks alone.
+const DELETED_SUFFIX = ' (deleted)';
+async function procFdPath(fd) {
+    let target;
+    try {
+        target = await fsp.readlink(`/proc/self/fd/${fd}`);
+    } catch {
+        return null;
+    }
+    if (target.endsWith(DELETED_SUFFIX)) target = target.slice(0, -DELETED_SUFFIX.length);
+    return path.isAbsolute(target) ? target : null;
+}
 
 // An error the routes turn into a status code and a message for the UI.
 class FilesError extends Error {
@@ -221,6 +249,12 @@ function createFilesApi({
     maxEntries = MAX_ENTRIES,
     maxPreviewBytes = MAX_PREVIEW_BYTES,
     recentTimeBudgetMs = RECENT_TIME_BUDGET_MS,
+    // The path an open descriptor refers to, or null when that cannot be
+    // known. Injectable for tests on platforms without /proc.
+    fdPath = procFdPath,
+    // Test seam: runs between resolve() and open() in preview(), so a test
+    // can swap a folder for a symlink at exactly the moment that matters.
+    onResolved = null,
 } = {}) {
     // Resolved on every call rather than once: /config may not be mounted yet
     // when the wrapper starts, and a cached failure would stick until restart.
@@ -282,15 +316,19 @@ function createFilesApi({
         if (classifyRelative(relative) === 'hidden') return null;
         if (PARTIAL_FILE.test(dirent.name)) return null;
         try {
+            let kind = classifyRelative(relative);
             if (dirent.isSymbolicLink()) {
                 const target = await fsp.realpath(full);
                 if (!inside(rootReal, target)) return null;
-                if (classifyRelative(path.relative(rootReal, target)) === 'hidden') return null;
+                const targetKind = classifyRelative(path.relative(rootReal, target));
+                if (targetKind === 'hidden') return null;
+                // Same rule as resolve(): sensitive if the link's name OR its
+                // target is, so notes.txt -> .storage/auth shows the lock.
+                if (targetKind === 'sensitive') kind = 'sensitive';
             }
             const stat = await fsp.stat(full);
             const isDir = stat.isDirectory();
             if (!isDir && !stat.isFile()) return null;   // sockets, FIFOs, devices
-            const kind = classifyRelative(relative);
             return {
                 name: dirent.name,
                 path: full,
@@ -340,9 +378,16 @@ function createFilesApi({
         const { real, kind } = await resolve(requested);
         if (kind === 'sensitive') throw new FilesError(403, 'This file may hold secrets and is not previewed');
 
-        // O_NONBLOCK so a FIFO cannot hang the open; O_NOFOLLOW so the final
-        // component cannot be swapped for a symlink after resolve() checked it.
-        // The type is then checked on the open descriptor, not the path.
+        if (onResolved) await onResolved(real);
+
+        // O_NONBLOCK so a FIFO cannot hang the open. O_NOFOLLOW refuses a
+        // symlink in the FINAL component only: a parent folder swapped for a
+        // symlink between resolve() and here is still followed. That case is
+        // caught after the open, by asking the kernel which file the
+        // descriptor actually is (/proc/self/fd, Linux) and checking that
+        // path again. Where /proc is unavailable the check is skipped and
+        // only the last component is protected. The type is checked on the
+        // open descriptor, not the path.
         let handle;
         try {
             handle = await fsp.open(real, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_NOFOLLOW || 0));
@@ -351,6 +396,14 @@ function createFilesApi({
             throw new FilesError(400, `Cannot read file (${err.code || 'error'})`);
         }
         try {
+            const opened = await fdPath(handle.fd);
+            if (opened !== null) {
+                const rootReal = await realRoot();
+                if (!inside(rootReal, opened)) throw notAllowed();
+                const openedKind = classifyRelative(path.relative(rootReal, opened));
+                if (openedKind === 'hidden') throw notAllowed();
+                if (openedKind === 'sensitive') throw new FilesError(403, 'This file may hold secrets and is not previewed');
+            }
             const stat = await handle.stat();
             if (!stat.isFile()) throw new FilesError(400, 'Not a file');
             const length = Math.min(stat.size, maxPreviewBytes);
@@ -407,7 +460,11 @@ function createFilesApi({
                     const relative = path.relative(rootReal, full);
                     if (classifyRelative(relative) !== 'ok') continue;
                     if (dirent.isDirectory()) {
-                        if (!RECENT_SKIP_DIRS.has(lower(dirent.name))) subdirs.push(full);
+                        const name = lower(dirent.name);
+                        const parent = lower(path.basename(dir));
+                        const skip = RECENT_SKIP_DIRS.has(name)
+                            || RECENT_SKIP_NESTED.some(([p, n]) => p === parent && n === name);
+                        if (!skip) subdirs.push(full);
                     } else if (dirent.isFile() && !RECENT_SKIP_FILE.test(dirent.name) && !PARTIAL_FILE.test(dirent.name)) {
                         let stat;
                         try { stat = await fsp.stat(full); } catch { continue; }
@@ -498,6 +555,7 @@ module.exports = {
     createHaCheck,
     classifyRelative,
     looksBinary,
+    procFdPath,
     FilesError,
     MAX_ENTRIES,
     MAX_PREVIEW_BYTES,

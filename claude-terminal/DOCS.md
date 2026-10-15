@@ -531,7 +531,9 @@ entirely when closed.
 - **Recent changes** lists the files in `/config` changed in the last hour,
   day or week, newest first, so you can see what Claude just edited. What Home
   Assistant rewrites by itself is left out: `.storage`, `deps`, `tts`,
-  `backups`, databases and logs.
+  `backups`, databases and logs. So are build and dependency folders
+  (`node_modules`, `venv`, `.venv`, `__pycache__`, ESPHome's `.esphome/build`,
+  `.pio`), which would otherwise crowd out real edits.
 - **✓ Check HA configuration** runs `ha core check` and shows the result, so
   you can validate an edit before restarting Home Assistant.
 
@@ -539,14 +541,16 @@ The sidebar is read-only and limited to `/config`. Paths are resolved through
 symlinks and must stay inside it, so `/data`, where your Claude login lives, is
 not reachable. Which files it shows follows Studio Code Server's defaults:
 
-- `.git` is never listed or previewed: remote URLs in `.git/config` can carry
-  access tokens.
+- `.git`, and any folder ending in `.git` (a bare repository), is never
+  listed or previewed: remote URLs in its `config` can carry access tokens.
 - `secrets.yaml` is an ordinary file, listed and previewed like any other.
 - Files that are typically credentials are listed with a 🔒 but not
   previewed: `.storage`, `.cloud`, `.ssh`, `.gnupg`, `claude-config`, `.env`
-  files, keys and certificates (`*.key`, `*.pem`, `*.p12`, `id_rsa` and
+  files and `.envrc`, Google Assistant's `service_account.json`, keys and
+  certificates (`*.key`, `*.pem`, `*.p12`, `id_rsa` and
   friends), `.git-credentials`, `.gitconfig`, `.netrc`, `.npmrc`, `.pypirc`,
-  and Claude Code's own `.credentials.json` and `.claude.json`.
+  and Claude Code's own `.credentials.json` and `.claude.json`. A symlink to
+  one of these gets the 🔒 too.
 - Unfinished downloads (`*.part`) are not listed.
 
 Previews show at most the first 256 KB of a file, as plain text; binary files
