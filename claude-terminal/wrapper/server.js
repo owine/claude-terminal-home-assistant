@@ -10,6 +10,7 @@
  * - Serves HTML interface with embedded ttyd terminal
  * - WebSocket proxy for Home Assistant ingress compatibility
  * - Image uploads via POST /upload (paste/drag-drop)
+ * - Read-only /config browser and HA config check for the Files sidebar (/api/files)
  * - ARM-compatible (no native dependencies)
  */
 
@@ -30,6 +31,7 @@ const {
 } = require('./http-guards');
 const { uploadFilename, isAllowedImageMime } = require('./upload-naming');
 const { loginNotifierFromEnv } = require('./login-notifier');
+const { createFilesApi, createFilesRouter, createHaCheck } = require('./files-api');
 
 const app = express();
 const PORT = process.env.WRAPPER_PORT || 7680;
@@ -42,6 +44,11 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || '/data/images';
 // Rate limiters: generous for general use, stricter for uploads
 const generalLimiter = createRateLimiter({ windowMs: 60000, max: 60 });
 const uploadLimiter = createRateLimiter({ windowMs: 60000, max: 10, message: 'Upload rate limit exceeded, try again in a minute' });
+// Files sidebar. Its own buckets: expanding folders is bursty and must not eat
+// into /health's, and behind ingress every browser shares one client address.
+// The config check runs a process, so it gets the strict one.
+const filesLimiter = createRateLimiter({ windowMs: 60000, max: 240, message: 'Too many file requests, try again in a minute' });
+const haCheckLimiter = createRateLimiter({ windowMs: 60000, max: 6, message: 'Too many configuration checks, try again in a minute' });
 
 // Ensure upload directory exists
 if (!fs.existsSync(UPLOAD_DIR)) {
@@ -127,6 +134,15 @@ app.post('/upload', uploadLimiter, upload.single('image'), (req, res) => {
         size: req.file.size
     });
 });
+
+// Files sidebar: read-only /config browser and `ha core check` (files-api.js).
+// FILES_ROOT is a test seam; production browses /config.
+app.use('/api/files', createFilesRouter({
+    api: createFilesApi({ root: process.env.FILES_ROOT || '/config' }),
+    haCheck: createHaCheck(),
+    readLimiter: filesLimiter,
+    checkLimiter: haCheckLimiter,
+}));
 
 // Proxy endpoint for ttyd terminal
 // This allows ttyd to work through Home Assistant ingress
