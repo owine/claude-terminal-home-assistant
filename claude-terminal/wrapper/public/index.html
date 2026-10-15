@@ -997,6 +997,7 @@
                             const indicator = document.getElementById('term-indicator');
                             indicator.style.background = '#4ec9b0';
                             indicator.title = 'Terminal ready';
+                            keepTerminalFitted(iframe.contentWindow.term);
                             registerTerminalHandlers(iframe.contentWindow.term);
                         }
                     } catch (e) {
@@ -1037,6 +1038,50 @@
         // Marks a term instance as already wired. A Symbol rather than a string
         // key so it cannot collide with xterm.js internals or another add-on.
         const HANDLERS_REGISTERED = Symbol('wrapperTerminalHandlers');
+        const FIT_WATCHED = Symbol('wrapperTerminalFitWatch');
+
+        // Refit the terminal whenever its cell size changes. ttyd (1.7.7, and
+        // still on its main branch) fits once on open, under xterm's DOM
+        // renderer, then its preferences message swaps in the WebGL or canvas
+        // renderer. Those snap cells to whole device pixels (7.825px -> 7px for
+        // Menlo 13px), but ttyd refits only for font options, so the first load
+        // sat ~20 columns short until something resized the window. A WebGL
+        // context loss, which drops back to the DOM renderer, does the same.
+        //
+        // xterm sizes .xterm-screen to cols x cell width, so a renderer swap
+        // shows up as a resize of that element. Answering it with a window
+        // resize event runs ttyd's own `resize -> fitAddon.fit()` listener: no
+        // private xterm API, and the server is told the new size the usual
+        // way. It cannot loop - a fit that changes nothing resizes nothing.
+        // Kept apart from registerTerminalHandlers, which bails out when the
+        // clipboard script is missing; the fit must not depend on that.
+        function keepTerminalFitted(term) {
+            if (term[FIT_WATCHED]) return;
+            try {
+                const screen = term.element?.querySelector('.xterm-screen');
+                const win = term.element?.ownerDocument?.defaultView;
+                if (!screen || typeof win?.ResizeObserver !== 'function') return;
+                let queued = false;
+                const observer = new win.ResizeObserver(() => {
+                    if (queued) return;
+                    queued = true;
+                    win.requestAnimationFrame(() => {
+                        queued = false;
+                        try {
+                            win.dispatchEvent(new win.Event('resize'));
+                        } catch (e) {
+                            console.error('[wrapper] terminal refit failed:', e);
+                        }
+                    });
+                });
+                // The initial observation also covers a swap that finished
+                // before this page found `term` (it polls every 500ms).
+                observer.observe(screen);
+                term[FIT_WATCHED] = true;
+            } catch (e) {
+                console.error('[wrapper] could not watch the terminal size:', e);
+            }
+        }
 
         function registerTerminalHandlers(term) {
             // The guard lives on the terminal INSTANCE, not on this page. The
