@@ -685,3 +685,10 @@ test('sendError destroys the response instead of throwing once headers are sent'
     assert.strictEqual(destroyed, true);
     assert.strictEqual(logged.length, 1);
 });
+
+test('openFile normalises its input: a ../ path out of the root is refused without /proc', async () => {
+    const bare = createFilesApi({ root, fdPath: async () => null });
+    const sneaky = `${root}/../${path.basename(outside)}/f.txt`;   // not normalised
+    assert.ok(fs.existsSync(sneaky), 'the target exists, so only the check can refuse it');
+    await refused(bare.openFile(sneaky, { allowSensitive: true }), 404);
+});

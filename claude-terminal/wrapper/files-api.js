@@ -399,7 +399,10 @@ function createFilesApi({
      * and outside-the-root are always refused, sensitive unless
      * `allowSensitive`.
      */
-    async function openFile(real, { allowSensitive = false } = {}) {
+    async function openFile(requestedPath, { allowSensitive = false } = {}) {
+        // Normalise first: inside() is a string-prefix check, and a "../" left
+        // in the path would pass it and still open a file outside the root.
+        const real = path.resolve(requestedPath);
         const rootBefore = await realRoot();
         if (!inside(rootBefore, real)) throw notAllowed();
         const kindBefore = classifyRelative(path.relative(rootBefore, real));
