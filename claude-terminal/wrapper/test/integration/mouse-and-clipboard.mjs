@@ -247,6 +247,25 @@ async function run(engine, mode, url) {
         await cacheControl('icon-192.png'),
         (v) => v === 'public, max-age=86400');
 
+    // 0b. The terminal fills its frame on first load, before anything in this
+    //     run resizes the page. ttyd fits once under xterm's DOM renderer, then
+    //     its preferences message swaps in WebGL (or canvas), whose cells snap
+    //     to whole device pixels - and ttyd refits only for font options, so
+    //     the first load sat ~20 columns short (160 of 179 at 1280px) until
+    //     something resized the window. Compared against the fit addon's own
+    //     proposal for the current layout, so fonts and engines don't matter.
+    const fitGap = () => wrapper.evaluate(`(() => {
+        const t = ${TERM};
+        const fit = t._addonManager._addons
+            .map((a) => a.instance)
+            .find((i) => typeof i.proposeDimensions === 'function');
+        const p = fit.proposeDimensions();
+        return p ? p.cols - t.cols : 0;
+    })()`);
+    await waitFor(async () => (await fitGap()) === 0);
+    check('the terminal fills its frame on first load, with no resize',
+        await fitGap(), 0);
+
     // Coordinates come from the terminal's own box, not fixed page positions:
     // under ingress the wrapper sits inside another iframe, so the same page
     // coordinates land somewhere different. `left` is deliberately a few pixels
