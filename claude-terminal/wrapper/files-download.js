@@ -17,8 +17,12 @@
 
 const fsp = require('node:fs/promises');
 const path = require('node:path');
+const { pipeline, Transform } = require('node:stream');
+const express = require('express');
 const {
     walkEntryType,
+    allowsProtected,
+    sendError,
     FilesError,
     MAX_RECENT_DEPTH,
     MAX_RECENT_VISITS,
@@ -42,6 +46,24 @@ function formatSize(bytes) {
 }
 
 /**
+ * Passes exactly `size` bytes and fails if the source ends short of them:
+ * the file shrank after it was measured. The response then aborts instead
+ * of ending cleanly at a length that would pass for the whole file.
+ */
+function exactSize(size) {
+    let seen = 0;
+    return new Transform({
+        transform(chunk, encoding, callback) {
+            seen += chunk.length;
+            callback(null, chunk);
+        },
+        flush(callback) {
+            callback(seen === size ? null : new Error(`file changed while it was read (${seen} of ${size} bytes)`));
+        },
+    });
+}
+
+/**
  * Downloads over a files-api instance, whose `root` (as configured) names a
  * zip of the root itself. The walk bounds default to the recent-changes
  * walk's, and are injectable for tests, as is `onListed`, which runs between
@@ -54,7 +76,55 @@ function createDownloads({
     maxDepth = MAX_RECENT_DEPTH,
     maxVisits = MAX_RECENT_VISITS,
     timeBudgetMs = RECENT_TIME_BUDGET_MS,
+    // Test seam: runs once the file is open or the zip is planned, before
+    // the first byte goes out, so a test can change the disk at exactly the
+    // moment that matters (the same idea as files-api's onResolved).
+    beforeStream = null,
 } = {}) {
+    /**
+     * Resolve and open one file for download: { handle, stat, name }.
+     * resolve() refuses .git and anything outside the root; openFile() (the
+     * O_NOFOLLOW open and /proc descriptor re-check) refuses sensitive files
+     * unless allowSensitive (protected=1). The caller owns the handle.
+     */
+    async function openForDownload(requested, { allowSensitive = false } = {}) {
+        const { real } = await api.resolve(requested);
+        const { handle, stat } = await api.openFile(real, { allowSensitive });
+        try {
+            if (beforeStream) await beforeStream(real);
+        } catch (err) {
+            await handle.close().catch(() => {});
+            throw err;
+        }
+        return { handle, stat, name: path.basename(real) };
+    }
+
+    /**
+     * Send an opened file as an attachment. The filename goes through
+     * Express's res.attachment(), which encodes it per RFC 6266: an ASCII
+     * fallback plus filename* in UTF-8, so no name can break the header.
+     */
+    function sendFile({ handle, stat, name }, res, log) {
+        res.status(200);
+        res.attachment(name);
+        res.set({
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': String(stat.size),
+            'X-Content-Type-Options': 'nosniff',
+        });
+        if (stat.size === 0) {
+            handle.close().catch(() => {});
+            res.end();
+            return;
+        }
+        // Exactly the bytes Content-Length announced: a file that grows
+        // meanwhile is cut at it (end), one that shrinks fails (exactSize).
+        const source = handle.createReadStream({ start: 0, end: stat.size - 1 });
+        pipeline(source, exactSize(stat.size), res, (err) => {
+            if (err) log(`Download of ${name} aborted: ${err.message}`);
+        });
+    }
+
     /**
      * Walk a folder and decide what its zip holds, before a byte is sent:
      * { name, files: [{ full, name, size, mtime, mode }], bytes }.
@@ -171,10 +241,36 @@ function createDownloads({
         return { name: `${top}.zip`, files, bytes };
     }
 
-    return { planZip };
+    return { openForDownload, sendFile, planZip };
+}
+
+/**
+ * Express router for the downloads. Mounted by server.js at /api/files,
+ * beside createFilesRouter, before the terminal proxy and static files.
+ *
+ * GET, read-only, no CORS headers: like the other Files GETs, another site
+ * can start one but cannot read the answer. Every failure before the first
+ * byte is a JSON error; after it, the response is aborted and logged.
+ */
+function createDownloadRouter({ downloads, fileLimiter, log = console.error }) {
+    const router = express.Router();
+
+    router.get('/download', fileLimiter, async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+        let opened;
+        try {
+            opened = await downloads.openForDownload(req.query.path, { allowSensitive: allowsProtected(req) });
+        } catch (err) {
+            return sendError(res, err, log);
+        }
+        downloads.sendFile(opened, res, log);
+    });
+
+    return router;
 }
 
 module.exports = {
     createDownloads,
+    createDownloadRouter,
     MAX_ZIP_BYTES,
 };

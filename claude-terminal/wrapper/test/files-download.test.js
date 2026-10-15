@@ -14,8 +14,11 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { once } = require('node:events');
+const express = require('express');
 const { createFilesApi } = require('../files-api.js');
-const { createDownloads, MAX_ZIP_BYTES } = require('../files-download.js');
+const { createDownloads, createDownloadRouter, MAX_ZIP_BYTES } = require('../files-download.js');
+const { createRateLimiter } = require('../http-guards.js');
 
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'files-download-')));
 const root = path.join(base, 'config');
@@ -210,4 +213,145 @@ test('a folder swapped for a symlink after it was listed is not entered', async 
     } finally {
         fs.rmSync(path.join(root, 'swap'), { recursive: true, force: true });
     }
+});
+
+// --- routes ---
+
+async function withServer(options, fn) {
+    const app = express();
+    app.use('/api/files', createDownloadRouter({
+        downloads,
+        fileLimiter: createRateLimiter({ max: 1000 }),
+        zipLimiter: createRateLimiter({ max: 1000 }),
+        log: () => {},
+        ...options,
+    }));
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+        await fn(`http://127.0.0.1:${server.address().port}/api/files`);
+    } finally {
+        // Aborted transfers can leave keep-alive sockets behind.
+        server.closeAllConnections();
+        await new Promise((r) => server.close(r));
+    }
+}
+
+const q = (p) => encodeURIComponent(p);
+
+// Reads a response that is expected to be cut off. Resolves to true when the
+// transfer failed, as an aborted download must.
+async function aborted(responsePromise) {
+    try {
+        const res = await responsePromise;
+        await res.arrayBuffer();
+        return false;
+    } catch {
+        return true;
+    }
+}
+
+test('download: an attachment with its exact bytes and safe headers', async () => {
+    await withServer({}, async (url) => {
+        const res = await fetch(`${url}/download?path=${q('with space.yaml')}`);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.headers.get('content-disposition'), 'attachment; filename="with space.yaml"');
+        assert.strictEqual(res.headers.get('content-type'), 'application/octet-stream');
+        assert.strictEqual(res.headers.get('content-length'), '5');
+        assert.strictEqual(res.headers.get('x-content-type-options'), 'nosniff');
+        assert.strictEqual(res.headers.get('cache-control'), 'no-store');
+        assert.strictEqual(await res.text(), 'a: 1\n');
+    });
+});
+
+test('download: a binary file arrives byte for byte', async () => {
+    await withServer({}, async (url) => {
+        const res = await fetch(`${url}/download?path=image.png`);
+        assert.deepStrictEqual(Buffer.from(await res.arrayBuffer()),
+            Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x10]));
+    });
+});
+
+test('download: a non-ASCII name gets an ASCII fallback and filename* (RFC 6266)', async () => {
+    await withServer({}, async (url) => {
+        const res = await fetch(`${url}/download?path=${q('ünïcödé ✂.yaml')}`);
+        assert.strictEqual(res.status, 200);
+        const header = res.headers.get('content-disposition');
+        assert.match(header, /^attachment; filename="[\x20-\x7e]+"; filename\*=UTF-8''/);
+        assert.ok(header.endsWith(`filename*=UTF-8''${q('ünïcödé ✂.yaml')}`), header);
+        await res.arrayBuffer();
+    });
+});
+
+test('download: an empty file is an empty attachment', async () => {
+    await withServer({}, async (url) => {
+        const res = await fetch(`${url}/download?path=empty.txt`);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.headers.get('content-length'), '0');
+        assert.strictEqual(await res.text(), '');
+    });
+});
+
+test('download: protected files need protected=1; .git never downloads', async () => {
+    await withServer({}, async (url) => {
+        let res = await fetch(`${url}/download?path=.env`);
+        assert.strictEqual(res.status, 403);
+        assert.match((await res.json()).error, /Show protected files/);
+        res = await fetch(`${url}/download?path=innocent.yaml`);
+        assert.strictEqual(res.status, 403);
+        await res.arrayBuffer();
+
+        res = await fetch(`${url}/download?path=.env&protected=1`);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(await res.text(), 'TOKEN=1\n');
+
+        res = await fetch(`${url}/download?path=${q('.git/config')}&protected=1`);
+        assert.strictEqual(res.status, 404);
+        res = await fetch(`${url}/download?path=${q('../data/secret.txt')}&protected=1`);
+        assert.strictEqual(res.status, 404);
+        res = await fetch(`${url}/download?path=${q('blueprints/escape.txt')}&protected=1`);
+        assert.strictEqual(res.status, 404);
+        await res.arrayBuffer();
+    });
+});
+
+test('download: a folder, a missing file, or a repeated path is a JSON error', async () => {
+    await withServer({}, async (url) => {
+        let res = await fetch(`${url}/download?path=blueprints`);
+        assert.strictEqual(res.status, 400);
+        assert.deepStrictEqual(await res.json(), { error: 'Not a file' });
+        res = await fetch(`${url}/download?path=nope.yaml`);
+        assert.strictEqual(res.status, 404);
+        await res.arrayBuffer();
+        res = await fetch(`${url}/download?path=a&path=b`);
+        assert.strictEqual(res.status, 400);
+        await res.arrayBuffer();
+    });
+});
+
+test('download: a file that shrinks mid-download aborts it, and is logged', async () => {
+    const file = write('shrinking.txt', 'y'.repeat(256 * 1024));
+    const logged = [];
+    const shrinking = createDownloads({ api, beforeStream: async () => fs.truncateSync(file, 10) });
+    await withServer({ downloads: shrinking, log: (m) => logged.push(m) }, async (url) => {
+        assert.strictEqual(await aborted(fetch(`${url}/download?path=shrinking.txt`)), true);
+        // the wrapper is still serving
+        assert.strictEqual((await fetch(`${url}/download?path=configuration.yaml`)).status, 200);
+    });
+    assert.ok(logged.some((m) => /shrinking\.txt aborted/.test(m)), logged.join('\n'));
+    fs.unlinkSync(file);
+});
+
+test('routes: an unexpected error is a 500 JSON, not a thrown exception', async () => {
+    const broken = {
+        planZip: async () => { throw new TypeError('bug'); },
+        openForDownload: async () => { throw new TypeError('bug'); },
+    };
+    await withServer({ downloads: broken }, async (url) => {
+        for (const route of ['download']) {
+            const res = await fetch(`${url}/${route}?path=x`);
+            assert.strictEqual(res.status, 500);
+            assert.deepStrictEqual(await res.json(), { error: 'Internal error' });
+        }
+    });
 });
