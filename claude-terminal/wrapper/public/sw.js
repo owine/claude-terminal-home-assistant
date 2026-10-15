@@ -1,4 +1,4 @@
-const CACHE_NAME = 'claude-ha-v10';
+const CACHE_NAME = 'claude-ha-v11';
 const OFFLINE_URL = './offline.html';
 // Every path is relative: under Home Assistant ingress the app is served
 // beneath a per-session path prefix, and these resolve against sw.js's URL.
