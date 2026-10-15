@@ -83,12 +83,18 @@ function createDownloads({
 } = {}) {
     /**
      * Resolve and open one file for download: { handle, stat, name }.
-     * resolve() refuses .git and anything outside the root; openFile() (the
-     * O_NOFOLLOW open and /proc descriptor re-check) refuses sensitive files
-     * unless allowSensitive (protected=1). The caller owns the handle.
+     * resolve() refuses .git and anything outside the root; sensitive files
+     * need allowSensitive (protected=1), checked here and again by openFile()
+     * (the O_NOFOLLOW open and /proc descriptor re-check). The caller owns the handle.
      */
     async function openForDownload(requested, { allowSensitive = false } = {}) {
-        const { real } = await api.resolve(requested);
+        // resolve() marks a file sensitive by the REQUESTED name too (a symlink
+        // called .env is refused), which openFile, seeing only the realpath,
+        // cannot know. openFile stays as the race guard.
+        const { real, kind } = await api.resolve(requested);
+        if (kind === 'sensitive' && !allowSensitive) {
+            throw new FilesError(403, 'This file may hold secrets. Turn on "Show protected files" to download it.');
+        }
         const { handle, stat } = await api.openFile(real, { allowSensitive });
         try {
             if (beforeStream) await beforeStream(real);

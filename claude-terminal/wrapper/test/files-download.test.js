@@ -137,6 +137,16 @@ test('zipping a sensitive folder is refused, not an empty archive', async () => 
     await refused(downloads.planZip('blueprints/.ssh'), 403);
 });
 
+test('zipping a sensitive-named symlink to an ordinary folder is refused', async () => {
+    const link = path.join(root, '.ssh');
+    fs.symlinkSync(path.join(root, 'blueprints', 'notes'), link);
+    try {
+        await refused(downloads.planZip('.ssh'), 403);
+    } finally {
+        fs.unlinkSync(link);
+    }
+});
+
 test('zipping .git, a file, or a path outside the root is refused', async () => {
     await refused(downloads.planZip('.git'), 404);
     await refused(downloads.planZip('blueprints/repo.git'), 404);
@@ -354,4 +364,21 @@ test('routes: an unexpected error is a 500 JSON, not a thrown exception', async 
             assert.deepStrictEqual(await res.json(), { error: 'Internal error' });
         }
     });
+});
+
+test('download: a sensitive-named symlink to an ordinary file needs protected=1', async () => {
+    const link = path.join(root, 'blueprints', '.env.link');
+    fs.symlinkSync(path.join(root, 'with space.yaml'), link);
+    try {
+        await withServer({}, async (url) => {
+            let res = await fetch(`${url}/download?path=${q('blueprints/.env.link')}`);
+            assert.strictEqual(res.status, 403);
+            await res.arrayBuffer();
+            res = await fetch(`${url}/download?path=${q('blueprints/.env.link')}&protected=1`);
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual(await res.text(), 'a: 1\n');
+        });
+    } finally {
+        fs.unlinkSync(link);
+    }
 });
