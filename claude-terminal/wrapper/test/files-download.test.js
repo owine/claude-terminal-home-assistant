@@ -62,7 +62,7 @@ const BLUEPRINT_NAMES = [
 ];
 
 const api = createFilesApi({ root });
-const downloads = createDownloads({ api, root });
+const downloads = createDownloads({ api });
 
 async function refused(promise, status) {
     await assert.rejects(promise, (err) => {
@@ -143,7 +143,7 @@ test('zipping .git, a file, or a path outside the root is refused', async () => 
 });
 
 test('over the size cap: 413, naming the largest files', async () => {
-    const capped = createDownloads({ api, root, maxZipBytes: 1024 });
+    const capped = createDownloads({ api, maxZipBytes: 1024 });
     await assert.rejects(capped.planZip('blueprints'), (err) => {
         assert.strictEqual(err.status, 413);
         assert.match(err.message, /over the 1\.0 KB zip limit/);
@@ -158,7 +158,7 @@ test('the default cap is 200 MB', () => {
 
 test('a walk that hits a bound is a 413, never a partial zip', async () => {
     const bound = async (opts, pattern) => {
-        await assert.rejects(createDownloads({ api, root, ...opts }).planZip('blueprints'), (err) => {
+        await assert.rejects(createDownloads({ api, ...opts }).planZip('blueprints'), (err) => {
             assert.strictEqual(err.status, 413);
             assert.match(err.message, pattern);
             return true;
@@ -167,4 +167,47 @@ test('a walk that hits a bound is a 413, never a partial zip', async () => {
     await bound({ maxVisits: 2 }, /more than 2 entries/);
     await bound({ timeBudgetMs: -1 }, /took too long/);
     await bound({ maxDepth: 0 }, /nested more than 0 folders deep/);
+});
+
+test('a bound refusal names the largest files found so far', async () => {
+    await assert.rejects(createDownloads({ api, maxDepth: 0 }).planZip('blueprints'), (err) => {
+        assert.match(err.message, /Largest so far: large\.yaml \(4\.0 KB\)/);
+        return true;
+    });
+});
+
+test('a *.part folder is not zipped', async () => {
+    write('blueprints/upload.part/inner.txt', 'inner');
+    try {
+        assert.deepStrictEqual(names(await downloads.planZip('blueprints')), BLUEPRINT_NAMES);
+    } finally {
+        fs.rmSync(path.join(root, 'blueprints', 'upload.part'), { recursive: true });
+    }
+});
+
+test('a folder swapped for a symlink after it was listed is not entered', async () => {
+    const swap = () => {
+        fs.rmSync(path.join(root, 'swap'), { recursive: true, force: true });
+        write('swap/in.txt', 'in');
+        write('swap/sub/inner.txt', 'inner');
+    };
+    // Runs between a folder being listed and being opened.
+    const onListed = async (dir) => {
+        if (path.basename(dir) !== 'sub') return;
+        fs.rmSync(dir, { recursive: true });
+        fs.symlinkSync(outside, dir);
+    };
+    try {
+        swap();
+        assert.deepStrictEqual(names(await createDownloads({ api, onListed }).planZip('swap')), ['swap/in.txt']);
+        // Nor do the outside names and sizes reach the 413 message.
+        swap();
+        await assert.rejects(createDownloads({ api, onListed, maxZipBytes: 1 }).planZip('swap'), (err) => {
+            assert.strictEqual(err.status, 413);
+            assert.ok(!/secret\.txt/.test(err.message), err.message);
+            return true;
+        });
+    } finally {
+        fs.rmSync(path.join(root, 'swap'), { recursive: true, force: true });
+    }
 });

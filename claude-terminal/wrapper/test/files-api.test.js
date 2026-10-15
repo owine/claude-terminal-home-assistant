@@ -692,3 +692,35 @@ test('openFile normalises its input: a ../ path out of the root is refused witho
     assert.ok(fs.existsSync(sneaky), 'the target exists, so only the check can refuse it');
     await refused(bare.openFile(sneaky, { allowSensitive: true }), 404);
 });
+
+// --- one visibility rule for the listing, recent changes and zips ---
+
+test('a *.part folder is hidden from the listing and from recent changes alike', async () => {
+    const partRoot = path.join(base, 'parts');
+    write('kept/a.txt', 'x', partRoot);
+    write('upload.part/inner.txt', 'x', partRoot);
+    const partApi = createFilesApi({ root: partRoot });
+    assert.deepStrictEqual((await partApi.list('')).entries.map((e) => e.name), ['kept']);
+    const found = (await partApi.recent(24)).entries.map((e) => e.relative);
+    assert.deepStrictEqual(found, [path.join('kept', 'a.txt')]);
+});
+
+test('the api exposes the root it was configured with', () => {
+    assert.strictEqual(api.root, root);
+});
+
+// Documents a LIMIT, not a goal. Without /proc the before-open check is a
+// string-prefix check and O_NOFOLLOW covers only the last component, so a
+// symlinked PARENT folder escapes. Callers must pass paths from resolve() or
+// from a walk that never follows symlinks (see openFile's JSDoc). If this
+// ever starts failing, the limit was lifted: update the JSDoc.
+test('openFile limit: without /proc a symlinked parent folder is NOT caught', async () => {
+    fs.symlinkSync(outside, path.join(root, 'escape-dir'));
+    try {
+        const bare = createFilesApi({ root, fdPath: async () => null });
+        const { handle } = await bare.openFile(path.join(root, 'escape-dir', 'f.txt'));
+        await handle.close();
+    } finally {
+        fs.unlinkSync(path.join(root, 'escape-dir'));
+    }
+});

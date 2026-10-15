@@ -245,6 +245,27 @@ function createHaCheck({
 }
 
 /**
+ * The one visibility rule for a directory entry, shared by the listing, the
+ * recent-changes walk and the zip walk (files-download.js), so they cannot
+ * disagree. `relative` is the entry's path below the real root.
+ *
+ * Returns null for an entry that is never shown: hidden, a partial file or
+ * folder (PARTIAL_FILE) and, unless `allowSensitive`, a sensitive one.
+ * Otherwise 'dir', 'file', 'symlink' or 'other' from the folder listing's own
+ * type, which says what the entry itself is, never what a link points at.
+ * Walks use only 'dir' and 'file', which is how they never follow a link.
+ */
+function walkEntryType(relative, dirent, { allowSensitive = false } = {}) {
+    const kind = classifyRelative(relative);
+    if (kind === 'hidden' || (kind === 'sensitive' && !allowSensitive)) return null;
+    if (PARTIAL_FILE.test(dirent.name)) return null;
+    if (dirent.isSymbolicLink()) return 'symlink';
+    if (dirent.isDirectory()) return 'dir';
+    if (dirent.isFile()) return 'file';
+    return 'other';
+}
+
+/**
  * The read-only file API, confined to `root` (default FILES_ROOT, else
  * /config). `now` is injectable for the recent-changes window.
  */
@@ -318,8 +339,7 @@ function createFilesApi({
     async function describe(dir, dirent, rootReal) {
         const full = path.join(dir, dirent.name);
         const relative = path.relative(rootReal, full);
-        if (classifyRelative(relative) === 'hidden') return null;
-        if (PARTIAL_FILE.test(dirent.name)) return null;
+        if (walkEntryType(relative, dirent, { allowSensitive: true }) === null) return null;
         try {
             let kind = classifyRelative(relative);
             if (dirent.isSymbolicLink()) {
@@ -380,10 +400,13 @@ function createFilesApi({
     }
 
     /**
-     * Open a file for reading. `requestedPath` is normalised here with
-     * path.resolve() and classified before the open, so it may come from
-     * resolve(), from a walk that never follows symlinks, or straight from a
-     * request.
+     * Open a file for reading. `requestedPath` must be absolute and come
+     * from resolve() or from a walk that never follows symlinks. It is
+     * normalised with path.resolve() and classified before the open, which
+     * stops a "../" or a plain outside path, but NOT a symlinked parent
+     * folder: that check is a string-prefix one. A raw request path is not
+     * safe here, and where /proc is unavailable it can escape through a
+     * symlinked parent folder.
      *
      * O_NONBLOCK so a FIFO cannot hang the open. O_NOFOLLOW refuses a
      * symlink in the FINAL component only: a parent folder swapped for a
@@ -393,9 +416,10 @@ function createFilesApi({
      * path again. Where /proc is unavailable only that second check is
      * skipped. The type is checked on the open descriptor, not the path.
      *
-     * Both checks apply the tiers: `real` is classified BEFORE the open (so
-     * this is safe to call from anywhere, with or without /proc), and the
-     * descriptor's path again AFTER it, as the race guard.
+     * Both checks apply the tiers: the path is classified BEFORE the open
+     * (which refuses hidden and outside-the-root paths even without /proc),
+     * and the descriptor's path again AFTER it, as the race guard. Only the
+     * second one sees through a symlinked parent folder.
      *
      * Resolves to { handle, stat }; the caller closes the handle. Hidden
      * and outside-the-root are always refused, sensitive unless
@@ -497,14 +521,14 @@ function createFilesApi({
                     }
                     const full = path.join(dir, dirent.name);
                     const relative = path.relative(rootReal, full);
-                    if (classifyRelative(relative) !== 'ok') continue;
-                    if (dirent.isDirectory()) {
+                    const type = walkEntryType(relative, dirent);
+                    if (type === 'dir') {
                         const name = lower(dirent.name);
                         const parent = lower(path.basename(dir));
                         const skip = RECENT_SKIP_DIRS.has(name)
                             || RECENT_SKIP_NESTED.some(([p, n]) => p === parent && n === name);
                         if (!skip) subdirs.push(full);
-                    } else if (dirent.isFile() && !RECENT_SKIP_FILE.test(dirent.name) && !PARTIAL_FILE.test(dirent.name)) {
+                    } else if (type === 'file' && !RECENT_SKIP_FILE.test(dirent.name)) {
                         let stat;
                         try { stat = await fsp.stat(full); } catch { continue; }
                         if (stat.mtimeMs >= since) {
@@ -534,7 +558,7 @@ function createFilesApi({
         };
     }
 
-    return { resolve, list, preview, recent, openFile };
+    return { root, resolve, list, preview, recent, openFile };
 }
 
 /**
@@ -617,6 +641,7 @@ module.exports = {
     createFilesRouter,
     createHaCheck,
     classifyRelative,
+    walkEntryType,
     looksBinary,
     procFdPath,
     FilesError,

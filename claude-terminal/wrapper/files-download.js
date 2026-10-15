@@ -7,9 +7,9 @@
  * A module of its own rather than more of files-api.js, which is the
  * read-only browser (list, preview, recent changes, the config check) and
  * stays free of streaming and archive code. Everything that decides WHAT may
- * be read stays there and is called from here - resolve() and its realpath
- * confinement, classifyRelative() and its tiers, openFile() with its
- * O_NOFOLLOW open and descriptor re-check - so the two cannot drift apart.
+ * be shown stays there and is called from here - resolve() and its realpath
+ * confinement, and walkEntryType(), the one visibility rule the listing, the
+ * recent-changes walk and the zip walk share - so they cannot drift apart.
  *
  * No listener and no side effects at require time, so tests import it
  * directly (same reason as http-guards.js).
@@ -18,9 +18,8 @@
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const {
-    classifyRelative,
+    walkEntryType,
     FilesError,
-    PARTIAL_FILE,
     MAX_RECENT_DEPTH,
     MAX_RECENT_VISITS,
     RECENT_TIME_BUDGET_MS,
@@ -43,13 +42,14 @@ function formatSize(bytes) {
 }
 
 /**
- * Downloads over a files-api instance. `root` is the root as configured
- * (/config), used only to name a zip of the root itself. The walk bounds
- * default to the recent-changes walk's, and are injectable for tests.
+ * Downloads over a files-api instance, whose `root` (as configured) names a
+ * zip of the root itself. The walk bounds default to the recent-changes
+ * walk's, and are injectable for tests, as is `onListed`, which runs between
+ * a folder being listed and being opened.
  */
 function createDownloads({
     api,
-    root = process.env.FILES_ROOT || '/config',
+    onListed = null,
     maxZipBytes = MAX_ZIP_BYTES,
     maxDepth = MAX_RECENT_DEPTH,
     maxVisits = MAX_RECENT_VISITS,
@@ -78,7 +78,7 @@ function createDownloads({
 
         // The archive's top folder. For the root, its name as configured
         // (config), not its realpath (/homeassistant on a real install).
-        const top = relative === '' ? path.basename(path.resolve(root)) : path.basename(real);
+        const top = relative === '' ? path.basename(path.resolve(api.root)) : path.basename(real);
         const files = [];
         let bytes = 0;
         let visits = 0;
@@ -90,12 +90,22 @@ function createDownloads({
                 cut = `it is nested more than ${maxDepth} folders deep`;
                 return;
             }
+            if (onListed) await onListed(dir);
             let handle;
             try {
                 handle = await fsp.opendir(dir);
             } catch (err) {
                 if (depth === 0) throw new FilesError(400, `Cannot read folder (${err.code || 'error'})`);
                 return;   // vanished or unreadable since its parent was listed
+            }
+            // Every dir is built from realpaths plus real folder names, so if
+            // it is not its own realpath it was swapped for a link since the
+            // listing. Skip it: its names and sizes must not reach the plan.
+            try {
+                if (await fsp.realpath(dir) !== dir) throw new Error('swapped');
+            } catch {
+                await handle.close().catch(() => {});
+                return;
             }
             const subdirs = [];
             try {
@@ -109,14 +119,12 @@ function createDownloads({
                         break;
                     }
                     const full = path.join(dir, dirent.name);
-                    if (classifyRelative(path.relative(rootReal, full)) !== 'ok') continue;
-                    // Dirent types come from the folder listing itself, so a
-                    // symlink is a symlink here whatever it points at.
-                    if (dirent.isDirectory()) {
+                    const type = walkEntryType(path.relative(rootReal, full), dirent);
+                    if (type === 'dir') {
                         subdirs.push(full);
                         continue;
                     }
-                    if (!dirent.isFile() || PARTIAL_FILE.test(dirent.name)) continue;
+                    if (type !== 'file') continue;
                     let st;
                     try {
                         st = await fsp.lstat(full);
@@ -130,8 +138,7 @@ function createDownloads({
                     files.push({ full, name, size: st.size, mtime: st.mtime, mode: st.mode });
                     bytes += st.size;
                 }
-            } catch (err) {
-                if (err instanceof FilesError) throw err;
+            } catch {
                 // Folder changed under us; keep what was read.
             } finally {
                 // Breaking out of for-await closes the handle already.
@@ -143,16 +150,23 @@ function createDownloads({
             }
         }
 
-        await walk(real, 0);
-        if (cut) throw new FilesError(413, `This folder is too big to zip: ${cut}. Zip a folder inside it instead.`);
-        if (bytes > maxZipBytes) {
-            const largest = [...files]
+        // The biggest files seen, named in every 413 so the user can see why.
+        const largest = (label) => {
+            const top5 = [...files]
                 .sort((a, b) => b.size - a.size)
                 .slice(0, LARGEST_NAMED)
                 .map((f) => `${f.name.slice(top.length + 1)} (${formatSize(f.size)})`);
+            return top5.length ? ` ${label}: ${top5.join(', ')}` : '';
+        };
+
+        await walk(real, 0);
+        if (cut) {
             throw new FilesError(413,
-                `This folder holds ${formatSize(bytes)}, over the ${formatSize(maxZipBytes)} zip limit. `
-                + `Largest: ${largest.join(', ')}`);
+                `This folder is too big to zip: ${cut}. Zip a folder inside it instead.${largest('Largest so far')}`);
+        }
+        if (bytes > maxZipBytes) {
+            throw new FilesError(413,
+                `This folder holds ${formatSize(bytes)}, over the ${formatSize(maxZipBytes)} zip limit.${largest('Largest')}`);
         }
         return { name: `${top}.zip`, files, bytes };
     }
