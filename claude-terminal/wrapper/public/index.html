@@ -2118,16 +2118,28 @@
                 row.classList.add('selected');
             }
 
+            // Generation of the view in #files-list. Every refresh() bumps it,
+            // and a renderer whose generation is no longer current drops its
+            // response: otherwise a slow Recent answer could land on top of the
+            // Files tree after the user switched tabs (or changed the period,
+            // or toggled Hidden files) while it was in flight.
+            let viewGen = 0;
+
             // One folder level into `container`; subfolders load on expand.
-            async function renderFolder(folderPath, container, depth) {
+            // `gen` is passed for the top level only: a subfolder renders into
+            // its own container, which a refresh detaches rather than reuses.
+            async function renderFolder(folderPath, container, depth, gen) {
+                const stale = () => gen !== undefined && gen !== viewGen;
                 container.replaceChildren(note('Loading…', depth));
                 let data;
                 try {
                     data = await getJson('api/files/list?path=' + encodeURIComponent(folderPath));
                 } catch (err) {
+                    if (stale()) return;
                     container.replaceChildren(note('⚠️ ' + err.message, depth));
                     return;
                 }
+                if (stale()) return;
                 if (depth === 0 && data.root) rootPath = data.root;
                 const entries = data.entries.filter((e) => showHidden.checked || !e.name.startsWith('.'));
                 container.replaceChildren();
@@ -2161,15 +2173,17 @@
                 if (data.truncated) container.append(note('… more entries not shown', depth));
             }
 
-            async function renderRecent() {
+            async function renderRecent(gen) {
                 list.replaceChildren(note('Loading…'));
                 let data;
                 try {
                     data = await getJson('api/files/recent?hours=' + encodeURIComponent(recentHours.value));
                 } catch (err) {
+                    if (gen !== viewGen) return;
                     list.replaceChildren(note('⚠️ ' + err.message));
                     return;
                 }
+                if (gen !== viewGen) return;
                 if (data.root) rootPath = data.root;
                 list.replaceChildren();
                 if (!data.entries.length) list.append(note('Nothing changed in this period'));
@@ -2186,8 +2200,9 @@
                 hiddenToggle.hidden = currentTab !== 'files';
                 recentHours.hidden = currentTab !== 'recent';
                 selectedRow = null;
-                if (currentTab === 'files') renderFolder(rootPath, list, 0);
-                else renderRecent();
+                const gen = ++viewGen;
+                if (currentTab === 'files') renderFolder(rootPath, list, 0, gen);
+                else renderRecent(gen);
             }
 
             async function openPreview(filePath) {
@@ -2315,6 +2330,10 @@
                 save(STORE.width, parseInt(sidebar.style.width, 10));
             }
             resizer.addEventListener('pointerdown', (e) => {
+                // One drag at a time. A second pointer going down mid-drag
+                // used to replace `drag`, orphaning the first onMove listener
+                // so the sidebar kept following the pointer after pointerup.
+                if (drag) return;
                 if (e.button !== 0 || sidebar.classList.contains('collapsed') || PHONE.matches) return;
                 e.preventDefault();
                 const right = sidebar.getBoundingClientRect().right;
@@ -2331,6 +2350,10 @@
                 window.addEventListener('blur', endDrag);
             });
             resizer.addEventListener('lostpointercapture', endDrag);
+            // Switching tabs or apps mid-drag can swallow the pointerup.
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') endDrag();
+            });
             // A narrower window may no longer fit a remembered width.
             window.addEventListener('resize', () => {
                 if (!drag) applyWidth(parseInt(sidebar.style.width, 10));

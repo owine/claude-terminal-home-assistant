@@ -172,6 +172,46 @@ async function saveArtifacts(page, consoleLog, name) {
     }
 }
 
+// A slow answer for a view the user already left must not land. Recent is
+// held for 2.5 s while Files is clicked; before the fix the Recent rows then
+// overwrote the tree with the Files tab still selected.
+//
+// Its own context with service workers blocked: a request the service worker
+// fetches is invisible to page.route, so with it running the delay never
+// applied and this check passed against the broken code.
+async function checkStaleView(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        await wrapper.locator('#files-btn').click();
+        const folderRow = wrapper.locator('#files-list .files-row', { hasText: SIDEBAR_DIR.split('/').pop() });
+        await waitFor(async () => (await folderRow.count()) === 1);
+
+        let held = 0;
+        await page.route('**/api/files/recent*', async (route) => {
+            held++;
+            await sleep(2500);
+            await route.continue().catch(() => {});
+        });
+        await wrapper.locator('.files-tab[data-tab="recent"]').click();
+        await sleep(200);
+        await wrapper.locator('.files-tab[data-tab="files"]').click();
+        await sleep(3500);
+        check('fixture: the Recent request was held back', held, (n) => n >= 1);
+        check('a slow Recent answer does not overwrite the Files tree',
+            await wrapper.evaluate(`JSON.stringify({
+                filesSelected: document.querySelector('.files-tab[data-tab="files"]').getAttribute('aria-selected'),
+                recentRows: [...document.querySelectorAll('#files-list .files-meta')]
+                    .filter((m) => /ago|just now/.test(m.textContent)).length,
+            })`), JSON.stringify({ filesSelected: 'true', recentRows: 0 }));
+        check('the tree is still there after the stale answer', await folderRow.count(), 1);
+    } finally {
+        await context.close();
+    }
+}
+
 async function run(engine, mode, url) {
     console.log(`\n=== ${engine.name()} / ${mode} ===`);
     const failuresBefore = failures;
@@ -522,6 +562,42 @@ async function run(engine, mode, url) {
             resizing: document.body.classList.contains('files-resizing'),
             pointer: getComputedStyle(document.getElementById('terminal-frame')).pointerEvents,
         })`), JSON.stringify({ resizing: false, pointer: 'auto' }));
+    // Guards on the drag itself, driven with synthetic pointer events: a
+    // second pointerdown mid-drag must not orphan the first drag's move
+    // listener, and the page going hidden must end a drag.
+    check('a second pointerdown mid-drag leaves nothing following the pointer',
+        await wrapper.evaluate(`(() => {
+            const r = document.getElementById('files-resizer');
+            const sb = document.getElementById('files-sidebar');
+            const box = r.getBoundingClientRect();
+            const ev = (type, id, dx) => new PointerEvent(type, { pointerId: id, button: 0, bubbles: true,
+                clientX: box.left + dx, clientY: box.top + 50 });
+            r.dispatchEvent(ev('pointerdown', 21, 0));
+            r.dispatchEvent(ev('pointerdown', 22, 0));
+            window.dispatchEvent(ev('pointermove', 21, -40));
+            window.dispatchEvent(ev('pointerup', 21, -40));
+            const after = sb.getBoundingClientRect().width;
+            window.dispatchEvent(ev('pointermove', 21, -140));
+            return JSON.stringify({ follows: sb.getBoundingClientRect().width !== after,
+                resizing: document.body.classList.contains('files-resizing') });
+        })()`), JSON.stringify({ follows: false, resizing: false }));
+    check('the page going hidden ends a drag',
+        await wrapper.evaluate(`(() => {
+            const r = document.getElementById('files-resizer');
+            const sb = document.getElementById('files-sidebar');
+            const box = r.getBoundingClientRect();
+            const ev = (type, dx) => new PointerEvent(type, { pointerId: 31, button: 0, bubbles: true,
+                clientX: box.left + dx, clientY: box.top + 50 });
+            r.dispatchEvent(ev('pointerdown', 0));
+            Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+            document.dispatchEvent(new Event('visibilitychange'));
+            delete document.visibilityState;
+            const after = sb.getBoundingClientRect().width;
+            window.dispatchEvent(ev('pointermove', -100));
+            return JSON.stringify({ follows: sb.getBoundingClientRect().width !== after,
+                resizing: document.body.classList.contains('files-resizing') });
+        })()`), JSON.stringify({ follows: false, resizing: false }));
+
     check('open state and width are remembered',
         await wrapper.evaluate(`JSON.stringify([localStorage.getItem('filesSidebar.open'),
             Number(localStorage.getItem('filesSidebar.width')) > 300])`), JSON.stringify(['1', true]));
@@ -534,6 +610,8 @@ async function run(engine, mode, url) {
     await waitFor(widthBack);
     check('hiding the sidebar gives the terminal its width back, in xterm and tmux',
         { cols: await cols(), tmux: windowWidth(), colsOpen }, (v) => v.cols > v.colsOpen && v.tmux === v.cols);
+
+    await checkStaleView(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR]);
 
     if (failures > failuresBefore) {
