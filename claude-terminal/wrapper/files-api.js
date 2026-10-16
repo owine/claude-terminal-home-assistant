@@ -461,13 +461,27 @@ function createFilesApi({
         }
     }
 
-    async function preview(requested, { allowSensitive = false } = {}) {
+    /**
+     * Resolve a REQUESTED path and open it: { handle, stat, real, kind }.
+     * The one place that checks the kind before opening. resolve() marks a
+     * path sensitive by its requested name too (a symlink called .env to an
+     * ordinary file), which openFile, seeing only the realpath, cannot know.
+     * `.git` and anything outside the root are a 404 whatever allowSensitive
+     * says. `action` words the 403 ("open" or "download"). The caller owns
+     * the handle.
+     */
+    async function openRequested(requested, { allowSensitive = false, action = 'open' } = {}) {
         const { real, kind } = await resolve(requested);
-        if (kind === 'sensitive' && !allowSensitive) throw secretRefusal();
-
+        if (kind === 'sensitive' && !allowSensitive) {
+            throw new FilesError(403, `This file may hold secrets. Turn on "Show protected files" to ${action} it.`);
+        }
         if (onResolved) await onResolved(real);
-
         const { handle, stat } = await openFile(real, { allowSensitive });
+        return { handle, stat, real, kind };
+    }
+
+    async function preview(requested, { allowSensitive = false } = {}) {
+        const { handle, stat, real } = await openRequested(requested, { allowSensitive });
         try {
             const length = Math.min(stat.size, maxPreviewBytes);
             const buffer = Buffer.alloc(length);
@@ -558,7 +572,7 @@ function createFilesApi({
         };
     }
 
-    return { root, resolve, list, preview, recent, openFile };
+    return { root, resolve, list, preview, recent, openFile, openRequested };
 }
 
 /**
