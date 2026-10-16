@@ -843,7 +843,9 @@ test('zip: a file deleted after planning aborts the download; nothing throws', a
         await noStrays(async () => {
             await withServer({ downloads: vanishing, escapes, log: (m) => logged.push(m) }, async (url) => {
                 assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
-                assert.ok(await until(() => logged.some((m) => /"blueprints\.zip" aborted/.test(m)), 1000), logged.join('\n'));
+                // The log names the file, not just the zip.
+                assert.ok(await until(() => logged.some((m) => /"blueprints\.zip" aborted: "blueprints\/zz-vanishing\.yaml": /.test(m)), 1000),
+                    logged.join('\n'));
                 assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 200);
             });
         });
@@ -862,7 +864,7 @@ test('zip: a file that shrinks after planning aborts the download (yazl\'s error
         await noStrays(async () => {
             await withServer({ downloads: shrinking, escapes, log: (m) => logged.push(m) }, async (url) => {
                 assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
-                assert.ok(await until(() => logged.some((m) => /"blueprints\.zip" aborted: .*unexpected number of bytes/.test(m)), 1000),
+                assert.ok(await until(() => logged.some((m) => /"blueprints\.zip" aborted: "blueprints\/zz-shrinking\.yaml": .*unexpected number of bytes/.test(m)), 1000),
                     logged.join('\n'));
                 // still serving
                 assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 200);
@@ -871,6 +873,22 @@ test('zip: a file that shrinks after planning aborts the download (yazl\'s error
         assert.deepStrictEqual(escapes.map(String), []);
     } finally {
         fs.unlinkSync(file);
+    }
+});
+
+test('zip: a file name in the abort log cannot forge a line', async () => {
+    const file = write('forge/a\nDownload of x aborted.txt', 'f'.repeat(64 * 1024));
+    const logged = [];
+    const shrinking = createDownloads({ api, beforeStream: async () => fs.truncateSync(file, 3) });
+    try {
+        await withServer({ downloads: shrinking, log: (m) => logged.push(m) }, async (url) => {
+            assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=forge`)), true);
+            assert.ok(await until(() => logged.length > 0, 1000), 'nothing logged');
+        });
+        assert.ok(logged.every((m) => !m.includes('\n')), JSON.stringify(logged));
+        assert.match(logged[0], /aborted: "forge\/a\\nDownload of x aborted\.txt": /);
+    } finally {
+        fs.rmSync(path.join(root, 'forge'), { recursive: true });
     }
 });
 
@@ -941,7 +959,7 @@ test('zip: a read error on an entry aborts the download; nothing throws', async 
         await withServer({ downloads: createDownloads({ api: failing }), escapes, log: (m) => logged.push(m) }, async (url) => {
             assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=${ZIPDIR}`)), true);
             assert.ok(await until(() => zipFds() === 0), 'descriptor left open');
-            assert.ok(await until(() => logged.some((m) => /"zipdir\.zip" aborted: .*simulated EIO/.test(m)), 1000),
+            assert.ok(await until(() => logged.some((m) => /"zipdir\.zip" aborted: "zipdir\/[abc]\.bin": simulated EIO/.test(m)), 1000),
                 logged.join('\n'));
         });
     });

@@ -259,12 +259,25 @@ function sendZipBody(plan, req, res, { openFile, log = console.error, idleMs = I
     streamBody(res, {
         makeSource: () => {
             const zip = new yazl.ZipFile();
-            const fail = (err) => zip.outputStream.destroy(err);
+            // The entry being added, named in the log: "the zip failed" alone
+            // does not say which file changed or could not be read. Entries
+            // go one at a time, and yazl stops at the first error, so the
+            // last one asked for is the one that failed. JSON-quoted, so a
+            // name cannot forge a log line.
+            let current = null;
+            const fail = (err) => {
+                const message = (err && err.message) || String(err);
+                zip.outputStream.destroy(new Error(current === null ? message : `${JSON.stringify(current)}: ${message}`));
+            };
             zip.on('error', fail);
             for (const file of plan.files) {
                 const options = { mtime: file.mtime, mode: file.mode, size: file.size, compress: !STORED.test(file.name) };
                 zip.addReadStreamLazy(file.name, options, (callback) => {
+                    // Only saves an open: the check after the open, which
+                    // the tests cover, is what keeps a gone client's
+                    // descriptor from leaking.
                     if (aborted) return;
+                    current = file.name;
                     openEntry(file, fail)
                         .then((stream) => {
                             if (stream) callback(null, stream);
