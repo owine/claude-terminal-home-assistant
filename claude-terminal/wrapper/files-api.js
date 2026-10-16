@@ -52,8 +52,9 @@ const HA_CHECK_TIMEOUT_MS = 180000;
 const HA_CHECK_MAX_BUFFER = 1024 * 1024;
 const HA_CHECK_MAX_MESSAGE = 4000;
 
-// Never listed, never previewed, never in recent changes: .git/config can
-// hold access tokens in remote URLs (upstream 2.3.1).
+// Never listed, previewed, downloaded or zipped, never in recent changes,
+// whatever protected=1 says: .git/config can hold access tokens in remote
+// URLs (upstream 2.3.1).
 //
 // secrets.yaml is deliberately NOT here. This follows Studio Code Server
 // (hassio-addons/addon-vscode), whose default files.exclude hides .git and
@@ -65,13 +66,15 @@ const HA_CHECK_MAX_MESSAGE = 4000;
 // that is rare enough not to be worth telling the two apart.
 const HIDDEN_NAME = /\.git$/i;
 
-// In-progress downloads and partial writes: left out of listings and recent
-// changes, since they are about to be renamed or deleted.
+// In-progress downloads and partial writes: left out of listings, recent
+// changes and zips (walkEntryType), since they are about to be renamed or
+// deleted.
 const PARTIAL_FILE = /\.part$/i;
 
-// Listed (so the tree is honest about what is there) but never previewed, and
-// left out of recent changes. Any path segment matching one of these refuses
-// everything under it.
+// Listed (so the tree is honest about what is there), but previewed or
+// downloaded only with protected=1 ("Show protected files"), never zipped,
+// and left out of recent changes. Any path segment matching one of these
+// covers everything under it.
 //   .storage: HA's auth store, refresh tokens and integration credentials.
 //   .cloud: the Nabu Casa login.
 //   .ssh, .gnupg: keys.
@@ -672,7 +675,6 @@ module.exports = {
     FilesError,
     allowsProtected,
     sendError,
-    PARTIAL_FILE,
     MAX_ENTRIES,
     MAX_PREVIEW_BYTES,
     MAX_RECENT_DEPTH,
