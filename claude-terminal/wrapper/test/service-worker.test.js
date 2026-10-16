@@ -200,7 +200,7 @@ test('the Files sidebar UI script is precached under the ingress prefix', async 
 
 test('every script index.html loads is precached', async () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-    const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
+    const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1]);
     assert.ok(scripts.length > 0, 'no <script src> found in index.html');
     const sw = await installedWorker();
     const store = await sw.caches.open(sw.cacheName);
