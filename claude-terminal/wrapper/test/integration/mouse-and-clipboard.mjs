@@ -84,6 +84,31 @@ const cancelCopyMode = () => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// The server's zip limiter: 20 requests per sliding minute, keyed by client
+// address. Every request here comes from this host, so all four runs (both
+// engines, direct and ingress) share one bucket, and they follow each other
+// within seconds. Without a budget, whether a late zip check met a real 429
+// depended on how fast the runs before it went. So every REAL request the
+// limiter counts (a check=1 preflight, a zip GET, a direct fetch) first
+// takes its share here, waiting until the last 61 s (a second's slack for
+// the server's later clock) leave room. Routed fakes never reach the
+// server and take none. The limiter itself stays as shipped.
+const ZIP_LIMIT = 20;
+const ZIP_WINDOW_MS = 61000;
+const zipHits = [];
+const zipStats = { peak: 0, waitedMs: 0 };
+async function zipBudget(n) {
+    const start = Date.now();
+    for (;;) {
+        while (zipHits.length && zipHits[0] <= Date.now() - ZIP_WINDOW_MS) zipHits.shift();
+        if (zipHits.length + n <= ZIP_LIMIT) break;
+        await sleep(250);
+    }
+    for (let i = 0; i < n; i++) zipHits.push(Date.now());
+    zipStats.peak = Math.max(zipStats.peak, zipHits.length);
+    zipStats.waitedMs += Date.now() - start;
+}
+
 // Starts a download and returns it, or null when none began. A download that
 // never starts must be a failed check, not a timeout that ends the run.
 async function expectDownload(page, start, { timeout = 10000 } = {}) {
@@ -460,10 +485,9 @@ async function checkDownloads(browser, url) {
             flagged.filter((f) => !f.on).map((f) => f.url), (v) => v.length === 0);
 
         // Download as zip, from the folder row's always-visible ⋯ menu.
-        // The server allows 20 zip requests a minute (two per zip), shared
-        // by the direct and ingress runs that follow each other, so these
-        // checks spend as few as they can: the refusal first, with the good
-        // zip after it as its positive control.
+        // Each real zip costs two of the limiter's requests (see zipBudget),
+        // so the refusal goes first and the good zip after it doubles as
+        // its positive control.
         const fixtureName = SIDEBAR_DIR.split('/').pop();
         const menuButton = (name) => list.locator('.files-row-wrap', { hasText: name }).locator('.files-menu-btn');
         const zipItem = wrapper.locator('#files-menu .files-menu-item', { hasText: 'Download as zip' });
@@ -476,12 +500,14 @@ async function checkDownloads(browser, url) {
             'document.getElementById("files-notice").hidden ? "" : document.getElementById("files-notice-text").textContent');
         before = { downloads: downloads.length };
         await menuButton(ZIP_CAP_DIR.split('/').pop()).click();
+        await zipBudget(1);   // the preflight only: it is refused
         await zipItem.click();
         check('a folder over the zip cap is refused, naming its largest file',
             await waitFor(async () => /zip limit/.test(await noticeText()) && /huge\.bin/.test(await noticeText())), true);
 
         await menuButton(fixtureName).click();
         check('the ⋯ menu offers Download as zip', await zipItem.isVisible(), true);
+        await zipBudget(2);
         const zip = await expectDownload(page, () => zipItem.click());
         check('Download as zip starts a download', zip !== null, true);
         check('the zip is named after the folder', zip && zip.suggestedFilename(), `${fixtureName}.zip`);
@@ -526,8 +552,7 @@ async function checkDownloads(browser, url) {
 //
 // Every "starts no download" here is backed by a positive control: a good
 // zip at the end, which must be the only download since the refusals began.
-// It is also the one real zip this check makes: the server allows 20 zip
-// requests a minute (see checkDownloads).
+// Real zip-limiter requests are few, and each takes its share of zipBudget.
 async function checkZipMenu(browser, url) {
     const LOCKED = '.ssh';        // a protected folder (SENSITIVE_DIRS)
     const GONE = 'ctp-gone';      // listed, then deleted before its zip
@@ -603,10 +628,23 @@ async function checkZipMenu(browser, url) {
         await wrapper.locator('#files-footer').click({ position: { x: 40, y: 3 } });
         check('a click outside closes the menu', await menuHidden(), true);
 
+        // A folder deleted after it was listed: the server's 404, in the
+        // notice, and no download. Also the positive control for the
+        // preflight counter that the protected folder's check relies on.
+        const since = downloads.length;
+        let preflightsBefore = preflights.length;
+        dexec(['rm', '-rf', `${SIDEBAR_DIR}/${GONE}`]);
+        await menuButton(GONE).click();
+        await zipBudget(1);
+        await zipItem.click();
+        await settled();
+        check('a vanished folder\'s zip is refused in the notice',
+            await notice(), (v) => /Not found/.test(v.text) && v.kind === 'error');
+        check('fixture: the preflight counter sees a preflight', preflights.length - preflightsBefore, 1);
+
         // A protected folder keeps its ⋯, but Download as zip is disabled
         // and says why, on screen as well as in a tooltip (touch has none).
-        const since = downloads.length;
-        const preflightsBefore = preflights.length;
+        preflightsBefore = preflights.length;
         check('a protected folder still shows ⋯', await menuButton(LOCKED).isVisible(), true);
         await menuButton(LOCKED).click();
         check('its Download as zip is disabled, with the reason',
@@ -628,20 +666,12 @@ async function checkZipMenu(browser, url) {
             item.click();
         })()`);
         check('a protected folder sends no zip preflight', preflights.length - preflightsBefore, 0);
+        await zipBudget(1);
         check('the server refuses a protected folder\'s zip with 403',
             await wrapper.evaluate(`fetch(${JSON.stringify(`api/files/download-zip?path=${encodeURIComponent(`${SIDEBAR_DIR}/${LOCKED}`)}&check=1`)})
                 .then((r) => r.status)`), 403);
         await wrapper.evaluate('document.getElementById("files-notice-close").click()');
         if (!(await menuHidden())) await page.keyboard.press('Escape');
-
-        // A folder deleted after it was listed: the server's 404, in the
-        // notice, and no download.
-        dexec(['rm', '-rf', `${SIDEBAR_DIR}/${GONE}`]);
-        await menuButton(GONE).click();
-        await zipItem.click();
-        await settled();
-        check('a vanished folder\'s zip is refused in the notice',
-            await notice(), (v) => /Not found/.test(v.text) && v.kind === 'error');
 
         // Two zips already running (the server's 429, faked here so as not
         // to hold two real ones open): a friendly "try again", not an error.
@@ -679,15 +709,16 @@ async function checkZipMenu(browser, url) {
 
         // Positive control for every refusal above, driven by the keyboard
         // alone: a good zip now starts, and is the only download since the
-        // protected folder.
+        // vanished folder.
         await menuButton(fixtureName).focus();
         await page.keyboard.press('Enter');
+        await zipBudget(2);
         const control = await expectDownload(page, () => page.keyboard.press('Enter'));
         check('Enter on Download as zip downloads the folder', control && control.suggestedFilename(), `${fixtureName}.zip`);
         check('after its action, focus is back on the ⋯ button',
             { hidden: await menuHidden(), focus: await focused() },
             (v) => v.hidden && v.focus === `Actions for ${fixtureName}`);
-        check('no refusal (protected, 404, 429, network) started a download',
+        check('no refusal (404, protected, 429, network) started a download',
             zipPaths(since), (v) => v.length === 1 && v[0] === SIDEBAR_DIR);
         check('the notice can be dismissed', await (async () => {
             await wrapper.locator('#files-notice-close').click();
@@ -1263,5 +1294,7 @@ try {
     try { dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]); } catch { /* container gone */ }
 }
 
+console.log(`\nzip budget: peak ${zipStats.peak}/${ZIP_LIMIT} limiter requests in any ${ZIP_WINDOW_MS / 1000} s, `
+    + `waited ${(zipStats.waitedMs / 1000).toFixed(1)} s in all`);
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
