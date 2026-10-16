@@ -14,6 +14,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const net = require('node:net');
 const { once } = require('node:events');
 const express = require('express');
 const { createFilesApi } = require('../files-api.js');
@@ -348,7 +349,7 @@ test('download: a file that shrinks mid-download aborts it, and is logged', asyn
         // the wrapper is still serving
         assert.strictEqual((await fetch(`${url}/download?path=configuration.yaml`)).status, 200);
     });
-    assert.ok(logged.some((m) => /shrinking\.txt aborted/.test(m)), logged.join('\n'));
+    assert.ok(logged.some((m) => /"shrinking\.txt" aborted/.test(m)), logged.join('\n'));
     fs.unlinkSync(file);
 });
 
@@ -381,4 +382,153 @@ test('download: a sensitive-named symlink to an ordinary file needs protected=1'
     } finally {
         fs.unlinkSync(link);
     }
+});
+
+// --- cleanup, timeouts, names ---
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// An api whose opened handles are counted until they close, so a leak shows.
+function tracked(extra = {}) {
+    const live = new Set();
+    const wrapped = {
+        ...api,
+        openRequested: async (...args) => {
+            const opened = await api.openRequested(...args);
+            live.add(opened.handle);
+            // Counts an explicit close() only: a handle closed by the garbage
+            // collector is a leak, not a release.
+            const close = opened.handle.close.bind(opened.handle);
+            opened.handle.close = () => {
+                live.delete(opened.handle);
+                return close();
+            };
+            return opened;
+        },
+    };
+    return { live, downloads: createDownloads({ api: wrapped, ...extra }) };
+}
+
+async function until(predicate, ms = 3000) {
+    const end = Date.now() + ms;
+    while (!predicate() && Date.now() < end) await sleep(20);
+    return predicate();
+}
+
+const BIG = 'big.bin';
+write(BIG, Buffer.alloc(32 * 1024 * 1024, 1));
+
+function rawGet(port, target, method = 'GET') {
+    return new Promise((resolve) => {
+        const sock = net.connect(port, '127.0.0.1', () => {
+            sock.write(`${method} /api/files/download?path=${target} HTTP/1.1\r\nHost: x\r\n\r\n`);
+            resolve(sock);
+        });
+    });
+}
+
+test('download: a client that leaves while the file is being opened leaks no descriptor', async () => {
+    const { live, downloads: d } = tracked({ beforeStream: () => sleep(300) });
+    const logged = [];
+    // Nothing may throw out of the route: not synchronously, not as a rejection.
+    const escaped = [];
+    const onEscape = (err) => escaped.push(err);
+    process.on('uncaughtException', onEscape);
+    process.on('unhandledRejection', onEscape);
+    await withServer({ downloads: d, log: (m) => logged.push(m) }, async (url) => {
+        const sock = await rawGet(Number(new URL(url).port), BIG);
+        await sleep(80);
+        sock.destroy();
+        assert.ok(await until(() => live.size === 0 && true, 2000), 'handle still open');
+        await sleep(400);
+        process.off('uncaughtException', onEscape);
+        process.off('unhandledRejection', onEscape);
+        assert.deepStrictEqual(escaped.map(String), []);
+        assert.strictEqual(live.size, 0);
+        // still serving
+        assert.strictEqual((await fetch(`${url}/download?path=configuration.yaml`)).status, 200);
+    });
+});
+
+test('download: a client that leaves mid-transfer releases the descriptor, quietly', async () => {
+    const { live, downloads: d } = tracked();
+    const logged = [];
+    await withServer({ downloads: d, log: (m) => logged.push(m) }, async (url) => {
+        const sock = await rawGet(Number(new URL(url).port), BIG);
+        await once(sock, 'data');
+        sock.destroy();
+        assert.ok(await until(() => live.size === 0), 'handle still open');
+    });
+    assert.deepStrictEqual(logged, []);
+});
+
+test('download: a client that stops reading is cut off after idleMs and its descriptor closed', async () => {
+    const { live, downloads: d } = tracked({ idleMs: 300 });
+    await withServer({ downloads: d }, async (url) => {
+        const sock = await rawGet(Number(new URL(url).port), BIG);
+        sock.pause();
+        await sleep(100);
+        assert.strictEqual(live.size, 1);
+        assert.ok(await until(() => live.size === 0, 4000), 'stalled download kept its descriptor');
+        sock.destroy();
+    });
+});
+
+test('download: a file that grows is cut at the announced length', async () => {
+    const file = write('growing.txt', 'g'.repeat(1000));
+    const growing = createDownloads({ api, beforeStream: async () => fs.appendFileSync(file, 'MORE'.repeat(500)) });
+    await withServer({ downloads: growing }, async (url) => {
+        const res = await fetch(`${url}/download?path=growing.txt`);
+        assert.strictEqual(res.headers.get('content-length'), '1000');
+        assert.strictEqual((await res.text()), 'g'.repeat(1000));
+    });
+    fs.unlinkSync(file);
+});
+
+test('download: a quote or newline in the name cannot break the header', async () => {
+    const name = 'a"b\nc.txt';
+    const file = write(name, 'z');
+    await withServer({}, async (url) => {
+        const res = await fetch(`${url}/download?path=${q(name)}`);
+        assert.strictEqual(res.status, 200);
+        const header = res.headers.get('content-disposition');
+        assert.doesNotMatch(header, /[\r\n]/);
+        assert.match(header, /^attachment; filename="[^"\\]*(\\.[^"\\]*)*"/);
+        assert.ok(header.endsWith(`filename*=UTF-8''${q(name)}`.replace(/%22/g, '%22')), header);
+        await res.arrayBuffer();
+    });
+    fs.unlinkSync(file);
+});
+
+test('download: HEAD sends the headers and no body, and closes the file', async () => {
+    const { live, downloads: d } = tracked();
+    await withServer({ downloads: d }, async (url) => {
+        const res = await fetch(`${url}/download?path=${BIG}`, { method: 'HEAD' });
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.headers.get('content-length'), String(32 * 1024 * 1024));
+        assert.match(res.headers.get('content-disposition'), /big\.bin/);
+        assert.strictEqual((await res.arrayBuffer()).byteLength, 0);
+        assert.ok(await until(() => live.size === 0), 'handle still open');
+    });
+});
+
+test('download: a symlink downloads under the name that was asked for', async () => {
+    await withServer({}, async (url) => {
+        const res = await fetch(`${url}/download?path=${q('blueprints/inside-link.yaml')}`);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.headers.get('content-disposition'), 'attachment; filename=inside-link.yaml');
+        assert.strictEqual(await res.text(), 'homeassistant:\n');
+    });
+});
+
+test('download: a name in the log cannot forge a line', async () => {
+    const name = 'forge\nDownload of x aborted.txt';
+    const file = write(name, 'y'.repeat(256 * 1024));
+    const logged = [];
+    const shrinking = createDownloads({ api, beforeStream: async () => fs.truncateSync(file, 10) });
+    await withServer({ downloads: shrinking, log: (m) => logged.push(m) }, async (url) => {
+        assert.strictEqual(await aborted(fetch(`${url}/download?path=${q(name)}`)), true);
+    });
+    assert.ok(logged.length > 0 && logged.every((m) => !m.includes('\n')), JSON.stringify(logged));
+    fs.unlinkSync(file);
 });

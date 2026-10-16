@@ -63,6 +63,53 @@ function exactSize(size) {
     });
 }
 
+// A client that stops reading must not hold a descriptor forever: the server
+// has no socket timeout of its own.
+const IDLE_MS = 60 * 1000;
+
+/**
+ * Stream an opened file ({ handle, stat }) as an attachment. Total: it never
+ * throws, and the handle is closed on every path (a client that left, a
+ * failed setup, a transfer that ends or aborts, a client that stalls for
+ * idleMs). The filename goes through Express's res.attachment(), which
+ * encodes it per RFC 6266 (ASCII fallback plus filename* in UTF-8). Shared
+ * by every route that streams, so they cannot differ in cleanup.
+ */
+function sendAttachment({ handle, stat, name }, req, res, { log = console.error, idleMs = IDLE_MS } = {}) {
+    const release = () => handle.close().catch(() => {});
+    let source = null;
+    try {
+        if (res.destroyed || res.writableEnded) return release();
+        res.status(200);
+        res.attachment(name);
+        res.set({
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': String(stat.size),
+            'X-Content-Type-Options': 'nosniff',
+        });
+        if (stat.size === 0 || req.method === 'HEAD') {
+            release();
+            res.end();
+            return undefined;
+        }
+        res.setTimeout(idleMs, () => res.destroy(new Error('client stalled')));
+        // Exactly the bytes Content-Length announced: a file that grows
+        // meanwhile is cut at it (end), one that shrinks fails (exactSize).
+        source = handle.createReadStream({ start: 0, end: stat.size - 1 });
+        pipeline(source, exactSize(stat.size), res, (err) => {
+            // A client that simply left is not an error worth a log line.
+            if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+                log(`Download of ${JSON.stringify(name)} aborted: ${err.message}`);
+            }
+        });
+    } catch (err) {
+        if (source) source.destroy();
+        else release();
+        sendError(res, err, log);
+    }
+    return undefined;
+}
+
 /**
  * Downloads over a files-api instance, whose `root` (as configured) names a
  * zip of the root itself. The walk bounds default to the recent-changes
@@ -80,55 +127,24 @@ function createDownloads({
     // the first byte goes out, so a test can change the disk at exactly the
     // moment that matters (the same idea as files-api's onResolved).
     beforeStream = null,
+    idleMs = IDLE_MS,
 } = {}) {
     /**
      * Resolve and open one file for download: { handle, stat, name }.
-     * resolve() refuses .git and anything outside the root; sensitive files
-     * need allowSensitive (protected=1), checked here and again by openFile()
-     * (the O_NOFOLLOW open and /proc descriptor re-check). The caller owns the handle.
+     * files-api's openRequested() makes the checks (kind by requested name
+     * and realpath, the O_NOFOLLOW open, the /proc re-check). The name is
+     * the one the user asked for, not a symlink target's. The caller owns
+     * the handle.
      */
     async function openForDownload(requested, { allowSensitive = false } = {}) {
-        // resolve() marks a file sensitive by the REQUESTED name too (a symlink
-        // called .env is refused), which openFile, seeing only the realpath,
-        // cannot know. openFile stays as the race guard.
-        const { real, kind } = await api.resolve(requested);
-        if (kind === 'sensitive' && !allowSensitive) {
-            throw new FilesError(403, 'This file may hold secrets. Turn on "Show protected files" to download it.');
-        }
-        const { handle, stat } = await api.openFile(real, { allowSensitive });
+        const { handle, stat, real } = await api.openRequested(requested, { allowSensitive, action: 'download' });
         try {
             if (beforeStream) await beforeStream(real);
         } catch (err) {
             await handle.close().catch(() => {});
             throw err;
         }
-        return { handle, stat, name: path.basename(real) };
-    }
-
-    /**
-     * Send an opened file as an attachment. The filename goes through
-     * Express's res.attachment(), which encodes it per RFC 6266: an ASCII
-     * fallback plus filename* in UTF-8, so no name can break the header.
-     */
-    function sendFile({ handle, stat, name }, res, log) {
-        res.status(200);
-        res.attachment(name);
-        res.set({
-            'Content-Type': 'application/octet-stream',
-            'Content-Length': String(stat.size),
-            'X-Content-Type-Options': 'nosniff',
-        });
-        if (stat.size === 0) {
-            handle.close().catch(() => {});
-            res.end();
-            return;
-        }
-        // Exactly the bytes Content-Length announced: a file that grows
-        // meanwhile is cut at it (end), one that shrinks fails (exactSize).
-        const source = handle.createReadStream({ start: 0, end: stat.size - 1 });
-        pipeline(source, exactSize(stat.size), res, (err) => {
-            if (err) log(`Download of ${name} aborted: ${err.message}`);
-        });
+        return { handle, stat, name: path.basename(String(requested)) || path.basename(real) };
     }
 
     /**
@@ -247,7 +263,7 @@ function createDownloads({
         return { name: `${top}.zip`, files, bytes };
     }
 
-    return { openForDownload, sendFile, planZip };
+    return { openForDownload, sendFile: (opened, req, res, log) => sendAttachment(opened, req, res, { log, idleMs }), planZip };
 }
 
 /**
@@ -269,7 +285,7 @@ function createDownloadRouter({ downloads, fileLimiter, log = console.error }) {
         } catch (err) {
             return sendError(res, err, log);
         }
-        downloads.sendFile(opened, res, log);
+        downloads.sendFile(opened, req, res, log);
     });
 
     return router;
@@ -278,5 +294,6 @@ function createDownloadRouter({ downloads, fileLimiter, log = console.error }) {
 module.exports = {
     createDownloads,
     createDownloadRouter,
+    sendAttachment,
     MAX_ZIP_BYTES,
 };
