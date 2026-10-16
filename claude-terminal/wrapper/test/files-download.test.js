@@ -747,6 +747,29 @@ test('zip: a non-ASCII folder gets filename* and UTF-8 entry names', async () =>
     }
 });
 
+test('zip: already-compressed files are stored, everything else deflated', async () => {
+    const stored = ['photo.JPG', 'a.jpeg', 'b.png', 'c.webp', 'd.gif', 'e.mp3', 'f.mp4', 'g.mkv',
+        'h.gz', 'i.tgz', 'j.zip', 'k.7z', 'l.xz', 'm.bz2', 'n.zst'];
+    for (const name of stored) write(`media/${name}`, 'm'.repeat(1024));
+    write('media/notes.txt', 'n'.repeat(1024));
+    write('media/png.txt', 'p'.repeat(1024));   // the extension, not a substring
+    try {
+        await withServer({}, async (url) => {
+            const meta = {};
+            const entries = await unzip(Buffer.from(await (await fetch(`${url}/download-zip?path=media`)).arrayBuffer()), { meta });
+            for (const name of stored) {
+                assert.strictEqual(meta[`media/${name}`].compressionMethod, 0, `${name} deflated`);
+                assert.strictEqual(entries[`media/${name}`].toString(), 'm'.repeat(1024));
+            }
+            assert.strictEqual(meta['media/notes.txt'].compressionMethod, 8);
+            assert.strictEqual(meta['media/png.txt'].compressionMethod, 8);
+            assert.strictEqual(entries['media/notes.txt'].toString(), 'n'.repeat(1024));
+        });
+    } finally {
+        fs.rmSync(path.join(root, 'media'), { recursive: true });
+    }
+});
+
 test('zip: a folder with no files is an empty archive', async () => {
     fs.mkdirSync(path.join(root, 'hollow', 'inner'), { recursive: true });
     try {

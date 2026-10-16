@@ -38,6 +38,10 @@ const MAX_ZIP_BYTES = 200 * 1024 * 1024;
 // How many of the largest files a refusal names.
 const LARGEST_NAMED = 5;
 
+// Formats that are compressed already: deflating them again costs a
+// Raspberry Pi's CPU and saves next to nothing, so they are stored.
+const STORED = /\.(jpe?g|png|webp|gif|mp3|mp4|mkv|gz|tgz|zip|7z|xz|bz2|zst)$/i;
+
 // Zip names use '/' only, and yazl reads a backslash as one; a Linux name
 // holding one keeps a '_' instead.
 const zipSafe = (name) => name.replace(/\\/g, '_');
@@ -249,7 +253,8 @@ function sendZipBody(plan, req, res, { openFile, log = console.error, idleMs = I
             const fail = (err) => zip.outputStream.destroy(err);
             zip.on('error', fail);
             for (const file of plan.files) {
-                zip.addReadStreamLazy(file.name, { mtime: file.mtime, mode: file.mode, size: file.size }, (callback) => {
+                const options = { mtime: file.mtime, mode: file.mode, size: file.size, compress: !STORED.test(file.name) };
+                zip.addReadStreamLazy(file.name, options, (callback) => {
                     if (aborted) return;
                     openEntry(file, fail)
                         .then((stream) => {
