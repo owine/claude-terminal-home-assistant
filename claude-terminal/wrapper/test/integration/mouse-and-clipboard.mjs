@@ -564,7 +564,14 @@ async function checkZipMenu(browser, url) {
     const downloads = [];
     page.on('download', (d) => downloads.push(d));
     const preflights = [];
-    let release = () => {};   // the held preflight at the end, if any
+    // Held preflights' gates, all opened in `finally` whatever happened.
+    const releases = [];
+    const gateOf = () => {
+        let open;
+        const gate = new Promise((r) => { open = r; });
+        releases.push(open);
+        return [gate, open];
+    };
     context.on('request', (r) => {
         const u = new URL(r.url());
         if (u.pathname.endsWith('/api/files/download-zip') && u.searchParams.get('check') === '1') preflights.push(u);
@@ -774,16 +781,49 @@ async function checkZipMenu(browser, url) {
             (v) => v.kind === 'error' && /unexpected answer/.test(v.text));
         await context.unroute(isPreflight);
 
-        // Positive control for every refusal above, driven by the keyboard
-        // alone, with its preflight held back so that two more things can
-        // happen while it is out:
-        //   - Enter held down (zip, reopen, zip again) must not start the
-        //     same zip twice;
-        //   - another folder zips; when the held answer lands, its zip still
-        //     starts, but the notice keeps the newer folder's news.
-        const gate = new Promise((r) => { release = r; });
-        let heldZip = 0;
+        // A late refusal is never lost: the fixture's preflight is held while
+        // another folder's zip takes the notice; when the fixture's refusal
+        // lands, it shows all the same, and so does the other's after it.
+        // Both faked, so no zip is made.
         const isFixturePreflight = (u) => isPreflight(u) && u.searchParams.get('path') === SIDEBAR_DIR;
+        const isOtherPreflight = (u) => isPreflight(u) && u.searchParams.get('path') === `${SIDEBAR_DIR}/${OTHER}`;
+        const [lateGate, releaseLate] = gateOf();
+        const [newerGate, releaseNewer] = gateOf();
+        await context.route(isFixturePreflight, async (route) => {
+            await lateGate;
+            await route.fulfill({ status: 413, contentType: 'application/json',
+                body: JSON.stringify({ error: 'This folder holds 300 MB, over the 200 MB zip limit. Largest: late.bin (300 MB)' }) });
+        });
+        await context.route(isOtherPreflight, async (route) => {
+            await newerGate;
+            await route.abort('failed');
+        });
+        await menuButton(fixtureName).click();
+        await zipItem.click();
+        await menuButton(OTHER).click();
+        await zipItem.click();
+        check('fixture: the newer zip has the notice', (await notice()).text, (v) => /^Preparing ctp-other\.zip/.test(v));
+        releaseLate();
+        check('an older zip\'s late refusal still shows',
+            await waitFor(async () => /late\.bin/.test((await notice()).text)), true);
+        releaseNewer();
+        check('and the newer zip\'s refusal after it',
+            await waitFor(async () => /Could not reach the add-on to prepare ctp-other\.zip/.test((await notice()).text)), true);
+        await context.unroute(isFixturePreflight);
+        await context.unroute(isOtherPreflight);
+
+        // Positive control for every refusal above, driven by the keyboard
+        // alone, with its preflight held back so that more can happen while
+        // it is out:
+        //   - Enter pressed again (zip, reopen, zip again) must not start
+        //     the same zip twice;
+        //   - another folder zips, with Enter held down: one press, one zip,
+        //     even though that small folder's preflight answers well within
+        //     the key repeat;
+        //   - when the held answer lands, its zip still starts, but the
+        //     notice keeps the newer folder's news.
+        const [gate, release] = gateOf();
+        let heldZip = 0;
         await context.route(isFixturePreflight, async (route) => {
             heldZip++;
             await gate;
@@ -792,7 +832,6 @@ async function checkZipMenu(browser, url) {
         const preflightsOf = (p) => preflights.filter((u) => u.searchParams.get('path') === p).length;
         const fixturePreflights = preflightsOf(SIDEBAR_DIR);
         await menuButton(fixtureName).focus();
-        await zipBudget(2);
         await page.keyboard.press('Enter');   // opens the menu
         await page.keyboard.press('Enter');   // zips; its preflight is held
         check('fixture: the zip\'s preflight is held back', await waitFor(() => heldZip >= 1), true);
@@ -801,12 +840,22 @@ async function checkZipMenu(browser, url) {
             (v) => v.hidden && v.focus === `Actions for ${fixtureName}`);
         await page.keyboard.press('Enter');   // reopens it
         await page.keyboard.press('Enter');   // and zips again: dropped
-        await menuButton(OTHER).click();
+        await menuButton(OTHER).focus();
+        await page.keyboard.press('Enter');   // opens its menu
         await zipBudget(2);
-        const other = await expectDownload(page, () => zipItem.click());
+        const otherPreflights = preflightsOf(`${SIDEBAR_DIR}/${OTHER}`);
+        const other = await expectDownload(page, () => page.keyboard.down('Enter'));
         check('fixture: another folder zips meanwhile', other && other.suggestedFilename(), `${OTHER}.zip`);
         check('fixture: the notice has the other folder\'s news',
             await waitFor(async () => /^Downloading ctp-other\.zip/.test((await notice()).text)), true);
+        // Its preflight has answered: only the repeat guard is left.
+        await page.keyboard.down('Enter');   // repeat, on the ⋯
+        await page.keyboard.down('Enter');   // repeat, on whatever has focus now
+        await page.keyboard.up('Enter');
+        check('holding Enter zips a folder once', preflightsOf(`${SIDEBAR_DIR}/${OTHER}`) - otherPreflights, 1);
+        check('and leaves its menu closed', await menuHidden(), true);
+        // Counted now: the server counts the held preflight when it arrives.
+        await zipBudget(2);
         const control = await expectDownload(page, async () => { release(); });
         check('Enter on Download as zip downloads the folder', control && control.suggestedFilename(), `${fixtureName}.zip`);
         check('a second activation while its zip is preparing sends no second preflight',
@@ -820,7 +869,7 @@ async function checkZipMenu(browser, url) {
             return (await notice()).text;
         })(), '');
     } finally {
-        release();
+        releases.forEach((open) => open());
         await context.close();
     }
 }

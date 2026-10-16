@@ -2462,8 +2462,9 @@
                 notice.hidden = !text;
                 return ++noticeGen;
             }
-            // Only if nothing has replaced notice `gen` since: a slow answer
-            // about an older zip must not overwrite a newer one's news.
+            // Only if nothing has replaced notice `gen` since: an older zip's
+            // good news must not overwrite a newer one's. Refusals do not
+            // use it; they always show.
             function showNoticeIf(gen, text, kind = '') {
                 if (gen === noticeGen) showNotice(text, kind);
             }
@@ -2485,9 +2486,11 @@
             }
 
             // Folders whose preflight is still out. A second activation of
-            // the same folder meanwhile (a double click, or a held Enter,
-            // which zips, reopens the menu and zips again) is dropped
-            // rather than starting the same zip twice.
+            // the same folder meanwhile (a double click, say) is dropped
+            // rather than starting the same zip twice. It covers the
+            // preflight only, which a small folder answers well within a
+            // key repeat: a held Enter is kept from zipping again by the
+            // menu ignoring repeated keys instead (see its keydown).
             const zipsPreparing = new Set();
 
             // A zip is checked first (check=1: the same walk, answered as
@@ -2498,8 +2501,9 @@
             // no reason.
             //
             // Zips of different folders may overlap. Each one asked for is
-            // started, whenever its answer comes; only the notice is left
-            // to the newest (showNoticeIf).
+            // started, whenever its answer comes. A refusal always shows, so
+            // no reason is lost; only the good news ("Downloading …") of an
+            // older zip gives way to a newer one's (showNoticeIf).
             async function downloadZip(entry) {
                 if (entry.sensitive) return;   // never offered; the server refuses it too
                 if (zipsPreparing.has(entry.path)) return;
@@ -2510,7 +2514,7 @@
                 try {
                     plan = await getJson(helpers.downloadUrl(entry.path, { zip: true, check: true }));
                 } catch (err) {
-                    showNoticeIf(gen, ...zipRefusal(err, zipName));
+                    showNotice(...zipRefusal(err, zipName));
                     return;
                 } finally {
                     zipsPreparing.delete(entry.path);
@@ -2518,7 +2522,7 @@
                 // A reply that is not a plan (say a proxy's page answered
                 // 200) is not a passed check.
                 if (!plan || typeof plan.files !== 'number') {
-                    showNoticeIf(gen, '⚠️ ' + zipName + ': the add-on gave an unexpected answer. Try again.', 'error');
+                    showNotice('⚠️ ' + zipName + ': the add-on gave an unexpected answer. Try again.', 'error');
                     return;
                 }
                 startDownload(helpers.downloadUrl(entry.path, { zip: true }));
@@ -2630,6 +2634,10 @@
                 btn.addEventListener('click', () => {
                     if (menuOwner === btn) closeMenu();
                     else openMenu(btn, entry);
+                });
+                // See isRepeatedActivation, below with the menu's keys.
+                btn.addEventListener('keydown', (e) => {
+                    if (isRepeatedActivation(e)) e.preventDefault();
                 });
                 return btn;
             }
@@ -2793,7 +2801,15 @@
                     closeMenu({ restoreFocus: false });
                 }
             });
+            // A held key repeats. Enter on an item runs it and puts focus on
+            // the ⋯, where the next repeat would reopen the menu and the one
+            // after run the item again: one press, one action.
+            const isRepeatedActivation = (e) => e.repeat && (e.key === 'Enter' || e.key === ' ');
             menu.addEventListener('keydown', (e) => {
+                if (isRepeatedActivation(e)) {
+                    e.preventDefault();
+                    return;
+                }
                 const items = Array.from(menu.querySelectorAll('.files-menu-item'));
                 const at = items.indexOf(document.activeElement);
                 let next = null;
