@@ -17,6 +17,7 @@ const path = require('node:path');
 const net = require('node:net');
 const { once } = require('node:events');
 const express = require('express');
+const yauzl = require('yauzl');
 const { createFilesApi } = require('../files-api.js');
 const { createDownloads, createDownloadRouter, sendAttachment, streamBody, MAX_ZIP_BYTES } = require('../files-download.js');
 const { createRateLimiter } = require('../http-guards.js');
@@ -364,8 +365,17 @@ test('routes: an unexpected error is a 500 JSON, not a thrown exception', async 
         planZip: async () => { throw new TypeError('bug'); },
         openForDownload: async () => { throw new TypeError('bug'); },
     };
+    const brokenStream = {
+        planZip: async () => ({ name: 'x.zip', files: [], bytes: 0 }),
+        sendZip: async () => { throw new TypeError('bug'); },
+    };
+    await withServer({ downloads: brokenStream }, async (url) => {
+        const res = await fetch(`${url}/download-zip?path=x`);
+        assert.strictEqual(res.status, 500);
+        assert.deepStrictEqual(await res.json(), { error: 'Internal error' });
+    });
     await withServer({ downloads: broken }, async (url) => {
-        for (const route of ['download']) {
+        for (const route of ['download', 'download-zip']) {
             const res = await fetch(`${url}/${route}?path=x`);
             assert.strictEqual(res.status, 500);
             assert.deepStrictEqual(await res.json(), { error: 'Internal error' });
@@ -419,14 +429,16 @@ const BIG = 'big.bin';
 write(BIG, Buffer.alloc(32 * 1024 * 1024, 1));
 const bigIno = fs.statSync(path.join(root, BIG)).ino;
 
-function rawGet(port, target, method = 'GET') {
+function rawRequest(port, target, method = 'GET') {
     return new Promise((resolve) => {
         const sock = net.connect(port, '127.0.0.1', () => {
-            sock.write(`${method} /api/files/download?path=${target} HTTP/1.1\r\nHost: x\r\n\r\n`);
+            sock.write(`${method} ${target} HTTP/1.1\r\nHost: x\r\n\r\n`);
             resolve(sock);
         });
     });
 }
+
+const rawGet = (port, target, method = 'GET') => rawRequest(port, `/api/files/download?path=${target}`, method);
 
 test('download: a client that leaves while the file is being opened leaks no descriptor', async () => {
     let entered;
@@ -598,4 +610,360 @@ test('streamBody: runs its cleanup when the response is already gone, and builds
     });
     assert.strictEqual(made, 0);
     assert.strictEqual(released, 1);
+});
+
+// --- zip ---
+
+function unzip(buffer) {
+    return new Promise((resolve, reject) => {
+        yauzl.fromBuffer(buffer, { lazyEntries: true }, (err, zipfile) => {
+            if (err) return reject(err);
+            const entries = {};
+            zipfile.on('error', reject);
+            zipfile.on('end', () => resolve(entries));
+            zipfile.on('entry', (entry) => {
+                zipfile.openReadStream(entry, (e, stream) => {
+                    if (e) return reject(e);
+                    const chunks = [];
+                    stream.on('data', (c) => chunks.push(c));
+                    stream.on('error', reject);
+                    stream.on('end', () => {
+                        entries[entry.fileName] = Buffer.concat(chunks);
+                        zipfile.readEntry();
+                    });
+                });
+            });
+            zipfile.readEntry();
+        });
+    });
+}
+
+// Errors that left the route by any way the server cannot see: thrown in a
+// stream or emitter callback, or rejected in a promise nobody awaits. Either
+// would restart the wrapper and drop every terminal session.
+// A test signal that never comes fails the test instead of hanging the run.
+function within(promise, what, ms = 5000) {
+    return Promise.race([promise, sleep(ms).then(() => assert.fail(`timed out waiting: ${what}`))]);
+}
+
+async function noStrays(fn) {
+    const stray = [];
+    const onStray = (err) => stray.push(err);
+    process.on('uncaughtException', onStray);
+    process.on('unhandledRejection', onStray);
+    try {
+        await fn();
+        await sleep(100);   // let a late emit land inside the window
+    } finally {
+        process.off('uncaughtException', onStray);
+        process.off('unhandledRejection', onStray);
+    }
+    assert.deepStrictEqual(stray.map(String), []);
+}
+
+test('zip: the archive unzips to the planned entries and their contents', async () => {
+    await withServer({}, async (url) => {
+        const res = await fetch(`${url}/download-zip?path=blueprints`);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.headers.get('content-type'), 'application/zip');
+        assert.strictEqual(res.headers.get('content-disposition'), 'attachment; filename=blueprints.zip');
+        assert.strictEqual(res.headers.get('cache-control'), 'no-store');
+        assert.strictEqual(res.headers.get('x-content-type-options'), 'nosniff');
+        const entries = await unzip(Buffer.from(await res.arrayBuffer()));
+        assert.deepStrictEqual(Object.keys(entries).sort(), BLUEPRINT_NAMES);
+        assert.strictEqual(entries['blueprints/automation/motion.yaml'].toString(), 'blueprint: motion\n');
+        assert.strictEqual(entries['blueprints/large.yaml'].toString(), LARGE);
+        assert.strictEqual(entries['blueprints/empty.yaml'].length, 0);
+    });
+});
+
+test('zip: a folder with no files is an empty archive', async () => {
+    fs.mkdirSync(path.join(root, 'hollow', 'inner'), { recursive: true });
+    try {
+        await withServer({}, async (url) => {
+            const res = await fetch(`${url}/download-zip?path=hollow`);
+            assert.strictEqual(res.status, 200);
+            assert.deepStrictEqual(await unzip(Buffer.from(await res.arrayBuffer())), {});
+        });
+    } finally {
+        fs.rmSync(path.join(root, 'hollow'), { recursive: true });
+    }
+});
+
+test('zip: protected=1 changes nothing', async () => {
+    await withServer({}, async (url) => {
+        let res = await fetch(`${url}/download-zip?path=.storage&protected=1`);
+        assert.strictEqual(res.status, 403);
+        await res.arrayBuffer();
+        res = await fetch(`${url}/download-zip?path=blueprints&protected=1`);
+        const entries = await unzip(Buffer.from(await res.arrayBuffer()));
+        assert.deepStrictEqual(Object.keys(entries).sort(), BLUEPRINT_NAMES);
+    });
+});
+
+test('zip: check=1 answers the plan as JSON, without streaming', async () => {
+    await withServer({}, async (url) => {
+        const res = await fetch(`${url}/download-zip?path=blueprints&check=1`);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.headers.get('content-disposition'), null);
+        const plan = await res.json();
+        assert.deepStrictEqual(plan, {
+            name: 'blueprints.zip',
+            files: BLUEPRINT_NAMES.length,
+            bytes: (await downloads.planZip('blueprints')).bytes,
+        });
+    });
+});
+
+test('zip: over the cap is a 413 JSON error before any zip bytes', async () => {
+    const capped = createDownloads({ api, maxZipBytes: 1024 });
+    await withServer({ downloads: capped }, async (url) => {
+        for (const check of ['', '&check=1']) {
+            const res = await fetch(`${url}/download-zip?path=blueprints${check}`);
+            assert.strictEqual(res.status, 413);
+            assert.match(res.headers.get('content-type'), /^application\/json/);
+            assert.strictEqual(res.headers.get('content-disposition'), null);
+            assert.match((await res.json()).error, /large\.yaml/);
+        }
+    });
+});
+
+test('zip: HEAD sends the headers and opens nothing', async () => {
+    let opened = 0;
+    const counting = createDownloads({ api: { ...api, openFile: (...a) => { opened++; return api.openFile(...a); } } });
+    await withServer({ downloads: counting }, async (url) => {
+        const res = await fetch(`${url}/download-zip?path=blueprints`, { method: 'HEAD' });
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.headers.get('content-disposition'), 'attachment; filename=blueprints.zip');
+        assert.strictEqual((await res.arrayBuffer()).byteLength, 0);
+    });
+    assert.strictEqual(opened, 0);
+});
+
+test('zip: a file deleted after planning aborts the download; nothing throws', async () => {
+    const victim = write('blueprints/zz-vanishing.yaml', 'v\n');
+    const logged = [];
+    const escapes = [];
+    const vanishing = createDownloads({ api, beforeStream: async () => fs.unlinkSync(victim) });
+    await noStrays(async () => {
+        await withServer({ downloads: vanishing, escapes, log: (m) => logged.push(m) }, async (url) => {
+            assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
+            assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 200);
+        });
+    });
+    assert.ok(logged.some((m) => /"blueprints\.zip" aborted/.test(m)), logged.join('\n'));
+    assert.deepStrictEqual(escapes.map(String), []);
+});
+
+test('zip: a file that shrinks after planning aborts the download (yazl\'s error event is heard)', async () => {
+    const file = write('blueprints/zz-shrinking.yaml', 'z'.repeat(64 * 1024));
+    const logged = [];
+    const escapes = [];
+    const shrinking = createDownloads({ api, beforeStream: async () => fs.truncateSync(file, 3) });
+    try {
+        await noStrays(async () => {
+            await withServer({ downloads: shrinking, escapes, log: (m) => logged.push(m) }, async (url) => {
+                assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
+                // still serving
+                assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 200);
+            });
+        });
+        assert.ok(logged.some((m) => /"blueprints\.zip" aborted: .*unexpected number of bytes/.test(m)), logged.join('\n'));
+        assert.deepStrictEqual(escapes.map(String), []);
+    } finally {
+        fs.unlinkSync(file);
+    }
+});
+
+test('zip: a file that grows after planning goes in at its planned size', async () => {
+    const file = write('blueprints/zz-growing.log', 'line 1\n');
+    const growing = createDownloads({ api, beforeStream: async () => fs.appendFileSync(file, 'line 2\n') });
+    try {
+        await withServer({ downloads: growing }, async (url) => {
+            const res = await fetch(`${url}/download-zip?path=blueprints`);
+            const entries = await unzip(Buffer.from(await res.arrayBuffer()));
+            assert.strictEqual(entries['blueprints/zz-growing.log'].toString(), 'line 1\n');
+        });
+    } finally {
+        fs.unlinkSync(file);
+    }
+});
+
+test('zip: an empty file that has gone since planning aborts the download too', async () => {
+    const victim = write('blueprints/zz-empty-vanishing.yaml', '');
+    const logged = [];
+    const vanishing = createDownloads({ api, beforeStream: async () => fs.unlinkSync(victim) });
+    await noStrays(async () => {
+        await withServer({ downloads: vanishing, log: (m) => logged.push(m) }, async (url) => {
+            assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
+        });
+    });
+    assert.ok(logged.some((m) => /"blueprints\.zip" aborted/.test(m)), logged.join('\n'));
+});
+
+// Several big files of random bytes (deflate cannot shrink them), so a zip of
+// the folder is long enough to leave, stall or fail in the middle of, and its
+// entries are opened in turn.
+const ZIPDIR = 'zipdir';
+const ZIP_FILES = ['a.bin', 'b.bin', 'c.bin'];
+const zipInos = ZIP_FILES.map((name) => {
+    const full = write(`${ZIPDIR}/${name}`, require('node:crypto').randomBytes(8 * 1024 * 1024));
+    return fs.statSync(full).ino;
+});
+const zipFds = () => zipInos.reduce((n, ino) => n + openFds(ino), 0);
+const zipTarget = `/api/files/download-zip?path=${ZIPDIR}`;
+
+test('zip: a read error on an entry aborts the download; nothing throws', async () => {
+    // yazl pipes an entry's stream without listening for its errors.
+    let failed = 0;
+    const failing = {
+        ...api,
+        openFile: async (...args) => {
+            const opened = await api.openFile(...args);
+            const real = opened.handle.createReadStream.bind(opened.handle);
+            opened.handle.createReadStream = (options) => {
+                const stream = real(options);
+                stream.once('data', () => {
+                    failed++;
+                    stream.destroy(Object.assign(new Error('simulated EIO'), { code: 'EIO' }));
+                });
+                return stream;
+            };
+            return opened;
+        },
+    };
+    const logged = [];
+    const escapes = [];
+    await noStrays(async () => {
+        await withServer({ downloads: createDownloads({ api: failing }), escapes, log: (m) => logged.push(m) }, async (url) => {
+            assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=${ZIPDIR}`)), true);
+            assert.ok(await until(() => zipFds() === 0), 'descriptor left open');
+        });
+    });
+    assert.ok(failed >= 1, 'the fault was never injected');
+    assert.ok(logged.some((m) => /"zipdir\.zip" aborted: simulated EIO/.test(m)), logged.join('\n'));
+    assert.deepStrictEqual(escapes.map(String), []);
+});
+
+test('zip: entries open one at a time, and a client that leaves mid-zip releases them, quietly', async () => {
+    const logged = [];
+    const escapes = [];
+    await noStrays(async () => {
+        await withServer({ escapes, log: (m) => logged.push(m) }, async (url) => {
+            const sock = await rawRequest(Number(new URL(url).port), zipTarget);
+            let most = 0;
+            // Read until the zip has moved past its first file.
+            const past = await Promise.race([
+                new Promise((resolve) => {
+                    sock.on('data', () => {
+                        const counts = zipInos.map(openFds);
+                        most = Math.max(most, counts.reduce((x, y) => x + y, 0));
+                        if (counts.slice(1).some((n) => n > 0)) {
+                            sock.pause();
+                            resolve(true);
+                        }
+                    });
+                }),
+                sleep(5000).then(() => false),
+            ]);
+            assert.ok(past, 'the zip never reached its second file');
+            assert.strictEqual(most, 1, 'more than one entry open at once');
+            // Let the server back up behind the paused client, as it does
+            // behind a slow one: a back-pressured entry stream left alone
+            // would hold its descriptor for good.
+            await sleep(200);
+            // Positive control: an entry is open when the client leaves.
+            assert.strictEqual(zipFds(), 1, 'not streaming');
+            sock.destroy();
+            assert.ok(await until(() => zipFds() === 0), 'descriptor left open');
+            await sleep(300);
+            assert.strictEqual(zipFds(), 0, 'a later entry was opened after the client left');
+        });
+    });
+    assert.deepStrictEqual(logged, []);
+    assert.deepStrictEqual(escapes.map(String), []);
+});
+
+test('zip: a client that leaves while an entry is being opened leaks no descriptor', async () => {
+    let entered;
+    const inOpen = new Promise((r) => { entered = r; });
+    const slow = {
+        ...api,
+        // The descriptor is open; the route has not had it back yet.
+        openFile: async (...args) => {
+            const opened = await api.openFile(...args);
+            entered();
+            await sleep(300);
+            return opened;
+        },
+    };
+    const escapes = [];
+    await noStrays(async () => {
+        await withServer({ downloads: createDownloads({ api: slow }), escapes }, async (url) => {
+            const sock = await rawRequest(Number(new URL(url).port), zipTarget);
+            await within(inOpen, 'an entry being opened');
+            assert.strictEqual(zipFds(), 1, 'positive control: the entry is open');
+            sock.destroy();
+            await sleep(400);   // past the open
+            assert.ok(await until(() => zipFds() === 0, 1000), 'descriptor left open');
+        });
+    });
+    assert.deepStrictEqual(escapes.map(String), []);
+});
+
+test('zip: a client that leaves before streaming starts opens nothing', async () => {
+    let entered;
+    let left;
+    const inBeforeStream = new Promise((r) => { entered = r; });
+    const pastBeforeStream = new Promise((r) => { left = r; });
+    let opened = 0;
+    const d = createDownloads({
+        api: { ...api, openFile: (...a) => { opened++; return api.openFile(...a); } },
+        beforeStream: async () => {
+            entered();
+            await sleep(300);
+            left();
+        },
+    });
+    const escapes = [];
+    await noStrays(async () => {
+        await withServer({ downloads: d, escapes }, async (url) => {
+            const sock = await rawRequest(Number(new URL(url).port), zipTarget);
+            await within(inBeforeStream, 'beforeStream');
+            sock.destroy();
+            await within(pastBeforeStream, 'beforeStream to return');
+            await sleep(100);
+            assert.strictEqual(zipFds(), 0);
+            // still serving
+            assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 200);
+        });
+    });
+    assert.strictEqual(opened, 0);
+    assert.deepStrictEqual(escapes.map(String), []);
+});
+
+test('zip: a client that stops reading is cut off after idleMs, its entry closed, with one log line', async () => {
+    const logged = [];
+    const d = createDownloads({ api, idleMs: 300 });
+    await noStrays(async () => {
+        await withServer({ downloads: d, log: (m) => logged.push(m) }, async (url) => {
+            const sock = await rawRequest(Number(new URL(url).port), zipTarget);
+            sock.pause();
+            await sleep(100);
+            assert.strictEqual(zipFds(), 1, 'positive control: an entry is open');
+            assert.ok(await until(() => zipFds() === 0, 4000), 'stalled zip kept its descriptor');
+            await sleep(300);
+            assert.strictEqual(zipFds(), 0, 'a later entry was opened after the cut-off');
+            sock.destroy();
+        });
+    });
+    assert.strictEqual(logged.length, 1, logged.join('\n'));
+    assert.match(logged[0], /^Download of "zipdir\.zip" cut off: client stalled/);
+});
+
+test('routes: the zip rate limiter applies', async () => {
+    await withServer({ zipLimiter: createRateLimiter({ max: 1 }) }, async (url) => {
+        assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 200);
+        assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 429);
+    });
 });

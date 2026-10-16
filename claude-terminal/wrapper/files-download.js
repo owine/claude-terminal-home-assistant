@@ -17,8 +17,9 @@
 
 const fsp = require('node:fs/promises');
 const path = require('node:path');
-const { pipeline, Transform } = require('node:stream');
+const { pipeline, Readable, Transform } = require('node:stream');
 const express = require('express');
+const yazl = require('yazl');
 const {
     walkEntryType,
     allowsProtected,
@@ -156,6 +157,110 @@ function sendAttachment({ handle, stat, name }, req, res, { log = console.error,
         through: [exactSize(stat.size)],
         release,
         label: name,
+        log,
+        idleMs,
+    });
+}
+
+/**
+ * Send a planned zip ({ name, files }) on streamBody, its entries opened
+ * through `openFile` (files-api's: O_NOFOLLOW, the tiers, the /proc
+ * re-check), never by yazl's addFile, which opens by path and follows
+ * symlinks. Lazily: yazl asks for an entry's stream only when it reaches it,
+ * so one file is open at a time however many the zip holds.
+ *
+ * Every failure after the first byte aborts the response, so the browser
+ * shows a failed download rather than a cut-off archive that looks whole;
+ * streamBody logs it (a client that simply left excepted). Three sources of
+ * failure, none of which may throw:
+ * - yazl reports a refused open and a file that shrank since planning as an
+ *   'error' on the ZipFile, a plain EventEmitter, NOT on outputStream;
+ * - yazl pipes an entry's stream without listening for its errors (a read
+ *   error);
+ * - the client leaving or stalling, which streamBody turns into `release`.
+ * The first two are forwarded into outputStream, which fails the pipeline.
+ * Unheard, either would be an uncaught exception and restart the wrapper
+ * and every terminal session with it. Keep both listeners, and the final
+ * catch on the opener's promise.
+ *
+ * `release` cannot stop yazl by destroying outputStream: yazl would still
+ * ask for the next entry. So it sets `aborted`, which the opener checks
+ * before and after each open, and destroys the entry being read, which
+ * closes its handle.
+ */
+function sendZipBody(plan, req, res, { openFile, log = console.error, idleMs = IDLE_MS }) {
+    try {
+        if (res.destroyed || res.writableEnded) return;
+        res.status(200);
+        res.attachment(plan.name);   // also Content-Type: application/zip
+        res.set('X-Content-Type-Options', 'nosniff');
+    } catch (err) {
+        dropAttachmentHeaders(res);
+        sendError(res, err, log);
+        return;
+    }
+    // A zip's length is not known before it is built; a HEAD would build it
+    // only to throw it away.
+    if (req.method === 'HEAD') {
+        res.end();
+        return;
+    }
+
+    let aborted = false;
+    let reading = null;   // the entry stream being read, if any
+    const release = () => {
+        aborted = true;
+        if (reading) reading.destroy();
+    };
+
+    // Resolves to the entry's stream, or null once the download is gone (the
+    // handle closed). A grown file is cut at its planned size, so a live log
+    // can still be zipped and the zip stays under the cap; a shrunk one
+    // fails yazl's size check, and so the download. An empty file is opened
+    // too, so one that has gone since planning still fails the zip.
+    async function openEntry(file, fail) {
+        const { handle } = await openFile(file.full);
+        if (aborted || file.size === 0) {
+            await handle.close().catch(() => {});
+            return aborted ? null : Readable.from([], { objectMode: false });
+        }
+        let stream;
+        try {
+            stream = handle.createReadStream({ start: 0, end: file.size - 1 });
+        } catch (err) {
+            await handle.close().catch(() => {});
+            throw err;
+        }
+        stream.on('error', fail);
+        reading = stream;
+        stream.once('close', () => {
+            if (reading === stream) reading = null;
+        });
+        return stream;
+    }
+
+    streamBody(res, {
+        makeSource: () => {
+            const zip = new yazl.ZipFile();
+            const fail = (err) => zip.outputStream.destroy(err);
+            zip.on('error', fail);
+            for (const file of plan.files) {
+                zip.addReadStreamLazy(file.name, { mtime: file.mtime, mode: file.mode, size: file.size }, (callback) => {
+                    if (aborted) return;
+                    openEntry(file, fail)
+                        .then((stream) => {
+                            if (stream) callback(null, stream);
+                        }, (err) => {
+                            if (!aborted) callback(err);   // yazl emits it as 'error'
+                        })
+                        .catch(fail);
+                });
+            }
+            zip.end();
+            return zip.outputStream;
+        },
+        release,
+        label: plan.name,
         log,
         idleMs,
     });
@@ -314,7 +419,26 @@ function createDownloads({
         return { name: `${top}.zip`, files, bytes };
     }
 
-    return { openForDownload, sendFile: (opened, req, res, log) => sendAttachment(opened, req, res, { log, idleMs }), planZip };
+    /**
+     * Stream a planned zip. Never throws: a failure before the first byte is
+     * a JSON error, one after it an aborted response.
+     */
+    async function sendZip(plan, req, res, log = console.error) {
+        try {
+            if (beforeStream) await beforeStream(plan);
+        } catch (err) {
+            sendError(res, err, log);
+            return;
+        }
+        sendZipBody(plan, req, res, { openFile: api.openFile, log, idleMs });
+    }
+
+    return {
+        openForDownload,
+        sendFile: (opened, req, res, log) => sendAttachment(opened, req, res, { log, idleMs }),
+        planZip,
+        sendZip,
+    };
 }
 
 /**
@@ -325,7 +449,7 @@ function createDownloads({
  * can start one but cannot read the answer. Every failure before the first
  * byte is a JSON error; after it, the response is aborted and logged.
  */
-function createDownloadRouter({ downloads, fileLimiter, log = console.error }) {
+function createDownloadRouter({ downloads, fileLimiter, zipLimiter, log = console.error }) {
     const router = express.Router();
 
     router.get('/download', fileLimiter, async (req, res) => {
@@ -337,6 +461,28 @@ function createDownloadRouter({ downloads, fileLimiter, log = console.error }) {
             return sendError(res, err, log);
         }
         downloads.sendFile(opened, req, res, log);
+    });
+
+    // protected=1 is not read here: zips never hold protected files.
+    router.get('/download-zip', zipLimiter, async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+        let plan;
+        try {
+            plan = await downloads.planZip(req.query.path);
+        } catch (err) {
+            return sendError(res, err, log);
+        }
+        // check=1 is the UI's preflight: the same plan, answered as JSON, so
+        // a refusal reaches the sidebar as a message before the browser is
+        // handed a download that could only fail silently.
+        if (req.query.check === '1') {
+            return res.json({ name: plan.name, files: plan.files.length, bytes: plan.bytes });
+        }
+        try {
+            await downloads.sendZip(plan, req, res, log);
+        } catch (err) {
+            sendError(res, err, log);   // destroys the response if it had begun
+        }
     });
 
     return router;
