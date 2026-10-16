@@ -430,8 +430,17 @@ function rawGet(port, target, method = 'GET') {
 
 test('download: a client that leaves while the file is being opened leaks no descriptor', async () => {
     let entered;
+    let left;
     const inBeforeStream = new Promise((r) => { entered = r; });
-    const d = createDownloads({ api, beforeStream: async () => { entered(openFds(bigIno)); await sleep(300); } });
+    const pastBeforeStream = new Promise((r) => { left = r; });
+    const d = createDownloads({
+        api,
+        beforeStream: async () => {
+            entered(openFds(bigIno));
+            await sleep(300);
+            left();
+        },
+    });
     const logged = [];
     const escapes = [];
     // Nothing may throw out of the route: not synchronously, not as a rejection.
@@ -445,8 +454,8 @@ test('download: a client that leaves while the file is being opened leaks no des
             // Positive control: the file is open while the request waits.
             assert.strictEqual(await inBeforeStream, 1);
             sock.destroy();
-            await sleep(600);
-            assert.strictEqual(openFds(bigIno), 0, 'descriptor left open');
+            await pastBeforeStream;
+            assert.ok(await until(() => openFds(bigIno) === 0, 1000), 'descriptor left open');
             // still serving
             assert.strictEqual((await fetch(`${url}/download?path=configuration.yaml`)).status, 200);
         });
