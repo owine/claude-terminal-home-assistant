@@ -2150,6 +2150,11 @@
             let rootPath = '/config';
             let previewPath = null;
             let previewSensitive = false;   // the open preview is a protected file
+            // Bumped by every openPreview and blankPreview, so a reply lands
+            // only on the request that asked for it. A path check is not
+            // enough: the same file reopened (say with the toggle now off)
+            // has the same path as a stale reply still in flight.
+            let previewGen = 0;
             let selectedRow = null;
 
             async function getJson(url) {
@@ -2302,11 +2307,11 @@
                 a.download = '';   // the name comes from Content-Disposition
                 a.hidden = true;
                 document.body.append(a);
-                a.click();
-                a.remove();
+                try { a.click(); } finally { a.remove(); }
             }
 
             async function openPreview(filePath, sensitive) {
+                const gen = ++previewGen;
                 previewPath = filePath;
                 previewSensitive = Boolean(sensitive);
                 // Enabled once the preview loads: a refused preview (a
@@ -2319,14 +2324,15 @@
                 try {
                     const data = await getJson('api/files/preview?path=' + encodeURIComponent(filePath)
                         + (showProtected.checked ? '&protected=1' : ''));
-                    if (previewPath !== filePath) return;   // another file was opened meanwhile
+                    if (gen !== previewGen) return;   // opened again, or blanked, meanwhile
                     const parts = [helpers.formatSize(data.size), 'modified ' + new Date(data.mtime).toLocaleString()];
                     if (data.truncated) parts.push('showing the first ' + helpers.formatSize(data.limit));
                     previewMeta.textContent = parts.join(' · ');
                     previewBody.textContent = data.binary ? '(binary file, no preview)' : data.content;
                     downloadBtn.disabled = false;
                 } catch (err) {
-                    if (previewPath !== filePath) return;
+                    if (gen !== previewGen) return;
+                    downloadBtn.disabled = true;
                     previewBody.textContent = '⚠️ ' + err.message;
                 }
             }
@@ -2339,9 +2345,10 @@
                 if (previewSensitive) blankPreview();
             }
 
-            // Clearing previewPath also drops an answer still in flight: the
-            // previewPath check in openPreview no longer matches it.
+            // Bumping previewGen also drops an answer still in flight: the
+            // generation check in openPreview no longer matches it.
             function blankPreview() {
+                ++previewGen;
                 previewPath = null;
                 previewSensitive = false;
                 downloadBtn.disabled = true;

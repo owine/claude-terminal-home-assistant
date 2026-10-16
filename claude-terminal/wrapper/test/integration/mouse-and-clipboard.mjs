@@ -428,6 +428,83 @@ async function checkDownloads(browser, url) {
     }
 }
 
+// Download must follow the preview REQUEST, not its path. Its own context
+// with service workers blocked, so context.route sees the previews (see
+// checkStaleView).
+//   - While a preview loads, Download is disabled, even right after another
+//     file's loaded preview had it enabled.
+//   - A protected reply held past switch-off, with the same file reopened
+//     (and refused) meanwhile, must not land: it carries the same path as
+//     the open preview, so only a per-request check can tell them apart.
+async function checkPreviewRequests(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    const gates = [];
+    const releaseAll = () => gates.forEach((g) => g.release());
+    const hold = async (pred) => {
+        const gate = { held: 0, answered: false };
+        gate.done = new Promise((r) => { gate.release = r; });
+        gates.push(gate);
+        await context.route(pred, async (route) => {
+            gate.held++;
+            await gate.done;
+            await route.continue().catch(() => {});
+        });
+        context.on('requestfinished', (r) => { if (pred(new URL(r.url()))) gate.answered = true; });
+        return gate;
+    };
+    const isPreviewOf = (name, flaggedReq) => (u) => u.pathname.endsWith('/api/files/preview')
+        && u.searchParams.get('path')?.endsWith('/' + name)
+        && (u.searchParams.get('protected') === '1') === flaggedReq;
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const list = await openSidebarFixture(wrapper);
+        const downloadDisabled = () => wrapper.evaluate('document.getElementById("files-download-btn").disabled');
+        const row = (name) => list.locator('.files-row', { hasText: name });
+
+        // An ordinary file loads and enables Download; the next one is
+        // held, and Download must be off until it lands.
+        await row(SIDEBAR_FILE).click();
+        await waitFor(async () => (await previewText(wrapper)) === 'sidebar: ok\n');
+        check('fixture: a loaded preview enables Download', await downloadDisabled(), false);
+        await wrapper.locator('#files-close-btn').click();
+        const loading = await hold(isPreviewOf(SIDEBAR_FILE, false));
+        await row(SIDEBAR_FILE).click();
+        check('fixture: the ordinary preview is held back', await waitFor(() => loading.held >= 1), true);
+        check('Download is disabled while a preview is loading', await downloadDisabled(), true);
+        loading.release();
+        check('and enabled once it loads',
+            await waitFor(async () => (await previewText(wrapper)) === 'sidebar: ok\n' && !(await downloadDisabled())), true);
+        await wrapper.locator('#files-close-btn').click();
+
+        // Toggle on, open .env (held), switch off, open .env again
+        // (refused), then let the first reply through.
+        const late = await hold(isPreviewOf(PROTECTED_FILE, true));
+        await wrapper.locator('#files-show-protected').check();
+        await row(PROTECTED_FILE).click();
+        check('fixture: the protected preview is held back', await waitFor(() => late.held >= 1), true);
+        await pressToggle(wrapper, page);
+        await row(PROTECTED_FILE).click();
+        check('fixture: reopened with the toggle off, the file is refused',
+            await waitFor(async () => /Show protected files/.test((await previewText(wrapper)) || '')), true);
+        late.release();
+        let leaked = false;
+        await waitFor(async () => {
+            if (/TOKEN/.test((await previewState(wrapper)).body)) leaked = true;
+            return late.answered;
+        }, { interval: 50 });
+        await sleep(300);
+        if (/TOKEN/.test((await previewState(wrapper)).body)) leaked = true;
+        check('fixture: the held protected reply was released', late.answered, true);
+        check('a stale protected reply never lands on the reopened preview', leaked, false);
+        check('and Download stays disabled beside the refusal', await downloadDisabled(), true);
+    } finally {
+        releaseAll();
+        await context.close();
+    }
+}
+
 // A protected preview still in flight when the toggle goes off must not land.
 // Its own context with service workers blocked: a request the service worker
 // fetches is invisible to context.route (see checkStaleView).
@@ -892,6 +969,7 @@ async function run(engine, mode, url) {
     await checkStaleView(browser, url);
     await checkDownloads(browser, url);
     await checkLateProtectedPreview(browser, url);
+    await checkPreviewRequests(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {
