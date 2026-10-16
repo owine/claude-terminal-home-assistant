@@ -38,6 +38,10 @@ const MAX_ZIP_BYTES = 200 * 1024 * 1024;
 // How many of the largest files a refusal names.
 const LARGEST_NAMED = 5;
 
+// Zip names use '/' only, and yazl reads a backslash as one; a Linux name
+// holding one keeps a '_' instead.
+const zipSafe = (name) => name.replace(/\\/g, '_');
+
 // Same steps as the sidebar's formatSize (public/files-sidebar.js), for
 // messages the UI shows as they are.
 function formatSize(bytes) {
@@ -326,7 +330,13 @@ function createDownloads({
 
         // The archive's top folder. For the root, its name as configured
         // (config), not its realpath (/homeassistant on a real install).
-        const top = relative === '' ? path.basename(path.resolve(api.root)) : path.basename(real);
+        // Every entry name starts with it, so it alone can trip the checks
+        // yazl makes on a whole name (validateMetadataPath): a leading drive
+        // letter ("C:backup") is refused as absolute, and would fail the
+        // download after its preflight had passed. A leading '/', a '..'
+        // component and an empty name cannot come out of the walk.
+        const top = zipSafe(relative === '' ? path.basename(path.resolve(api.root)) : path.basename(real))
+            .replace(/^([a-zA-Z]):/, '$1_');
         const files = [];
         let bytes = 0;
         let visits = 0;
@@ -380,9 +390,7 @@ function createDownloads({
                         continue;
                     }
                     if (!st.isFile()) continue;   // swapped since the listing
-                    // Zip names use '/' only, and yazl reads a backslash as
-                    // one; a Linux name holding one keeps a '_' instead.
-                    const name = `${top}/${path.relative(real, full)}`.replace(/\\/g, '_');
+                    const name = `${top}/${zipSafe(path.relative(real, full))}`;
                     files.push({ full, name, size: st.size, mtime: st.mtime, mode: st.mode });
                     bytes += st.size;
                 }

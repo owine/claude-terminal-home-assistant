@@ -18,6 +18,7 @@ const net = require('node:net');
 const { once } = require('node:events');
 const express = require('express');
 const yauzl = require('yauzl');
+const yazl = require('yazl');
 const { createFilesApi } = require('../files-api.js');
 const { createDownloads, createDownloadRouter, sendAttachment, streamBody, MAX_ZIP_BYTES } = require('../files-download.js');
 const { createRateLimiter } = require('../http-guards.js');
@@ -131,6 +132,32 @@ test('a backslash in a name is archived as _ (zip names use / only)', async () =
         assert.deepStrictEqual(names(await downloads.planZip('odd')), ['odd/a_.._b.txt']);
     } finally {
         fs.rmSync(path.join(root, 'odd'), { recursive: true });
+    }
+});
+
+test('a folder named like a drive (C:backup) zips under a name yazl accepts', async () => {
+    write('C:backup/x.txt', 'x\n');
+    write('C:backup/D:sub/y.txt', 'y\n');
+    try {
+        const plan = await downloads.planZip('C:backup');
+        assert.strictEqual(plan.name, 'C_backup.zip');
+        assert.deepStrictEqual(names(plan), ['C_backup/D:sub/y.txt', 'C_backup/x.txt']);
+        // yazl's own check (validateMetadataPath) passes every planned name,
+        // so the preflight and the download cannot disagree.
+        const zip = new yazl.ZipFile();
+        for (const f of plan.files) zip.addBuffer(Buffer.alloc(0), f.name);
+        await withServer({}, async (url) => {
+            const check = await fetch(`${url}/download-zip?path=${q('C:backup')}&check=1`);
+            assert.strictEqual(check.status, 200);
+            assert.strictEqual((await check.json()).name, 'C_backup.zip');
+            const res = await fetch(`${url}/download-zip?path=${q('C:backup')}`);
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual(res.headers.get('content-disposition'), 'attachment; filename=C_backup.zip');
+            const entries = await unzip(Buffer.from(await res.arrayBuffer()));
+            assert.deepStrictEqual(Object.keys(entries).sort(), ['C_backup/D:sub/y.txt', 'C_backup/x.txt']);
+        });
+    } finally {
+        fs.rmSync(path.join(root, 'C:backup'), { recursive: true });
     }
 });
 
