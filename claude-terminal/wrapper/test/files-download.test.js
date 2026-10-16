@@ -353,6 +353,7 @@ test('download: a file that shrinks mid-download aborts it, and is logged', asyn
     const shrinking = createDownloads({ api, beforeStream: async () => fs.truncateSync(file, 10) });
     await withServer({ downloads: shrinking, log: (m) => logged.push(m) }, async (url) => {
         assert.strictEqual(await aborted(fetch(`${url}/download?path=shrinking.txt`)), true);
+        assert.ok(await until(() => logged.length > 0, 1000), 'nothing logged');
         // the wrapper is still serving
         assert.strictEqual((await fetch(`${url}/download?path=configuration.yaml`)).status, 200);
     });
@@ -500,11 +501,11 @@ test('download: a client that stops reading is cut off after idleMs and its desc
     await withServer({ downloads: d, log: (m) => logged.push(m) }, async (url) => {
         const sock = await rawGet(Number(new URL(url).port), BIG);
         sock.pause();
-        await sleep(100);
-        assert.strictEqual(openFds(bigIno), 1);
+        assert.ok(await until(() => openFds(bigIno) === 1, 2000), 'positive control: the file is open');
         assert.ok(await until(() => openFds(bigIno) === 0, 4000), 'stalled download kept its descriptor');
         sock.destroy();
-        await sleep(100);
+        assert.ok(await until(() => logged.length > 0, 1000), 'nothing logged');
+        await sleep(100);   // and nothing more
     });
     // One quiet line, so a proxy that stops reading can be diagnosed.
     assert.deepStrictEqual(logged, ['Download of "big.bin" cut off: client stalled for 300 ms']);
@@ -563,6 +564,8 @@ test('download: a name in the log cannot forge a line', async () => {
     const shrinking = createDownloads({ api, beforeStream: async () => fs.truncateSync(file, 10) });
     await withServer({ downloads: shrinking, log: (m) => logged.push(m) }, async (url) => {
         assert.strictEqual(await aborted(fetch(`${url}/download?path=${q(name)}`)), true);
+        // The pipeline's callback logs after the client has seen the abort.
+        assert.ok(await until(() => logged.length > 0, 1000), 'nothing logged');
     });
     assert.ok(logged.length > 0 && logged.every((m) => !m.includes('\n')), JSON.stringify(logged));
     fs.unlinkSync(file);
@@ -614,7 +617,9 @@ test('streamBody: runs its cleanup when the response is already gone, and builds
 
 // --- zip ---
 
-function unzip(buffer) {
+// { fileName: Buffer } in archive order; with `meta`, also { fileName: yauzl
+// Entry } as the second element.
+function unzip(buffer, { meta = null } = {}) {
     return new Promise((resolve, reject) => {
         yauzl.fromBuffer(buffer, { lazyEntries: true }, (err, zipfile) => {
             if (err) return reject(err);
@@ -629,6 +634,7 @@ function unzip(buffer) {
                     stream.on('error', reject);
                     stream.on('end', () => {
                         entries[entry.fileName] = Buffer.concat(chunks);
+                        if (meta) meta[entry.fileName] = entry;
                         zipfile.readEntry();
                     });
                 });
@@ -675,6 +681,43 @@ test('zip: the archive unzips to the planned entries and their contents', async 
         assert.strictEqual(entries['blueprints/large.yaml'].toString(), LARGE);
         assert.strictEqual(entries['blueprints/empty.yaml'].length, 0);
     });
+});
+
+test('zip: entries keep the planned mtime and mode', async () => {
+    const file = write('stamped/old.yaml', 'old\n');
+    const when = new Date('2024-01-02T03:04:05Z');
+    fs.utimesSync(file, when, when);
+    fs.chmodSync(file, 0o640);
+    try {
+        await withServer({}, async (url) => {
+            const meta = {};
+            await unzip(Buffer.from(await (await fetch(`${url}/download-zip?path=stamped`)).arrayBuffer()), { meta });
+            const entry = meta['stamped/old.yaml'];
+            assert.strictEqual(entry.getLastModDate().getTime(), when.getTime());
+            assert.strictEqual(entry.externalFileAttributes >>> 16, fs.statSync(file).mode);
+            assert.strictEqual((entry.externalFileAttributes >>> 16) & 0o777, 0o640);
+        });
+    } finally {
+        fs.rmSync(path.join(root, 'stamped'), { recursive: true });
+    }
+});
+
+test('zip: a non-ASCII folder gets filename* and UTF-8 entry names', async () => {
+    const folder = 'ünïcödé ✂';
+    write(`${folder}/naïve.txt`, 'n\n');
+    try {
+        await withServer({}, async (url) => {
+            const res = await fetch(`${url}/download-zip?path=${q(folder)}`);
+            assert.strictEqual(res.status, 200);
+            const header = res.headers.get('content-disposition');
+            assert.match(header, /^attachment; filename="[\x20-\x7e]+"; filename\*=UTF-8''/);
+            assert.ok(header.endsWith(`filename*=UTF-8''${q(`${folder}.zip`)}`), header);
+            const entries = await unzip(Buffer.from(await res.arrayBuffer()));
+            assert.deepStrictEqual(Object.keys(entries), [`${folder}/naïve.txt`]);
+        });
+    } finally {
+        fs.rmSync(path.join(root, folder), { recursive: true });
+    }
 });
 
 test('zip: a folder with no files is an empty archive', async () => {
@@ -745,14 +788,18 @@ test('zip: a file deleted after planning aborts the download; nothing throws', a
     const logged = [];
     const escapes = [];
     const vanishing = createDownloads({ api, beforeStream: async () => fs.unlinkSync(victim) });
-    await noStrays(async () => {
-        await withServer({ downloads: vanishing, escapes, log: (m) => logged.push(m) }, async (url) => {
-            assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
-            assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 200);
+    try {
+        await noStrays(async () => {
+            await withServer({ downloads: vanishing, escapes, log: (m) => logged.push(m) }, async (url) => {
+                assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
+                assert.ok(await until(() => logged.some((m) => /"blueprints\.zip" aborted/.test(m)), 1000), logged.join('\n'));
+                assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 200);
+            });
         });
-    });
-    assert.ok(logged.some((m) => /"blueprints\.zip" aborted/.test(m)), logged.join('\n'));
-    assert.deepStrictEqual(escapes.map(String), []);
+        assert.deepStrictEqual(escapes.map(String), []);
+    } finally {
+        fs.rmSync(victim, { force: true });
+    }
 });
 
 test('zip: a file that shrinks after planning aborts the download (yazl\'s error event is heard)', async () => {
@@ -764,11 +811,12 @@ test('zip: a file that shrinks after planning aborts the download (yazl\'s error
         await noStrays(async () => {
             await withServer({ downloads: shrinking, escapes, log: (m) => logged.push(m) }, async (url) => {
                 assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
+                assert.ok(await until(() => logged.some((m) => /"blueprints\.zip" aborted: .*unexpected number of bytes/.test(m)), 1000),
+                    logged.join('\n'));
                 // still serving
                 assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 200);
             });
         });
-        assert.ok(logged.some((m) => /"blueprints\.zip" aborted: .*unexpected number of bytes/.test(m)), logged.join('\n'));
         assert.deepStrictEqual(escapes.map(String), []);
     } finally {
         fs.unlinkSync(file);
@@ -793,12 +841,16 @@ test('zip: an empty file that has gone since planning aborts the download too', 
     const victim = write('blueprints/zz-empty-vanishing.yaml', '');
     const logged = [];
     const vanishing = createDownloads({ api, beforeStream: async () => fs.unlinkSync(victim) });
-    await noStrays(async () => {
-        await withServer({ downloads: vanishing, log: (m) => logged.push(m) }, async (url) => {
-            assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
+    try {
+        await noStrays(async () => {
+            await withServer({ downloads: vanishing, log: (m) => logged.push(m) }, async (url) => {
+                assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
+                assert.ok(await until(() => logged.some((m) => /"blueprints\.zip" aborted/.test(m)), 1000), logged.join('\n'));
+            });
         });
-    });
-    assert.ok(logged.some((m) => /"blueprints\.zip" aborted/.test(m)), logged.join('\n'));
+    } finally {
+        fs.rmSync(victim, { force: true });
+    }
 });
 
 // Several big files of random bytes (deflate cannot shrink them), so a zip of
@@ -838,10 +890,11 @@ test('zip: a read error on an entry aborts the download; nothing throws', async 
         await withServer({ downloads: createDownloads({ api: failing }), escapes, log: (m) => logged.push(m) }, async (url) => {
             assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=${ZIPDIR}`)), true);
             assert.ok(await until(() => zipFds() === 0), 'descriptor left open');
+            assert.ok(await until(() => logged.some((m) => /"zipdir\.zip" aborted: .*simulated EIO/.test(m)), 1000),
+                logged.join('\n'));
         });
     });
     assert.ok(failed >= 1, 'the fault was never injected');
-    assert.ok(logged.some((m) => /"zipdir\.zip" aborted: simulated EIO/.test(m)), logged.join('\n'));
     assert.deepStrictEqual(escapes.map(String), []);
 });
 
@@ -949,9 +1002,9 @@ test('zip: a client that stops reading is cut off after idleMs, its entry closed
         await withServer({ downloads: d, log: (m) => logged.push(m) }, async (url) => {
             const sock = await rawRequest(Number(new URL(url).port), zipTarget);
             sock.pause();
-            await sleep(100);
-            assert.strictEqual(zipFds(), 1, 'positive control: an entry is open');
+            assert.ok(await until(() => zipFds() === 1, 2000), 'positive control: an entry is open');
             assert.ok(await until(() => zipFds() === 0, 4000), 'stalled zip kept its descriptor');
+            assert.ok(await until(() => logged.length > 0, 1000), 'nothing logged');
             await sleep(300);
             assert.strictEqual(zipFds(), 0, 'a later entry was opened after the cut-off');
             sock.destroy();
