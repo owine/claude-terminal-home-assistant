@@ -219,6 +219,47 @@ async function checkStaleView(browser, url) {
     }
 }
 
+// Opens the sidebar (it reopens by itself after a reload), lists dotfiles,
+// and expands the fixture folder. Returns the tree.
+async function openSidebarFixture(wrapper) {
+    if (await wrapper.evaluate('document.getElementById("files-sidebar").classList.contains("collapsed")')) {
+        await wrapper.locator('#files-btn').click();
+    }
+    await wrapper.locator('#files-show-hidden').check();
+    const tree = wrapper.locator('#files-list');
+    const folder = tree.locator('.files-row', { hasText: SIDEBAR_DIR.split('/').pop() });
+    await waitFor(async () => (await folder.count()) === 1);
+    await folder.click();
+    await waitFor(async () => (await tree.locator('.files-row', { hasText: SIDEBAR_FILE }).count()) === 1);
+    return tree;
+}
+
+// Preview and toggle probes shared by the protected-file checks.
+const previewState = (wrapper) => wrapper.evaluate(`JSON.stringify({
+    active: document.getElementById('files-preview').classList.contains('active'),
+    body: document.getElementById('files-preview-body').textContent,
+})`).then(JSON.parse);
+const previewText = async (wrapper) => {
+    const { active, body } = await previewState(wrapper);
+    return active && body;
+};
+// The strip is a live region that is always in the DOM, so "showing" means
+// it has text: an empty one takes no space and announces nothing.
+const toggleState = (wrapper) => wrapper.evaluate(`JSON.stringify({
+    checked: document.getElementById('files-show-protected').checked,
+    strip: document.getElementById('files-protected-strip').textContent !== '',
+})`);
+const TOGGLE_OFF = JSON.stringify({ checked: false, strip: false });
+const TOGGLE_ON = JSON.stringify({ checked: true, strip: true });
+// Flips the toggle from the keyboard. The full-viewport preview does not
+// trap focus, so this is how someone switches it off with a preview open.
+// Not uncheck({ force: true }): with the preview up that click lands on the
+// backdrop, which closes the preview and passes for the wrong reason.
+async function pressToggle(wrapper, page) {
+    await wrapper.locator('#files-show-protected').focus();
+    await page.keyboard.press('Space');
+}
+
 // 7. Downloads and the "Show protected files" toggle. Its own context, so a
 //    reload and the downloads here cannot disturb the main run, and so
 //    acceptDownloads is explicit. Playwright reports a download started in
@@ -230,70 +271,149 @@ async function checkDownloads(browser, url) {
         `${SIDEBAR_DIR}/${PROTECTED_FILE}`, `${SIDEBAR_DIR}/${UPLOAD_PART}`, ZIP_CAP_DIR]);
     const context = await browser.newContext({ acceptDownloads: true });
     const page = await context.newPage();
+    // Every protected=1 request, tagged with whether the toggle was on when
+    // it went out. The context sees the nested ingress frame's requests too.
+    let toggleOn = false;
+    const flagged = [];
+    context.on('request', (r) => {
+        if (new URL(r.url()).searchParams.get('protected') === '1') flagged.push({ on: toggleOn, url: r.url() });
+    });
     try {
         await page.goto(url, { waitUntil: 'load' });
         let wrapper = await wrapperFrame(page);
-        const fixtureName = SIDEBAR_DIR.split('/').pop();
-
-        // Opens the sidebar (it reopens by itself after a reload), lists
-        // dotfiles, and expands the fixture folder.
-        async function openFixture() {
-            if (await wrapper.evaluate('document.getElementById("files-sidebar").classList.contains("collapsed")')) {
-                await wrapper.locator('#files-btn').click();
-            }
-            await wrapper.locator('#files-show-hidden').check();
-            const tree = wrapper.locator('#files-list');
-            const folder = tree.locator('.files-row', { hasText: fixtureName });
-            await waitFor(async () => (await folder.count()) === 1);
-            await folder.click();
-            await waitFor(async () => (await tree.locator('.files-row', { hasText: SIDEBAR_FILE }).count()) === 1);
-            return tree;
-        }
-        const previewText = () => wrapper.evaluate(
-            'document.getElementById("files-preview").classList.contains("active") '
-            + '&& document.getElementById("files-preview-body").textContent');
         const closePreview = () => wrapper.locator('#files-close-btn').click();
-        const toggleState = () => wrapper.evaluate(`JSON.stringify({
-            checked: document.getElementById('files-show-protected').checked,
-            strip: !document.getElementById('files-protected-strip').hidden,
-        })`);
-        const OFF = JSON.stringify({ checked: false, strip: false });
         const toggleShown = () => wrapper.locator('#files-protected-toggle').isVisible();
         const switchTab = (tab) => wrapper.locator(`.files-tab[data-tab="${tab}"]`).click();
+        const turnOn = async () => {
+            await wrapper.locator('#files-show-protected').check();
+            toggleOn = true;
+        };
+        const turnOffByKeyboard = async () => {
+            await pressToggle(wrapper, page);
+            toggleOn = false;
+        };
+        const noToken = async () => !/TOKEN/.test((await previewState(wrapper)).body);
 
-        check('Show protected files is off on load, with no strip', await toggleState(), OFF);
-        let list = await openFixture();
-        await list.locator('.files-row', { hasText: PROTECTED_FILE }).click();
+        check('Show protected files is off on load, with no strip', await toggleState(wrapper), TOGGLE_OFF);
+        let list = await openSidebarFixture(wrapper);
+        const protectedRow = () => list.locator('.files-row', { hasText: PROTECTED_FILE });
+        await protectedRow().click();
         check('with the toggle off, a protected file is refused',
-            await waitFor(async () => /Show protected files/.test((await previewText()) || '')), true);
+            await waitFor(async () => /Show protected files/.test((await previewText(wrapper)) || '')), true);
         await closePreview();
 
-        await wrapper.locator('#files-show-protected').check();
-        check('turning it on shows the amber strip', await toggleState(), JSON.stringify({ checked: true, strip: true }));
-        await list.locator('.files-row', { hasText: PROTECTED_FILE }).click();
+        await turnOn();
+        check('turning it on shows the amber strip', await toggleState(wrapper), TOGGLE_ON);
+        await protectedRow().click();
         check('with the toggle on, a protected file previews',
-            await waitFor(async () => (await previewText()) === 'TOKEN=1\n'), true);
+            await waitFor(async () => (await previewText(wrapper)) === 'TOKEN=1\n'), true);
+
+        // Switched off from the keyboard with the protected preview still up.
+        await turnOffByKeyboard();
+        check('switching off closes an open protected preview and clears it',
+            { state: await toggleState(wrapper), preview: await previewState(wrapper) },
+            (v) => v.state === TOGGLE_OFF && !v.preview.active && !/TOKEN/.test(v.preview.body));
+        // Only reached when the check above failed; the rest still runs.
+        if ((await previewState(wrapper)).active) await closePreview();
+
+        // Positive control: an ordinary file has nothing to hide.
+        await turnOn();
+        await list.locator('.files-row', { hasText: SIDEBAR_FILE }).click();
+        await waitFor(async () => (await previewText(wrapper)) === 'sidebar: ok\n');
+        await turnOffByKeyboard();
+        check('switching off leaves an ordinary preview open',
+            await previewText(wrapper), 'sidebar: ok\n');
         await closePreview();
+
+        // A back/forward-cache restore goes through the same switch-off.
+        await turnOn();
+        await protectedRow().click();
+        await waitFor(async () => (await previewText(wrapper)) === 'TOKEN=1\n');
+        await wrapper.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))");
+        toggleOn = false;
+        check('a back/forward-cache restore turns it off and clears a protected preview',
+            { state: await toggleState(wrapper), preview: await previewState(wrapper) },
+            (v) => v.state === TOGGLE_OFF && !v.preview.active && v.preview.body === '');
+        // Only reached when the check above failed; the rest still runs.
+        if ((await previewState(wrapper)).active) await closePreview();
 
         // Off, the toggle is a Files-tab control like Hidden files. On, it
         // stays wherever the amber strip shows, so it can always be switched
         // off from there.
+        await turnOn();
         await switchTab('recent');
         check('while on, the toggle stays visible on the Recent tab', await waitFor(toggleShown), true);
-        await wrapper.locator('#files-show-protected').uncheck();
+        await turnOffByKeyboard();
         check('turning it off on the Recent tab hides it and the strip',
-            { shown: await toggleShown(), state: await toggleState() },
-            (v) => !v.shown && v.state === OFF);
+            { shown: await toggleShown(), state: await toggleState(wrapper) },
+            (v) => !v.shown && v.state === TOGGLE_OFF);
+        check('focus moves to the Recent tab, not the page body, when the toggle hides',
+            await wrapper.evaluate('document.activeElement?.dataset?.tab || document.activeElement?.tagName'), 'recent');
         await switchTab('files');
         check('off, the toggle is back on the Files tab', await waitFor(toggleShown), true);
-        // On again, so the reload below has something to reset.
-        await wrapper.locator('#files-show-protected').check();
+        check('the empty strip takes no space',
+            await wrapper.evaluate("document.getElementById('files-protected-strip').getBoundingClientRect().height"), 0);
+        list = await openSidebarFixture(wrapper);
+        await protectedRow().click();
+        check('switched off, a protected file is refused again',
+            await waitFor(async () => /Show protected files/.test((await previewText(wrapper)) || '')), true);
+        check('the refusal shows no secret', await noToken(), true);
+        await closePreview();
 
+        // On again, so the reload below has something to reset.
+        await turnOn();
         await page.reload({ waitUntil: 'load' });
+        toggleOn = false;
         wrapper = await wrapperFrame(page);
-        check('the toggle is off again after a reload', await toggleState(), OFF);
-        list = await openFixture();
+        check('the toggle is off again after a reload', await toggleState(wrapper), TOGGLE_OFF);
+        check('fixture: protected=1 was sent while the toggle was on', flagged.some((f) => f.on), true);
+        check('no protected=1 request goes out while the toggle is off',
+            flagged.filter((f) => !f.on).map((f) => f.url), (v) => v.length === 0);
+        list = await openSidebarFixture(wrapper);
     } finally {
+        await context.close();
+    }
+}
+
+// A protected preview still in flight when the toggle goes off must not land.
+// Its own context with service workers blocked: a request the service worker
+// fetches is invisible to context.route (see checkStaleView).
+async function checkLateProtectedPreview(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let held = 0;
+    let answered = false;
+    const isProtectedPreview = (u) => u.pathname.endsWith('/api/files/preview') && u.searchParams.get('protected') === '1';
+    try {
+        await context.route(isProtectedPreview, async (route) => {
+            held++;
+            await gate;
+            await route.continue().catch(() => {});
+        });
+        context.on('requestfinished', (r) => { if (isProtectedPreview(new URL(r.url()))) answered = true; });
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const list = await openSidebarFixture(wrapper);
+        await wrapper.locator('#files-show-protected').check();
+        await list.locator('.files-row', { hasText: PROTECTED_FILE }).click();
+        check('fixture: the protected preview is held back', await waitFor(() => held >= 1), true);
+        await pressToggle(wrapper, page);
+        release();
+        let leaked = false;
+        await waitFor(async () => {
+            if (/TOKEN/.test((await previewState(wrapper)).body)) leaked = true;
+            return answered;
+        }, { interval: 50 });
+        await sleep(300);
+        const last = await previewState(wrapper);
+        if (/TOKEN/.test(last.body)) leaked = true;
+        check('fixture: the held response was released', answered, true);
+        check('a protected answer arriving after switch-off never shows',
+            { leaked, active: last.active }, (v) => !v.leaked && !v.active);
+    } finally {
+        release();
         await context.close();
     }
 }
@@ -718,6 +838,7 @@ async function run(engine, mode, url) {
 
     await checkStaleView(browser, url);
     await checkDownloads(browser, url);
+    await checkLateProtectedPreview(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {

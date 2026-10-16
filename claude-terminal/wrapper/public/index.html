@@ -654,6 +654,15 @@
             flex-shrink: 0;
         }
 
+        /* Off, the strip stays in the DOM, empty, so that filling it in is
+           announced (a live region that only appears often is not). Empty,
+           it takes no space; display: none would drop it from the
+           accessibility tree. */
+        #files-protected-strip:empty {
+            padding: 0;
+            border: 0;
+        }
+
         #files-list {
             flex: 1;
             overflow: auto;
@@ -926,7 +935,7 @@
                     </select>
                     <button type="button" id="files-refresh" title="Refresh" aria-label="Refresh">&#8635;</button>
                 </div>
-                <div id="files-protected-strip" role="status" hidden>&#128274; Protected files can be opened and downloaded. Turn off &ldquo;Show protected files&rdquo; when you are done.</div>
+                <div id="files-protected-strip" role="status"></div>
                 <div id="files-list" role="tree"></div>
                 <div id="files-footer">
                     <button type="button" id="ha-check-btn" title="Run Home Assistant's configuration check (ha core check)">&#10003; Check HA configuration</button>
@@ -2133,6 +2142,7 @@
             let currentTab = load(STORE.tab) === 'recent' ? 'recent' : 'files';
             let rootPath = '/config';
             let previewPath = null;
+            let previewSensitive = false;   // the open preview is a protected file
             let selectedRow = null;
 
             async function getJson(url) {
@@ -2156,9 +2166,9 @@
                 row.className = 'files-row' + (entry.sensitive ? ' sensitive' : '');
                 row.setAttribute('role', 'treeitem');
                 row.style.paddingLeft = (8 + depth * 14) + 'px';
-                row.title = entry.sensitive
-                    ? entry.path + ' (protected: may hold secrets; opens only with Show protected files on)'
-                    : entry.path;
+                if (!entry.sensitive) row.title = entry.path;
+                else if (entry.type === 'dir') row.title = entry.path + ' (protected: its files open only with Show protected files on; never zipped)';
+                else row.title = entry.path + ' (protected: may hold secrets; opens only with Show protected files on)';
                 const twisty = document.createElement('span');
                 twisty.className = 'files-twisty';
                 twisty.textContent = entry.type === 'dir' ? '▸' : '';
@@ -2233,7 +2243,7 @@
                             }
                         });
                     } else {
-                        row.addEventListener('click', () => { select(row); openPreview(entry.path); });
+                        row.addEventListener('click', () => { select(row); openPreview(entry.path, entry.sensitive); });
                     }
                 }
                 if (data.truncated) container.append(note('… more entries not shown', depth));
@@ -2255,7 +2265,7 @@
                 if (!data.entries.length) list.append(note('Nothing changed in this period'));
                 for (const entry of data.entries) {
                     const row = makeRow(entry, 0, helpers.relativeTo(rootPath, entry.path), helpers.formatAgo(entry.mtime));
-                    row.addEventListener('click', () => { select(row); openPreview(entry.path); });
+                    row.addEventListener('click', () => { select(row); openPreview(entry.path, entry.sensitive); });
                     list.append(row);
                 }
                 if (data.truncated || data.incomplete) list.append(note('… showing the newest found; the search stopped early'));
@@ -2272,8 +2282,9 @@
                 else renderRecent(gen);
             }
 
-            async function openPreview(filePath) {
+            async function openPreview(filePath, sensitive) {
                 previewPath = filePath;
+                previewSensitive = Boolean(sensitive);
                 previewTitle.textContent = filePath;
                 previewMeta.textContent = '';
                 previewBody.textContent = 'Loading…';
@@ -2292,8 +2303,22 @@
                 }
             }
 
+            // A protected file's text does not outlive its preview: closing
+            // it clears the dialog, rather than leaving the secret hidden in
+            // the DOM.
             function closePreview() {
                 preview.classList.remove('active');
+                if (previewSensitive) blankPreview();
+            }
+
+            // Clearing previewPath also drops an answer still in flight: the
+            // previewPath check in openPreview no longer matches it.
+            function blankPreview() {
+                previewPath = null;
+                previewSensitive = false;
+                previewTitle.textContent = '';
+                previewMeta.textContent = '';
+                previewBody.textContent = '';
             }
 
             function setOpen(open, { persist = true } = {}) {
@@ -2328,16 +2353,30 @@
             // "Show protected files" is never remembered: cleared on every
             // load, and again when the browser brings the page back from its
             // back/forward cache, which keeps form state as it was.
+            // Switching off also takes down a protected preview: one already
+            // open (the toggle is reachable by keyboard behind it), one still
+            // loading, and one a back/forward-cache restore brings back.
             function setProtected(on) {
                 showProtected.checked = on;
-                protectedStrip.hidden = !on;
+                protectedStrip.textContent = on
+                    ? '\u{1F512} Protected files can be opened and downloaded. Turn off \u201CShow protected files\u201D when you are done.'
+                    : '';
+                if (!on && previewSensitive) {
+                    closePreview();
+                    blankPreview();
+                }
                 placeProtectedToggle();
             }
             // Off, it is a Files-tab control like Hidden files. On, it shows
             // on every tab, as the amber strip does, so it can always be
-            // switched off from where the strip is showing.
+            // switched off from where the strip is showing. Hiding it while
+            // it has focus would drop focus to the page, so the active tab
+            // takes it.
             function placeProtectedToggle() {
-                protectedToggle.hidden = currentTab !== 'files' && !showProtected.checked;
+                const hide = currentTab !== 'files' && !showProtected.checked;
+                const hadFocus = protectedToggle.contains(document.activeElement);
+                protectedToggle.hidden = hide;
+                if (hide && hadFocus) tabs.find((t) => t.dataset.tab === currentTab)?.focus();
             }
             setProtected(false);
             window.addEventListener('pageshow', (e) => { if (e.persisted) setProtected(false); });
