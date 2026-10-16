@@ -35,7 +35,7 @@
 // one mistyped shell command.
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startIngress } from './ingress-harness.mjs';
@@ -83,6 +83,20 @@ const cancelCopyMode = () => {
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Starts a download and returns it, or null when none began. A download that
+// never starts must be a failed check, not a timeout that ends the run.
+async function expectDownload(page, start, { timeout = 10000 } = {}) {
+    try {
+        const [download] = await Promise.all([
+            page.waitForEvent('download', { timeout }),
+            start(),
+        ]);
+        return download;
+    } catch {
+        return null;
+    }
+}
 
 // Poll for a condition instead of sleeping a guessed interval. Fixed delays
 // here are not just slow, they are wrong in both directions: too short and the
@@ -370,6 +384,45 @@ async function checkDownloads(browser, url) {
         check('no protected=1 request goes out while the toggle is off',
             flagged.filter((f) => !f.on).map((f) => f.url), (v) => v.length === 0);
         list = await openSidebarFixture(wrapper);
+
+        // Download from the preview: the file's own name, its exact bytes,
+        // and the terminal page still in place afterwards.
+        const downloadBtn = () => wrapper.locator('#files-download-btn');
+        const downloadDisabled = () => wrapper.evaluate(
+            '!!document.getElementById("files-download-btn")?.disabled');
+        await list.locator('.files-row', { hasText: SIDEBAR_FILE }).click();
+        await waitFor(async () => (await previewText(wrapper)) === 'sidebar: ok\n');
+        const file = await expectDownload(page, () => downloadBtn().click());
+        check('Download starts a download', file !== null, true);
+        check('the download keeps the file name', file && file.suggestedFilename(), SIDEBAR_FILE);
+        check('the download has the exact bytes',
+            file && readFileSync(await file.path(), 'utf8'), 'sidebar: ok\n');
+        check('the terminal page is still there after a download',
+            await wrapper.evaluate('!!document.getElementById("terminal-frame")').catch(() => false), true);
+        await closePreview();
+
+        await protectedRow().click();
+        await waitFor(async () => /Show protected files/.test((await previewText(wrapper)) || ''));
+        check('Download is disabled when the preview was refused', await downloadDisabled(), true);
+        await closePreview();
+
+        // With the toggle on, a protected file downloads too, and its request
+        // carries protected=1.
+        await turnOn();
+        await protectedRow().click();
+        await waitFor(async () => (await previewText(wrapper)) === 'TOKEN=1\n');
+        const secret = await expectDownload(page, () => downloadBtn().click());
+        check('with the toggle on, a protected file downloads',
+            secret && readFileSync(await secret.path(), 'utf8'), 'TOKEN=1\n');
+        // Switching off blanks the protected preview: nothing is left to
+        // download, so even a click that reaches the button starts nothing.
+        await turnOffByKeyboard();
+        check('switching off disables Download for the blanked preview', await downloadDisabled(), true);
+        const stray = await expectDownload(page,
+            () => wrapper.evaluate('document.getElementById("files-download-btn").click()'), { timeout: 2000 });
+        check('a click on Download after switch-off starts nothing', stray, null);
+        check('no protected=1 download goes out while the toggle is off',
+            flagged.filter((f) => !f.on).map((f) => f.url), (v) => v.length === 0);
     } finally {
         await context.close();
     }

@@ -802,6 +802,11 @@
             margin-bottom: 8px;
         }
 
+        #files-download-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         /* textContent only, in a <pre>: a file is shown as text, never parsed
            as HTML. */
         #files-preview-body {
@@ -954,6 +959,7 @@
             <pre id="files-preview-body"></pre>
             <div class="modal-buttons">
                 <button type="button" id="files-insert-btn" class="modal-btn modal-btn-primary" title="Type the path at the terminal prompt">Insert path</button>
+                <button type="button" id="files-download-btn" class="modal-btn modal-btn-secondary" title="Save this file to your device" disabled>Download</button>
                 <button type="button" id="files-copy-btn" class="modal-btn modal-btn-secondary">Copy path</button>
                 <button type="button" id="files-close-btn" class="modal-btn modal-btn-secondary">Close</button>
             </div>
@@ -2126,6 +2132,7 @@
             const previewTitle = document.getElementById('files-preview-title');
             const previewMeta = document.getElementById('files-preview-meta');
             const previewBody = document.getElementById('files-preview-body');
+            const downloadBtn = document.getElementById('files-download-btn');
 
             const PHONE = window.matchMedia('(max-width: 700px)');
             const STORE = { open: 'filesSidebar.open', width: 'filesSidebar.width', tab: 'filesSidebar.tab' };
@@ -2282,9 +2289,29 @@
                 else renderRecent(gen);
             }
 
+            // Hand a download to the browser without leaving this page: a
+            // click on a temporary <a download>. Not location.href or
+            // window.open - the download attribute keeps this frame (and the
+            // terminal in it) where it is even if the answer turns out not
+            // to be a file, and it is not a popup, so nothing blocks it. The
+            // URL is relative (downloadUrl) and so same-origin, which the
+            // download attribute requires, and stays below the ingress path.
+            function startDownload(url) {
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = '';   // the name comes from Content-Disposition
+                a.hidden = true;
+                document.body.append(a);
+                a.click();
+                a.remove();
+            }
+
             async function openPreview(filePath, sensitive) {
                 previewPath = filePath;
                 previewSensitive = Boolean(sensitive);
+                // Enabled once the preview loads: a refused preview (a
+                // protected file with the toggle off) means a refused download.
+                downloadBtn.disabled = true;
                 previewTitle.textContent = filePath;
                 previewMeta.textContent = '';
                 previewBody.textContent = 'Loading…';
@@ -2297,6 +2324,7 @@
                     if (data.truncated) parts.push('showing the first ' + helpers.formatSize(data.limit));
                     previewMeta.textContent = parts.join(' · ');
                     previewBody.textContent = data.binary ? '(binary file, no preview)' : data.content;
+                    downloadBtn.disabled = false;
                 } catch (err) {
                     if (previewPath !== filePath) return;
                     previewBody.textContent = '⚠️ ' + err.message;
@@ -2316,6 +2344,7 @@
             function blankPreview() {
                 previewPath = null;
                 previewSensitive = false;
+                downloadBtn.disabled = true;
                 previewTitle.textContent = '';
                 previewMeta.textContent = '';
                 previewBody.textContent = '';
@@ -2404,6 +2433,14 @@
                 if (!previewPath) return;
                 const ok = await copyToClipboard(previewPath);
                 setStatus(ok ? 'Path copied' : 'Copy failed', ok ? 'success' : 'error');
+            });
+            // previewPath is read at click time: a blanked preview has none,
+            // and a protected file never goes out with the toggle off (by
+            // construction its preview is blanked then; checked anyway).
+            downloadBtn.addEventListener('click', () => {
+                if (!previewPath || downloadBtn.disabled) return;
+                if (previewSensitive && !showProtected.checked) return;
+                startDownload(helpers.downloadUrl(previewPath, { protectedOn: showProtected.checked }));
             });
             document.getElementById('files-close-btn').addEventListener('click', closePreview);
             preview.addEventListener('click', (e) => { if (e.target === preview) closePreview(); });
