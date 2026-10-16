@@ -618,6 +618,32 @@ async function checkZipMenu(browser, url) {
             { hidden: await menuHidden(), focus: await focused() },
             (v) => v.hidden && v.focus === `Actions for ${fixtureName}`);
 
+        // Closed by something else with focus inside (a tree scroll here),
+        // the menu hands focus back too, rather than dropping it on the page.
+        await page.keyboard.press('Enter');
+        check('fixture: focus is inside the open menu', await focused(), (v) => /^item:/.test(v));
+        await wrapper.evaluate("document.getElementById('files-list').dispatchEvent(new Event('scroll'))");
+        check('a menu closed by a scroll gives focus back to the ⋯ button',
+            { hidden: await menuHidden(), focus: await focused() },
+            (v) => v.hidden && v.focus === `Actions for ${fixtureName}`);
+
+        // Only a change of width closes it: on a phone the URL bar and the
+        // keyboard change the height alone.
+        const size = page.viewportSize();
+        const innerSize = () => wrapper.evaluate('JSON.stringify([innerWidth, innerHeight])').then(JSON.parse);
+        const [width0, height0] = await innerSize();
+        await page.keyboard.press('Enter');
+        await page.setViewportSize({ width: size.width, height: size.height - 80 });
+        check('fixture: the page got shorter', await waitFor(async () => (await innerSize())[1] < height0), true);
+        // Two frames, so a resize event for the new height has been handled.
+        await wrapper.evaluate('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+        check('a height-only resize leaves the menu open', await menuHidden(), false);
+        await page.setViewportSize({ width: size.width - 80, height: size.height - 80 });
+        check('fixture: the page got narrower', await waitFor(async () => (await innerSize())[0] < width0), true);
+        check('a change of width closes the menu', await waitFor(menuHidden), true);
+        await page.setViewportSize(size);
+        await waitFor(async () => (await innerSize())[0] === width0);
+
         // A click outside closes it; the menu sits inside the sidebar.
         await menuButton(fixtureName).click();
         check('the open menu stays inside the sidebar', await wrapper.evaluate(`(() => {
@@ -653,9 +679,17 @@ async function checkZipMenu(browser, url) {
             await wrapper.evaluate(`JSON.stringify((() => {
                 const item = [...document.querySelectorAll('#files-menu .files-menu-item')]
                     .find((i) => i.textContent.includes('Download as zip'));
-                return item && { disabled: item.getAttribute('aria-disabled'), title: item.title, text: item.textContent };
+                const hint = item && document.getElementById(item.getAttribute('aria-describedby') || '');
+                return item && {
+                    disabled: item.getAttribute('aria-disabled'), title: item.title, text: item.textContent,
+                    described: hint && item.contains(hint) ? hint.textContent : null,
+                    hintOutOfName: !!hint && hint.getAttribute('aria-hidden') === 'true',
+                };
             })())`).then(JSON.parse),
-            (v) => v && v.disabled === 'true' && /protected/i.test(v.title) && /protected/i.test(v.text));
+            // On screen, in its tooltip, and as its description; not in its
+            // name (the hint is aria-hidden, so the name stays the label).
+            (v) => v && v.disabled === 'true' && /protected/i.test(v.title) && /protected/i.test(v.text)
+                && /protected/i.test(v.described || '') && v.hintOutOfName);
         // force: Playwright will not click what aria-disabled marks disabled.
         await zipItem.click({ force: true });
         await page.keyboard.press('Enter');

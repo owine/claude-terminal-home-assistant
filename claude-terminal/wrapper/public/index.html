@@ -2546,14 +2546,18 @@
 
             let menuOwner = null;   // the ⋯ button whose menu is open
 
+            // Focus inside the menu goes back to its ⋯ whatever closed it (a
+            // scroll or a resize included); emptying the menu would otherwise
+            // drop it on the page body.
             function closeMenu({ focusOwner = false } = {}) {
                 if (!menuOwner) return;
                 const owner = menuOwner;
                 menuOwner = null;
+                const hadFocus = menu.contains(document.activeElement);
                 menu.hidden = true;
                 menu.replaceChildren();
                 owner.setAttribute('aria-expanded', 'false');
-                if (focusOwner && owner.isConnected) owner.focus();
+                if ((focusOwner || hadFocus) && owner.isConnected) owner.focus();
             }
 
             function openMenu(button, entry) {
@@ -2573,11 +2577,16 @@
                     item.title = action.title || '';
                     if (action.disabled) {
                         item.setAttribute('aria-disabled', 'true');
+                        // On screen inside the item, but read as its
+                        // description, not as part of its name.
                         if (action.hint) {
                             const hint = document.createElement('span');
                             hint.className = 'files-menu-hint';
+                            hint.id = 'files-menu-hint-' + menu.childElementCount;
+                            hint.setAttribute('aria-hidden', 'true');
                             hint.textContent = action.hint;
                             item.append(hint);
+                            item.setAttribute('aria-describedby', hint.id);
                         }
                     }
                     item.addEventListener('click', () => {
@@ -2769,13 +2778,11 @@
                 const ok = await copyToClipboard(previewPath);
                 setStatus(ok ? 'Path copied' : 'Copy failed', ok ? 'success' : 'error');
             });
-            // previewPath is read at click time: a blanked preview has none,
-            // and a protected file never goes out with the toggle off (by
-            // construction its preview is blanked then; checked anyway).
+
             // The menu closes on a press anywhere else, Escape, Tab, scrolling
-            // the tree, a resize, and the window losing focus - which is also
-            // what a click into the terminal iframe looks like from this page.
-            // Escape and Tab hand focus back to the ⋯ that opened it.
+            // the tree, a change of width, and the window losing focus -
+            // which is also what a click into the terminal iframe looks like
+            // from this page. Focus that was in it goes back to the ⋯.
             document.addEventListener('pointerdown', (e) => {
                 if (menuOwner && !menu.contains(e.target) && !menuOwner.contains(e.target)) closeMenu();
             });
@@ -2799,10 +2806,20 @@
                 }
             });
             list.addEventListener('scroll', () => closeMenu());
-            window.addEventListener('resize', () => closeMenu());
+            // Width only: on a phone the URL bar and the on-screen keyboard
+            // change the height alone, and that must not close the menu.
+            let menuWidth = window.innerWidth;
+            window.addEventListener('resize', () => {
+                if (window.innerWidth === menuWidth) return;
+                menuWidth = window.innerWidth;
+                closeMenu();
+            });
             window.addEventListener('blur', () => closeMenu());
             document.getElementById('files-notice-close').addEventListener('click', () => showNotice(''));
 
+            // previewPath is read at click time: a blanked preview has none,
+            // and a protected file never goes out with the toggle off (by
+            // construction its preview is blanked then; checked anyway).
             downloadBtn.addEventListener('click', () => {
                 if (!previewPath || downloadBtn.disabled) return;
                 if (previewSensitive && !showProtected.checked) return;
