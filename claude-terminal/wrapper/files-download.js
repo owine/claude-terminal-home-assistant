@@ -503,6 +503,12 @@ function createDownloads({
  * transfer settles: each walks a tree and deflates up to 200 MB, and on a
  * Raspberry Pi a few at once would starve the terminal. The rate limiter
  * bounds how often they start; this bounds how many run together.
+ *
+ * A check=1 preflight holds a slot only while it plans, and frees it when it
+ * answers. So the download that follows a passed preflight can still get the
+ * 429 if two other zips start in between. That is accepted: it is one more
+ * way a download can fail after its preflight passed (a file deleted, the
+ * folder grown past the cap), and ends the same way: a failed download.
  */
 function createDownloadRouter({ downloads, fileLimiter, zipLimiter, maxZips = MAX_CONCURRENT_ZIPS, log = console.error }) {
     const router = express.Router();
@@ -545,7 +551,7 @@ function createDownloadRouter({ downloads, fileLimiter, zipLimiter, maxZips = MA
         // a refusal reaches the sidebar as a message before the browser is
         // handed a download that could only fail silently.
         if (req.query.check === '1') {
-            settle();
+            settle();   // the download that follows queues anew (see above)
             return res.json({ name: plan.name, files: plan.files.length, bytes: plan.bytes });
         }
         try {
