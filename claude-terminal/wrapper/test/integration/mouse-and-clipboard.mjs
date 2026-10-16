@@ -556,13 +556,15 @@ async function checkDownloads(browser, url) {
 async function checkZipMenu(browser, url) {
     const LOCKED = '.ssh';        // a protected folder (SENSITIVE_DIRS)
     const GONE = 'ctp-gone';      // listed, then deleted before its zip
-    dexec(['sh', '-c', 'mkdir -p "$1" "$2"; printf k > "$1/id_test"; printf x > "$2/x"', 'sh',
-        `${SIDEBAR_DIR}/${LOCKED}`, `${SIDEBAR_DIR}/${GONE}`]);
+    const OTHER = 'ctp-other';    // zipped while another zip is preparing
+    dexec(['sh', '-c', 'mkdir -p "$1" "$2" "$3"; printf k > "$1/id_test"; printf x > "$2/x"; printf y > "$3/y"', 'sh',
+        `${SIDEBAR_DIR}/${LOCKED}`, `${SIDEBAR_DIR}/${GONE}`, `${SIDEBAR_DIR}/${OTHER}`]);
     const context = await browser.newContext({ acceptDownloads: true, serviceWorkers: 'block' });
     const page = await context.newPage();
     const downloads = [];
     page.on('download', (d) => downloads.push(d));
     const preflights = [];
+    let release = () => {};   // the held preflight at the end, if any
     context.on('request', (r) => {
         const u = new URL(r.url());
         if (u.pathname.endsWith('/api/files/download-zip') && u.searchParams.get('check') === '1') preflights.push(u);
@@ -705,26 +707,67 @@ async function checkZipMenu(browser, url) {
         await waitFor(async () => held === 3 && /reach/.test((await notice()).text));
         check('a network failure is shown in the notice', await notice(),
             (v) => v.kind === 'error' && /Could not reach the add-on/.test(v.text));
+
+        // A 200 that is not a plan (a proxy's page, say) is no passed check.
+        await context.unroute(isPreflight);
+        await context.route(isPreflight, (route) => {
+            held++;
+            return route.fulfill({ status: 200, contentType: 'text/html', body: '<html>proxy</html>' });
+        });
+        await menuButton(fixtureName).click();
+        await zipItem.click();
+        await waitFor(async () => held === 4 && /unexpected/.test((await notice()).text));
+        check('a preflight reply that is not a plan is shown as a failure', await notice(),
+            (v) => v.kind === 'error' && /unexpected answer/.test(v.text));
         await context.unroute(isPreflight);
 
         // Positive control for every refusal above, driven by the keyboard
-        // alone: a good zip now starts, and is the only download since the
-        // vanished folder.
+        // alone, with its preflight held back so that two more things can
+        // happen while it is out:
+        //   - Enter held down (zip, reopen, zip again) must not start the
+        //     same zip twice;
+        //   - another folder zips; when the held answer lands, its zip still
+        //     starts, but the notice keeps the newer folder's news.
+        const gate = new Promise((r) => { release = r; });
+        let heldZip = 0;
+        const isFixturePreflight = (u) => isPreflight(u) && u.searchParams.get('path') === SIDEBAR_DIR;
+        await context.route(isFixturePreflight, async (route) => {
+            heldZip++;
+            await gate;
+            await route.continue().catch(() => {});
+        });
+        const preflightsOf = (p) => preflights.filter((u) => u.searchParams.get('path') === p).length;
+        const fixturePreflights = preflightsOf(SIDEBAR_DIR);
         await menuButton(fixtureName).focus();
-        await page.keyboard.press('Enter');
         await zipBudget(2);
-        const control = await expectDownload(page, () => page.keyboard.press('Enter'));
-        check('Enter on Download as zip downloads the folder', control && control.suggestedFilename(), `${fixtureName}.zip`);
+        await page.keyboard.press('Enter');   // opens the menu
+        await page.keyboard.press('Enter');   // zips; its preflight is held
+        check('fixture: the zip\'s preflight is held back', await waitFor(() => heldZip >= 1), true);
         check('after its action, focus is back on the ⋯ button',
             { hidden: await menuHidden(), focus: await focused() },
             (v) => v.hidden && v.focus === `Actions for ${fixtureName}`);
-        check('no refusal (404, protected, 429, network) started a download',
-            zipPaths(since), (v) => v.length === 1 && v[0] === SIDEBAR_DIR);
+        await page.keyboard.press('Enter');   // reopens it
+        await page.keyboard.press('Enter');   // and zips again: dropped
+        await menuButton(OTHER).click();
+        await zipBudget(2);
+        const other = await expectDownload(page, () => zipItem.click());
+        check('fixture: another folder zips meanwhile', other && other.suggestedFilename(), `${OTHER}.zip`);
+        check('fixture: the notice has the other folder\'s news',
+            await waitFor(async () => /^Downloading ctp-other\.zip/.test((await notice()).text)), true);
+        const control = await expectDownload(page, async () => { release(); });
+        check('Enter on Download as zip downloads the folder', control && control.suggestedFilename(), `${fixtureName}.zip`);
+        check('a second activation while its zip is preparing sends no second preflight',
+            preflightsOf(SIDEBAR_DIR) - fixturePreflights, 1);
+        check('a late answer does not overwrite a newer zip\'s notice', (await notice()).text,
+            (v) => /^Downloading ctp-other\.zip/.test(v));
+        check('no refusal (404, protected, 429, network, not a plan) started a download, nor a second zip',
+            zipPaths(since).sort(), (v) => JSON.stringify(v) === JSON.stringify([SIDEBAR_DIR, `${SIDEBAR_DIR}/${OTHER}`]));
         check('the notice can be dismissed', await (async () => {
             await wrapper.locator('#files-notice-close').click();
             return (await notice()).text;
         })(), '');
     } finally {
+        release();
         await context.close();
     }
 }

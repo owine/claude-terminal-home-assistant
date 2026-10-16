@@ -2453,10 +2453,19 @@
             }
 
             // kind: '' (news), 'busy' (try again shortly) or 'error'.
+            // Returns the notice's generation, bumped by every showNotice
+            // (a dismissal included), for showNoticeIf.
+            let noticeGen = 0;
             function showNotice(text, kind = '') {
                 noticeText.textContent = text;
                 notice.className = kind;
                 notice.hidden = !text;
+                return ++noticeGen;
+            }
+            // Only if nothing has replaced notice `gen` since: a slow answer
+            // about an older zip must not overwrite a newer one's news.
+            function showNoticeIf(gen, text, kind = '') {
+                if (gen === noticeGen) showNotice(text, kind);
             }
 
             // What a refused zip preflight says in the notice. 429 is the
@@ -2475,25 +2484,45 @@
                 return ['⚠️ ' + zipName + ': ' + err.message, 'error'];
             }
 
+            // Folders whose preflight is still out. A second activation of
+            // the same folder meanwhile (a double click, or a held Enter,
+            // which zips, reopens the menu and zips again) is dropped
+            // rather than starting the same zip twice.
+            const zipsPreparing = new Set();
+
             // A zip is checked first (check=1: the same walk, answered as
             // JSON), so a refusal - over the size cap, too many files, a
             // protected or vanished folder, a busy server - shows here with
             // its reason, and no download starts. Once the browser has the
             // download, an error could only appear as a failed download with
             // no reason.
+            //
+            // Zips of different folders may overlap. Each one asked for is
+            // started, whenever its answer comes; only the notice is left
+            // to the newest (showNoticeIf).
             async function downloadZip(entry) {
                 if (entry.sensitive) return;   // never offered; the server refuses it too
+                if (zipsPreparing.has(entry.path)) return;
+                zipsPreparing.add(entry.path);
                 const zipName = entry.name + '.zip';
-                showNotice('Preparing ' + zipName + '…');
+                const gen = showNotice('Preparing ' + zipName + '…');
                 let plan;
                 try {
                     plan = await getJson(helpers.downloadUrl(entry.path, { zip: true, check: true }));
                 } catch (err) {
-                    showNotice(...zipRefusal(err, zipName));
+                    showNoticeIf(gen, ...zipRefusal(err, zipName));
+                    return;
+                } finally {
+                    zipsPreparing.delete(entry.path);
+                }
+                // A reply that is not a plan (say a proxy's page answered
+                // 200) is not a passed check.
+                if (!plan || typeof plan.files !== 'number') {
+                    showNoticeIf(gen, '⚠️ ' + zipName + ': the add-on gave an unexpected answer. Try again.', 'error');
                     return;
                 }
                 startDownload(helpers.downloadUrl(entry.path, { zip: true }));
-                showNotice('Downloading ' + (plan.name || zipName) + ': ' + plan.files
+                showNoticeIf(gen, 'Downloading ' + (plan.name || zipName) + ': ' + plan.files
                     + (plan.files === 1 ? ' file, ' : ' files, ') + helpers.formatSize(plan.bytes)
                     + ' before compression. Protected files are left out.');
             }
