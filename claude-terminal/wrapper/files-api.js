@@ -164,7 +164,7 @@ class FilesError extends Error {
 const notAllowed = () => new FilesError(404, 'Not found or not allowed');
 // The sensitive tier's refusal. The UI lifts it with "Show protected files",
 // which adds protected=1 to preview and download requests.
-const secretRefusal = () => new FilesError(403, 'This file may hold secrets. Turn on "Show protected files" to open it.');
+const secretRefusal = (action = 'open') => new FilesError(403, `This file may hold secrets. Turn on "Show protected files" to ${action} it.`);
 
 /**
  * Looks binary if the sample holds a NUL byte or is not valid UTF-8. A
@@ -425,7 +425,7 @@ function createFilesApi({
      * and outside-the-root are always refused, sensitive unless
      * `allowSensitive`.
      */
-    async function openFile(requestedPath, { allowSensitive = false } = {}) {
+    async function openFile(requestedPath, { allowSensitive = false, action = 'open' } = {}) {
         // Normalise first: inside() is a string-prefix check, and a "../" left
         // in the path would pass it and still open a file outside the root.
         const real = path.resolve(requestedPath);
@@ -433,7 +433,7 @@ function createFilesApi({
         if (!inside(rootBefore, real)) throw notAllowed();
         const kindBefore = classifyRelative(path.relative(rootBefore, real));
         if (kindBefore === 'hidden') throw notAllowed();
-        if (kindBefore === 'sensitive' && !allowSensitive) throw secretRefusal();
+        if (kindBefore === 'sensitive' && !allowSensitive) throw secretRefusal(action);
 
         let handle;
         try {
@@ -449,7 +449,7 @@ function createFilesApi({
                 if (!inside(rootReal, opened)) throw notAllowed();
                 const openedKind = classifyRelative(path.relative(rootReal, opened));
                 if (openedKind === 'hidden') throw notAllowed();
-                if (openedKind === 'sensitive' && !allowSensitive) throw secretRefusal();
+                if (openedKind === 'sensitive' && !allowSensitive) throw secretRefusal(action);
             }
             const stat = await handle.stat();
             if (!stat.isFile()) throw new FilesError(400, 'Not a file');
@@ -472,11 +472,9 @@ function createFilesApi({
      */
     async function openRequested(requested, { allowSensitive = false, action = 'open' } = {}) {
         const { real, kind } = await resolve(requested);
-        if (kind === 'sensitive' && !allowSensitive) {
-            throw new FilesError(403, `This file may hold secrets. Turn on "Show protected files" to ${action} it.`);
-        }
+        if (kind === 'sensitive' && !allowSensitive) throw secretRefusal(action);
         if (onResolved) await onResolved(real);
-        const { handle, stat } = await openFile(real, { allowSensitive });
+        const { handle, stat } = await openFile(real, { allowSensitive, action });
         return { handle, stat, real, kind };
     }
 
