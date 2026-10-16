@@ -161,6 +161,32 @@ test('a folder named like a drive (C:backup) zips under a name yazl accepts', as
     }
 });
 
+test('a zip lists each folder\'s files by name, then its folders by name', async () => {
+    // Created out of order, so the listing order of the filesystem (hash
+    // order on ext4, its own on APFS) would show through.
+    const files = ['m.txt', 'B.txt', 'a.txt', 'Z.txt', '10.txt', '2.txt', '_x.txt', 'é.txt', 'q.txt', 'c.txt',
+        'k.txt', 'y.txt', 'D.txt', 'f.txt', '0.txt', 'w.txt', 'n.txt', 'h.txt', 'j.txt', 'u.txt'];
+    for (const name of files) write(`order/${name}`, name);
+    for (const name of ['t.txt', 'b.txt']) write(`order/sub2/${name}`, name);
+    for (const name of ['s.txt', 'e.txt']) write(`order/Sub1/${name}`, name);
+    try {
+        const expected = [
+            ...[...files].sort().map((n) => `order/${n}`),
+            'order/Sub1/e.txt', 'order/Sub1/s.txt',
+            'order/sub2/b.txt', 'order/sub2/t.txt',
+        ];
+        const plan = await downloads.planZip('order');
+        assert.deepStrictEqual(plan.files.map((f) => f.name), expected);
+        // And the archive holds them in that order.
+        await withServer({}, async (url) => {
+            const entries = await unzip(Buffer.from(await (await fetch(`${url}/download-zip?path=order`)).arrayBuffer()));
+            assert.deepStrictEqual(Object.keys(entries), expected);
+        });
+    } finally {
+        fs.rmSync(path.join(root, 'order'), { recursive: true });
+    }
+});
+
 test('zipping a sensitive folder is refused, not an empty archive', async () => {
     await refused(downloads.planZip('.storage'), 403);
     await refused(downloads.planZip('blueprints/.ssh'), 403);
@@ -959,7 +985,7 @@ test('zip: a read error on an entry aborts the download; nothing throws', async 
         await withServer({ downloads: createDownloads({ api: failing }), escapes, log: (m) => logged.push(m) }, async (url) => {
             assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=${ZIPDIR}`)), true);
             assert.ok(await until(() => zipFds() === 0), 'descriptor left open');
-            assert.ok(await until(() => logged.some((m) => /"zipdir\.zip" aborted: "zipdir\/[abc]\.bin": simulated EIO/.test(m)), 1000),
+            assert.ok(await until(() => logged.some((m) => /"zipdir\.zip" aborted: "zipdir\/a\.bin": simulated EIO/.test(m)), 1000),
                 logged.join('\n'));
         });
     });

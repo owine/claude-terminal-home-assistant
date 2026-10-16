@@ -392,7 +392,10 @@ function createDownloads({
                 await handle.close().catch(() => {});
                 return;
             }
-            const subdirs = [];
+            // Listed first and sorted by name, so the archive's order does
+            // not depend on the filesystem's listing order: the same folder
+            // zips to the same entries in the same order.
+            const dirents = [];
             try {
                 for await (const dirent of handle) {
                     if (++visits > maxVisits) {
@@ -403,29 +406,38 @@ function createDownloads({
                         cut = 'listing it took too long';
                         break;
                     }
-                    const full = path.join(dir, dirent.name);
-                    const type = walkEntryType(path.relative(rootReal, full), dirent);
-                    if (type === 'dir') {
-                        subdirs.push(full);
-                        continue;
-                    }
-                    if (type !== 'file') continue;
-                    let st;
-                    try {
-                        st = await fsp.lstat(full);
-                    } catch {
-                        continue;
-                    }
-                    if (!st.isFile()) continue;   // swapped since the listing
-                    const name = `${top}/${zipSafe(path.relative(real, full))}`;
-                    files.push({ full, name, size: st.size, mtime: st.mtime, mode: st.mode });
-                    bytes += st.size;
+                    dirents.push(dirent);
                 }
             } catch {
                 // Folder changed under us; keep what was read.
             } finally {
                 // Breaking out of for-await closes the handle already.
                 await handle.close().catch(() => {});
+            }
+            dirents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+            const subdirs = [];
+            for (const dirent of dirents) {
+                if (Date.now() > deadline) {
+                    cut = cut || 'listing it took too long';
+                    break;
+                }
+                const full = path.join(dir, dirent.name);
+                const type = walkEntryType(path.relative(rootReal, full), dirent);
+                if (type === 'dir') {
+                    subdirs.push(full);
+                    continue;
+                }
+                if (type !== 'file') continue;
+                let st;
+                try {
+                    st = await fsp.lstat(full);
+                } catch {
+                    continue;
+                }
+                if (!st.isFile()) continue;   // swapped since the listing
+                const name = `${top}/${zipSafe(path.relative(real, full))}`;
+                files.push({ full, name, size: st.size, mtime: st.mtime, mode: st.mode });
+                bytes += st.size;
             }
             for (const sub of subdirs) {
                 if (cut) return;
