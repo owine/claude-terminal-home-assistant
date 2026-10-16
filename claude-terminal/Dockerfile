@@ -29,9 +29,9 @@ RUN apk upgrade --no-cache \
     tmux=3.7c-r0 \
     tree=2.3.2-r0 \
     ttyd=1.7.7-r0 \
-    vim=9.2.1178-r0 \
+    vim=9.2.1202-r0 \
     wget=1.25.0-r3 \
-    yq-go=4.53.3-r1
+    yq-go=4.53.3-r2
 
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
