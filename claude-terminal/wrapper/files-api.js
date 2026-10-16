@@ -422,8 +422,10 @@ function createFilesApi({
      * and the descriptor's path again AFTER it, as the race guard. Only the
      * second one sees through a symlinked parent folder.
      *
-     * Resolves to { handle, stat }; the caller closes the handle. Hidden
-     * and outside-the-root are always refused, sensitive unless
+     * Resolves to { handle, stat, sensitive }, `sensitive` being true when
+     * either check found a protected file (only possible with
+     * `allowSensitive`); the caller closes the handle. Hidden and
+     * outside-the-root are always refused, sensitive unless
      * `allowSensitive`.
      */
     async function openFile(requestedPath, { allowSensitive = false, action = 'open' } = {}) {
@@ -443,6 +445,7 @@ function createFilesApi({
             if (err.code === 'EISDIR') throw new FilesError(400, 'Not a file');
             throw new FilesError(400, `Cannot read file (${err.code || 'error'})`);
         }
+        let sensitive = kindBefore === 'sensitive';
         try {
             const opened = await fdPath(handle.fd);
             if (opened !== null) {
@@ -451,10 +454,11 @@ function createFilesApi({
                 const openedKind = classifyRelative(path.relative(rootReal, opened));
                 if (openedKind === 'hidden') throw notAllowed();
                 if (openedKind === 'sensitive' && !allowSensitive) throw secretRefusal(action);
+                if (openedKind === 'sensitive') sensitive = true;
             }
             const stat = await handle.stat();
             if (!stat.isFile()) throw new FilesError(400, 'Not a file');
-            return { handle, stat };
+            return { handle, stat, sensitive };
         } catch (err) {
             await handle.close().catch(() => {});
             if (err instanceof FilesError) throw err;
@@ -467,6 +471,8 @@ function createFilesApi({
      * The one place that checks the kind before opening. resolve() marks a
      * path sensitive by its requested name too (a symlink called .env to an
      * ordinary file), which openFile, seeing only the realpath, cannot know.
+     * `kind` is 'sensitive' if either resolve() or openFile found a
+     * protected file, so neither check alone can clear it.
      * `.git` and anything outside the root are a 404 whatever allowSensitive
      * says. `action` words the 403 ("open" or "download"). The caller owns
      * the handle.
@@ -475,12 +481,18 @@ function createFilesApi({
         const { real, kind } = await resolve(requested);
         if (kind === 'sensitive' && !allowSensitive) throw secretRefusal(action);
         if (onResolved) await onResolved(real);
-        const { handle, stat } = await openFile(real, { allowSensitive, action });
-        return { handle, stat, real, kind };
+        const { handle, stat, sensitive } = await openFile(real, { allowSensitive, action });
+        return { handle, stat, real, kind: sensitive ? 'sensitive' : kind };
     }
 
+    /**
+     * Up to maxPreviewBytes of a file. `sensitive` says whether what was
+     * opened is a protected file: the UI clears such a preview when "Show
+     * protected files" goes off, and takes this answer over its listing,
+     * which can be stale (a file replaced by a link to .env since).
+     */
     async function preview(requested, { allowSensitive = false } = {}) {
-        const { handle, stat, real } = await openRequested(requested, { allowSensitive });
+        const { handle, stat, real, kind } = await openRequested(requested, { allowSensitive });
         try {
             const length = Math.min(stat.size, maxPreviewBytes);
             const buffer = Buffer.alloc(length);
@@ -492,7 +504,7 @@ function createFilesApi({
             }
             const data = buffer.subarray(0, read);
             const truncated = stat.size > read;
-            const base = { path: real, size: stat.size, mtime: stat.mtimeMs, limit: maxPreviewBytes };
+            const base = { path: real, size: stat.size, mtime: stat.mtimeMs, limit: maxPreviewBytes, sensitive: kind === 'sensitive' };
             if (looksBinary(data, truncated)) return { ...base, binary: true };
             return {
                 ...base,

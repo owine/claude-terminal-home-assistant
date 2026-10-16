@@ -604,6 +604,32 @@ test('allowSensitive lifts the sensitive tier for preview, and nothing else', as
     await refused(api.preview('creds-link', { allowSensitive: true }));
 });
 
+test('preview says whether the file it opened is protected, by name or target', async () => {
+    // The UI clears a protected preview when the toggle goes off, and must
+    // know it is one even when its listing was stale (a file since replaced
+    // by a link to .env), so the server says so on every answer.
+    const open = (p) => api.preview(p, { allowSensitive: true });
+    assert.strictEqual((await open('configuration.yaml')).sensitive, false);
+    assert.strictEqual((await open('autos-link.yaml')).sensitive, false);
+    assert.strictEqual((await api.preview('configuration.yaml')).sensitive, false);
+    assert.strictEqual((await open('.env')).sensitive, true);
+    assert.strictEqual((await open('.storage/auth')).sensitive, true);
+    assert.strictEqual((await open('innocent.yaml')).sensitive, true);   // link named innocently, to .env
+    assert.strictEqual((await open('notes.txt')).sensitive, true);       // to .storage/auth
+    write('certs/blob.key', Buffer.from([0, 1, 2]));
+    try {
+        const binary = await open('certs/blob.key');
+        assert.strictEqual(binary.binary, true);
+        assert.strictEqual(binary.sensitive, true);
+    } finally {
+        fs.rmSync(path.join(root, 'certs', 'blob.key'));
+    }
+    // A descriptor that turns out to be a protected file (a parent folder
+    // swapped after resolve()) is reported as one too.
+    const swapped = createFilesApi({ root, fdPath: async () => path.join(root, '.storage', 'auth') });
+    assert.strictEqual((await swapped.preview('configuration.yaml', { allowSensitive: true })).sensitive, true);
+});
+
 test('openFile: a regular file comes back open, with its stat', async () => {
     const { handle, stat } = await api.openFile(path.join(root, 'configuration.yaml'));
     try {
@@ -632,7 +658,11 @@ test('routes: protected=1 lifts the refusal for preview; list ignores it', async
     await withServer({}, async (url) => {
         let res = await fetch(`${url}/files/preview?path=.env&protected=1`);
         assert.strictEqual(res.status, 200);
-        assert.strictEqual((await res.json()).content, 'TOKEN=1\n');
+        const body = await res.json();
+        assert.strictEqual(body.content, 'TOKEN=1\n');
+        assert.strictEqual(body.sensitive, true);
+        res = await fetch(`${url}/files/preview?path=configuration.yaml&protected=1`);
+        assert.strictEqual((await res.json()).sensitive, false);
 
         // only exactly '1' counts; a repeated flag arrives as an array
         for (const flag of ['0', 'true', 'yes', '1&protected=1']) {

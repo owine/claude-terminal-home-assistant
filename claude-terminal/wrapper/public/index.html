@@ -2673,6 +2673,17 @@
                     const data = await getJson('api/files/preview?path=' + encodeURIComponent(filePath)
                         + (showProtected.checked ? '&protected=1' : ''));
                     if (gen !== previewGen) return;   // opened again, or blanked, meanwhile
+                    // The server says what it actually opened; the listing
+                    // can be stale (a file since replaced by a link to
+                    // .env). Either one marks it protected, and neither
+                    // alone can clear the mark. Should the toggle have gone
+                    // off while this was loading, the answer is dropped.
+                    previewSensitive = previewSensitive || data.sensitive === true;
+                    if (previewSensitive && !showProtected.checked) {
+                        closePreview();
+                        blankPreview();
+                        return;
+                    }
                     const parts = [helpers.formatSize(data.size), 'modified ' + new Date(data.mtime).toLocaleString()];
                     if (data.truncated) parts.push('showing the first ' + helpers.formatSize(data.limit));
                     previewMeta.textContent = parts.join(' · ');

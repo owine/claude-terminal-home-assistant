@@ -995,6 +995,41 @@ async function checkLateProtectedPreview(browser, url) {
     }
 }
 
+// The listing can be stale: a file listed as ordinary, then replaced by a
+// symlink to .env before it is opened. Opened with the toggle on, it shows
+// the secret, and the preview must still know it is protected (the server
+// says so), so switching off clears it. Before the fix only the listing's
+// flag counted, and the secret stayed on screen.
+const STALE_FILE = 'stale-listing.txt';
+async function checkStaleListingPreview(browser, url) {
+    const stale = `${SIDEBAR_DIR}/${STALE_FILE}`;
+    dexec(['sh', '-c', 'printf "TOKEN=1\\n" > "$1"; printf "plain\\n" > "$2"', 'sh',
+        `${SIDEBAR_DIR}/${PROTECTED_FILE}`, stale]);
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const list = await openSidebarFixture(wrapper);
+        const row = list.locator('.files-row', { hasText: STALE_FILE });
+        await waitFor(async () => (await row.count()) === 1);
+        check('fixture: the file is listed as ordinary (no lock)',
+            await row.evaluate((el) => el.classList.contains('sensitive')), false);
+        dexec(['ln', '-sfn', PROTECTED_FILE, stale]);
+        await wrapper.locator('#files-show-protected').check();
+        await row.click();
+        check('fixture: the stale row now opens the protected file',
+            await waitFor(async () => (await previewText(wrapper)) === 'TOKEN=1\n'), true);
+        await pressToggle(wrapper, page);
+        const after = await previewState(wrapper);
+        check('switching off clears a protected preview the listing did not mark',
+            { active: after.active, token: /TOKEN/.test(after.body) }, (v) => !v.active && !v.token);
+    } finally {
+        await context.close();
+        dexec(['rm', '-f', stale]);
+    }
+}
+
 async function run(engine, mode, url) {
     console.log(`\n=== ${engine.name()} / ${mode} ===`);
     const failuresBefore = failures;
@@ -1418,6 +1453,7 @@ async function run(engine, mode, url) {
     await checkZipMenu(browser, url);
     await checkLateProtectedPreview(browser, url);
     await checkPreviewRequests(browser, url);
+    await checkStaleListingPreview(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {
