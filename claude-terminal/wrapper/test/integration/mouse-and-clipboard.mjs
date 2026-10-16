@@ -429,7 +429,15 @@ async function checkDownloads(browser, url) {
         await waitFor(async () => (await previewText(wrapper)) === 'sidebar: ok\n');
         const file = await expectDownload(page, () => downloadBtn().click());
         check('Download starts a download', file !== null, true);
-        check('the download keeps the file name', file && file.suggestedFilename(), SIDEBAR_FILE);
+        // Playwright's WebKit on Linux (the CI runner) sanitises spaces in a
+        // download's suggested name to underscores; macOS WebKit and Chromium
+        // keep them. The server's Content-Disposition is the same either way
+        // (pinned in files-download.test.js), so accept exactly that one
+        // substitution there and the exact name everywhere else.
+        const linuxWebKit = process.platform === 'linux'
+            && page.context().browser().browserType().name() === 'webkit';
+        const expectedName = linuxWebKit ? SIDEBAR_FILE.replace(/ /g, '_') : SIDEBAR_FILE;
+        check('the download keeps the file name', file && file.suggestedFilename(), expectedName);
         check('the download has the exact bytes',
             file && readFileSync(await file.path(), 'utf8'), 'sidebar: ok\n');
         check('the terminal page is still there after a download',
