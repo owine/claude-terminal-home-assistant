@@ -1198,6 +1198,35 @@ test('zip: every way a zip ends frees its slot', async () => {
     }
 });
 
+test('sendZip: takes { log, onSettled }, and settles once, after the transfer', async () => {
+    const victim = write('blueprints/zz-direct.yaml', 'd'.repeat(64 * 1024));
+    let shrink = false;
+    const d = createDownloads({ api, beforeStream: async () => { if (shrink) fs.truncateSync(victim, 3); } });
+    const logged = [];
+    let settled = 0;
+    const app = express();
+    app.get('/z', async (req, res) => {
+        const plan = await d.planZip('blueprints');
+        await d.sendZip(plan, req, res, { log: (m) => logged.push(m), onSettled: () => { settled++; } });
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const url = `http://127.0.0.1:${server.address().port}/z`;
+    try {
+        const entries = await unzip(Buffer.from(await (await fetch(url)).arrayBuffer()));
+        assert.ok('blueprints/zz-direct.yaml' in entries);
+        assert.ok(await until(() => settled === 1, 1000), `settled ${settled} times`);
+        shrink = true;
+        assert.strictEqual(await aborted(fetch(url)), true);
+        assert.ok(await until(() => settled === 2 && logged.length === 1, 1000), `settled ${settled}, logged ${logged}`);
+        assert.match(logged[0], /"blueprints\/zz-direct\.yaml"/);
+    } finally {
+        server.closeAllConnections();
+        await new Promise((r) => server.close(r));
+        fs.rmSync(victim, { force: true });
+    }
+});
+
 test('routes: the zip rate limiter applies', async () => {
     await withServer({ zipLimiter: createRateLimiter({ max: 1 }) }, async (url) => {
         assert.strictEqual((await fetch(`${url}/download-zip?path=blueprints&check=1`)).status, 200);

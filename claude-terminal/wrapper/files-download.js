@@ -472,7 +472,7 @@ function createDownloads({
      * the zip is over, however it ended (it may run more than once; the
      * caller makes it idempotent).
      */
-    async function sendZip(plan, req, res, log = console.error, onSettled = () => {}) {
+    async function sendZip(plan, req, res, { log = console.error, onSettled = () => {} } = {}) {
         try {
             if (beforeStream) await beforeStream(plan);
         } catch (err) {
@@ -549,7 +549,7 @@ function createDownloadRouter({ downloads, fileLimiter, zipLimiter, maxZips = MA
             return res.json({ name: plan.name, files: plan.files.length, bytes: plan.bytes });
         }
         try {
-            await downloads.sendZip(plan, req, res, log, settle);
+            await downloads.sendZip(plan, req, res, { log, onSettled: settle });
         } catch (err) {
             settle();
             sendError(res, err, log);   // destroys the response if it had begun
