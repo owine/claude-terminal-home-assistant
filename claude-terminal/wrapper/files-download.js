@@ -29,6 +29,7 @@ const {
     MAX_RECENT_VISITS,
     RECENT_TIME_BUDGET_MS,
 } = require('./files-api');
+const { createCrossSiteGuard } = require('./http-guards');
 
 // Uncompressed bytes one zip may hold. Fixed, not an option: it bounds how
 // long one download keeps a Raspberry Pi's CPU and disk busy. The recorder
@@ -515,9 +516,11 @@ function createDownloads({
  * Express router for the downloads. Mounted by server.js at /api/files,
  * beside createFilesRouter, before the terminal proxy and static files.
  *
- * GET, read-only, no CORS headers: like the other Files GETs, another site
- * can start one but cannot read the answer. Every failure before the first
- * byte is a JSON error; after it, the response is aborted and logged.
+ * GET, read-only, no CORS headers: another site cannot read the answer, and
+ * a request the browser marks cross-site (Sec-Fetch-Site) is refused before
+ * anything else, so another site cannot start one either (http-guards.js,
+ * createCrossSiteGuard). Every failure before the first byte is a JSON
+ * error; after it, the response is aborted and logged.
  *
  * At most `maxZips` zips run at once, counted from the request until the
  * transfer settles: each walks a tree and deflates up to 200 MB, and on a
@@ -533,8 +536,10 @@ function createDownloads({
 function createDownloadRouter({ downloads, fileLimiter, zipLimiter, maxZips = MAX_CONCURRENT_ZIPS, log = console.error }) {
     const router = express.Router();
     let zipsInFlight = 0;
+    // Before the limiters, so a refused request costs no one's budget.
+    const sameSite = createCrossSiteGuard({ log });
 
-    router.get('/download', fileLimiter, async (req, res) => {
+    router.get('/download', sameSite, fileLimiter, async (req, res) => {
         res.set('Cache-Control', 'no-store');
         let opened;
         try {
@@ -546,7 +551,7 @@ function createDownloadRouter({ downloads, fileLimiter, zipLimiter, maxZips = MA
     });
 
     // protected=1 is not read here: zips never hold protected files.
-    router.get('/download-zip', zipLimiter, async (req, res) => {
+    router.get('/download-zip', sameSite, zipLimiter, async (req, res) => {
         res.set('Cache-Control', 'no-store');
         if (zipsInFlight >= maxZips) {
             return res.status(429).json({

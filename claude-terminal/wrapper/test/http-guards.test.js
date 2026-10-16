@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { createRateLimiter, createOriginGuard, createUpgradeGuard, errorResponseFor } = require('../http-guards.js');
+const { createRateLimiter, createOriginGuard, createUpgradeGuard, createCrossSiteGuard, errorResponseFor } = require('../http-guards.js');
 
 let passed = 0;
 function test(name, fn) {
@@ -210,6 +210,50 @@ test('records the rejected source so a blocked POST is diagnosable', () => {
     run(guard, req);
     assert.strictEqual(lines.length, 1);
     assert.match(lines[0], /evil\.example/);
+});
+
+// ---------------------------------------------------------------------------
+// createCrossSiteGuard
+// ---------------------------------------------------------------------------
+
+// Runs the guard on one request; returns whether it passed, and the response.
+function crossSite(headers, log = () => {}) {
+    const res = makeRes();
+    let passedOn = false;
+    createCrossSiteGuard({ log })(makeReq({ headers }), res, () => { passedOn = true; });
+    return { passedOn, res };
+}
+
+test('refuses a GET a browser marks cross-site, with a 403 JSON', () => {
+    const { passedOn, res } = crossSite({ 'Sec-Fetch-Site': 'cross-site' });
+    assert.strictEqual(passedOn, false);
+    assert.strictEqual(res.statusCode, 403);
+    assert.match(res.body.error, /another site/);
+});
+
+test('lets same-origin, same-site and user-started (none) requests through', () => {
+    for (const site of ['same-origin', 'same-site', 'none']) {
+        const { passedOn, res } = crossSite({ 'Sec-Fetch-Site': site });
+        assert.strictEqual(passedOn, true, site);
+        assert.strictEqual(res.statusCode, null, site);
+    }
+});
+
+test('lets a request with no Sec-Fetch-Site through (older browsers, curl)', () => {
+    const { passedOn, res } = crossSite({});
+    assert.strictEqual(passedOn, true);
+    assert.strictEqual(res.statusCode, null);
+});
+
+test('reads Sec-Fetch-Site case-insensitively', () => {
+    assert.strictEqual(crossSite({ 'Sec-Fetch-Site': 'Cross-Site' }).passedOn, false);
+});
+
+test('logs a refused cross-site request', () => {
+    const lines = [];
+    crossSite({ 'Sec-Fetch-Site': 'cross-site' }, (line) => lines.push(line));
+    assert.strictEqual(lines.length, 1);
+    assert.match(lines[0], /cross-site/);
 });
 
 // ---------------------------------------------------------------------------
