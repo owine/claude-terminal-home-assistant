@@ -576,8 +576,7 @@ everything below it, by these rules:
 
 - Protected files and folders, `.git`, symlinks and unfinished downloads are
   never put in a zip, even with **Show protected files** on, and a protected
-  folder's **Download as zip** is disabled. Symlinks are neither followed nor
-  included.
+  folder's **Download as zip** is disabled.
 - A zip holds at most 200 MB before compression. A bigger folder is refused,
   and the message in the sidebar names its largest files so you can zip the
   parts you need. Zipping all of `/config` is usually refused because of the
@@ -585,8 +584,8 @@ everything below it, by these rules:
   Assistant's own backups for that.
 - A folder with more than 20,000 entries, nested more than 8 levels deep, or
   that takes more than 3 seconds to list, is refused too.
-- Two zips can be prepared or sent at once. Asking for a third gives "try
-  again shortly"; try again when one has finished.
+- Two zips can be prepared or sent at once. A third does not start; the
+  sidebar says so, and you can try again when one has finished.
 - Entries are in name order. Empty folders are left out. Photos, video, audio,
   archives and Office documents are stored as they are, not compressed again.
   A folder named like a Windows drive (`C:x`) is zipped as `C_x`.
