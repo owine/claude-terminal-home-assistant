@@ -458,6 +458,241 @@ async function checkDownloads(browser, url) {
             (v) => !v.started && v.downloads === 0);
         check('no protected=1 download goes out while the toggle is off',
             flagged.filter((f) => !f.on).map((f) => f.url), (v) => v.length === 0);
+
+        // Download as zip, from the folder row's always-visible ⋯ menu.
+        // The server allows 20 zip requests a minute (two per zip), shared
+        // by the direct and ingress runs that follow each other, so these
+        // checks spend as few as they can: the refusal first, with the good
+        // zip after it as its positive control.
+        const fixtureName = SIDEBAR_DIR.split('/').pop();
+        const menuButton = (name) => list.locator('.files-row-wrap', { hasText: name }).locator('.files-menu-btn');
+        const zipItem = wrapper.locator('#files-menu .files-menu-item', { hasText: 'Download as zip' });
+        const menuHidden = () => wrapper.evaluate('document.getElementById("files-menu").hidden');
+        check('a folder row shows its ⋯ button without hovering', await menuButton(fixtureName).isVisible(), true);
+
+        // Over the 200 MB cap (a sparse file, so no disk is used): refused in
+        // the sidebar with the biggest file named, and no download at all.
+        const noticeText = () => wrapper.evaluate(
+            'document.getElementById("files-notice").hidden ? "" : document.getElementById("files-notice-text").textContent');
+        before = { downloads: downloads.length };
+        await menuButton(ZIP_CAP_DIR.split('/').pop()).click();
+        await zipItem.click();
+        check('a folder over the zip cap is refused, naming its largest file',
+            await waitFor(async () => /zip limit/.test(await noticeText()) && /huge\.bin/.test(await noticeText())), true);
+
+        await menuButton(fixtureName).click();
+        check('the ⋯ menu offers Download as zip', await zipItem.isVisible(), true);
+        const zip = await expectDownload(page, () => zipItem.click());
+        check('Download as zip starts a download', zip !== null, true);
+        check('the zip is named after the folder', zip && zip.suggestedFilename(), `${fixtureName}.zip`);
+        if (zip) {
+            // python3's zipfile, as a reader independent of the writer: -t
+            // checks every CRC, -l lists the names.
+            const zipPath = await zip.path();
+            let listing = '';
+            try {
+                execFileSync('python3', ['-I', '-m', 'zipfile', '-t', zipPath]);
+                listing = execFileSync('python3', ['-I', '-m', 'zipfile', '-l', zipPath]).toString();
+            } catch (e) {
+                listing = `(unreadable: ${e.message})`;
+            }
+            check('the zip holds the fixture files',
+                [SIDEBAR_FILE, 'secrets.yaml'].every((n) => listing.includes(`${fixtureName}/${n}`)), true);
+            check('the zip leaves out protected files, .git and upload parts',
+                [PROTECTED_FILE, '.git/', UPLOAD_PART].filter((n) => listing.includes(`${fixtureName}/${n}`)), (v) => v.length === 0);
+        }
+        check('the menu closes after its action', await menuHidden(), true);
+        // The good zip is the refusal's positive control, in place of a
+        // guessed wait: downloads are reported in the order they start, so
+        // had the refused one started, it would be listed ahead of this one.
+        check('a refused zip starts no download',
+            downloads.slice(before.downloads).map((u) => new URL(u).searchParams.get('path')),
+            (v) => v.length === 1 && v[0] === SIDEBAR_DIR);
+
+        await menuButton(fixtureName).click();
+        check('fixture: the ⋯ menu is open before Escape', await menuHidden(), false);
+        await page.keyboard.press('Escape');
+        check('Escape closes the ⋯ menu', await menuHidden(), true);
+    } finally {
+        await context.close();
+    }
+}
+
+// The ⋯ menu's other ways in and out, and the zip refusals the sidebar must
+// explain. Its own context with service workers blocked, so context.route
+// sees the check=1 preflights it fakes (see checkStaleView). A zip download
+// itself is never a 'request' (nor routable), only a 'download' event, so the
+// preflights are counted by request and the zips by download.
+//
+// Every "starts no download" here is backed by a positive control: a good
+// zip at the end, which must be the only download since the refusals began.
+// It is also the one real zip this check makes: the server allows 20 zip
+// requests a minute (see checkDownloads).
+async function checkZipMenu(browser, url) {
+    const LOCKED = '.ssh';        // a protected folder (SENSITIVE_DIRS)
+    const GONE = 'ctp-gone';      // listed, then deleted before its zip
+    dexec(['sh', '-c', 'mkdir -p "$1" "$2"; printf k > "$1/id_test"; printf x > "$2/x"', 'sh',
+        `${SIDEBAR_DIR}/${LOCKED}`, `${SIDEBAR_DIR}/${GONE}`]);
+    const context = await browser.newContext({ acceptDownloads: true, serviceWorkers: 'block' });
+    const page = await context.newPage();
+    const downloads = [];
+    page.on('download', (d) => downloads.push(d));
+    const preflights = [];
+    context.on('request', (r) => {
+        const u = new URL(r.url());
+        if (u.pathname.endsWith('/api/files/download-zip') && u.searchParams.get('check') === '1') preflights.push(u);
+    });
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const list = await openSidebarFixture(wrapper);
+        const fixtureName = SIDEBAR_DIR.split('/').pop();
+        const menuButton = (name) => list.locator('.files-row-wrap', { hasText: name }).locator('.files-menu-btn');
+        const zipItem = wrapper.locator('#files-menu .files-menu-item', { hasText: 'Download as zip' });
+        const menuHidden = () => wrapper.evaluate('document.getElementById("files-menu").hidden');
+        const focused = () => wrapper.evaluate(`(() => {
+            const a = document.activeElement;
+            if (!a) return '';
+            if (a.classList.contains('files-menu-item')) return 'item:' + a.textContent;
+            return a.getAttribute('aria-label') || a.id || a.tagName;
+        })()`);
+        const notice = () => wrapper.evaluate(`JSON.stringify({
+            text: document.getElementById('files-notice').hidden ? '' : document.getElementById('files-notice-text').textContent,
+            kind: document.getElementById('files-notice').className,
+        })`).then(JSON.parse);
+        const zipPaths = (since) => downloads.slice(since).map((d) => new URL(d.url()).searchParams.get('path'));
+        // Waits for the preflight to have answered: the notice leaves its
+        // "Preparing" state, one way or the other.
+        const settled = () => waitFor(async () => {
+            const { text } = await notice();
+            return text !== '' && !/^Preparing/.test(text);
+        });
+
+        // Keyboard: the ⋯ is a button in the tab order. Enter opens the menu
+        // with focus on its first item; Escape closes it and gives focus back
+        // to the ⋯; so does Tab, instead of dropping focus on the page.
+        await menuButton(fixtureName).focus();
+        check('the ⋯ button takes keyboard focus', await focused(), `Actions for ${fixtureName}`);
+        await page.keyboard.press('Enter');
+        check('Enter on ⋯ opens the menu', await menuHidden(), false);
+        check('the menu puts focus on its first item', await focused(), (v) => /^item:Download as zip/.test(v));
+        check('the ⋯ button says its menu is open',
+            await menuButton(fixtureName).getAttribute('aria-expanded'), 'true');
+        await page.keyboard.press('ArrowDown');
+        check('arrow keys keep focus inside the menu', await focused(), (v) => /^item:/.test(v));
+        await page.keyboard.press('Escape');
+        check('Escape closes the menu from the keyboard', await menuHidden(), true);
+        check('and focus returns to the ⋯ button', await focused(), `Actions for ${fixtureName}`);
+        check('the ⋯ button says its menu is closed',
+            await menuButton(fixtureName).getAttribute('aria-expanded'), 'false');
+        await page.keyboard.press('Enter');
+        await page.keyboard.press('Tab');
+        check('Tab closes the menu and returns focus to the ⋯ button',
+            { hidden: await menuHidden(), focus: await focused() },
+            (v) => v.hidden && v.focus === `Actions for ${fixtureName}`);
+
+        // A click outside closes it; the menu sits inside the sidebar.
+        await menuButton(fixtureName).click();
+        check('the open menu stays inside the sidebar', await wrapper.evaluate(`(() => {
+            const m = document.getElementById('files-menu').getBoundingClientRect();
+            const s = document.getElementById('files-sidebar').getBoundingClientRect();
+            return m.width > 0 && m.left >= s.left && m.right <= s.right && m.top >= s.top && m.bottom <= s.bottom;
+        })()`), true);
+        // The footer's top padding: clear of the resize handle on the left
+        // edge and of the check button inside it.
+        await wrapper.locator('#files-footer').click({ position: { x: 40, y: 3 } });
+        check('a click outside closes the menu', await menuHidden(), true);
+
+        // A protected folder keeps its ⋯, but Download as zip is disabled
+        // and says why, on screen as well as in a tooltip (touch has none).
+        const since = downloads.length;
+        const preflightsBefore = preflights.length;
+        check('a protected folder still shows ⋯', await menuButton(LOCKED).isVisible(), true);
+        await menuButton(LOCKED).click();
+        check('its Download as zip is disabled, with the reason',
+            await wrapper.evaluate(`JSON.stringify((() => {
+                const item = [...document.querySelectorAll('#files-menu .files-menu-item')]
+                    .find((i) => i.textContent.includes('Download as zip'));
+                return item && { disabled: item.getAttribute('aria-disabled'), title: item.title, text: item.textContent };
+            })())`).then(JSON.parse),
+            (v) => v && v.disabled === 'true' && /protected/i.test(v.title) && /protected/i.test(v.text));
+        // force: Playwright will not click what aria-disabled marks disabled.
+        await zipItem.click({ force: true });
+        await page.keyboard.press('Enter');
+        // Even with the disabled mark stripped, the action does not run: the
+        // menu decided when it opened.
+        await wrapper.evaluate(`(() => {
+            const item = document.querySelector('#files-menu .files-menu-item');
+            if (!item) return;
+            item.removeAttribute('aria-disabled');
+            item.click();
+        })()`);
+        check('a protected folder sends no zip preflight', preflights.length - preflightsBefore, 0);
+        check('the server refuses a protected folder\'s zip with 403',
+            await wrapper.evaluate(`fetch(${JSON.stringify(`api/files/download-zip?path=${encodeURIComponent(`${SIDEBAR_DIR}/${LOCKED}`)}&check=1`)})
+                .then((r) => r.status)`), 403);
+        await wrapper.evaluate('document.getElementById("files-notice-close").click()');
+        if (!(await menuHidden())) await page.keyboard.press('Escape');
+
+        // A folder deleted after it was listed: the server's 404, in the
+        // notice, and no download.
+        dexec(['rm', '-rf', `${SIDEBAR_DIR}/${GONE}`]);
+        await menuButton(GONE).click();
+        await zipItem.click();
+        await settled();
+        check('a vanished folder\'s zip is refused in the notice',
+            await notice(), (v) => /Not found/.test(v.text) && v.kind === 'error');
+
+        // Two zips already running (the server's 429, faked here so as not
+        // to hold two real ones open): a friendly "try again", not an error.
+        let held = 0;
+        const isPreflight = (u) => u.pathname.endsWith('/api/files/download-zip') && u.searchParams.get('check') === '1';
+        await context.route(isPreflight, (route) => {
+            held++;
+            return route.fulfill({ status: 429, contentType: 'application/json',
+                body: JSON.stringify({ error: '2 zips are already being prepared or sent. Try again when one has finished.' }) });
+        });
+        await menuButton(fixtureName).click();
+        await zipItem.click();
+        await settled();
+        check('fixture: the faked 429 was served', held, 1);
+        check('a busy server (429) shows as try again, not as an error', await notice(),
+            (v) => v.kind === 'busy' && /did not start/.test(v.text) && /Try again when one has finished/.test(v.text));
+        // A 429 from something in between, with no message of its own.
+        await context.unroute(isPreflight);
+        await context.route(isPreflight, (route) => { held++; return route.fulfill({ status: 429, body: '' }); });
+        await menuButton(fixtureName).click();
+        await zipItem.click();
+        await waitFor(async () => held === 2 && (await notice()).kind === 'busy');
+        check('a 429 with no message still says to try again shortly', await notice(),
+            (v) => v.kind === 'busy' && /Try again shortly/.test(v.text));
+
+        // The network failing under the preflight.
+        await context.unroute(isPreflight);
+        await context.route(isPreflight, (route) => { held++; return route.abort('failed'); });
+        await menuButton(fixtureName).click();
+        await zipItem.click();
+        await waitFor(async () => held === 3 && /reach/.test((await notice()).text));
+        check('a network failure is shown in the notice', await notice(),
+            (v) => v.kind === 'error' && /Could not reach the add-on/.test(v.text));
+        await context.unroute(isPreflight);
+
+        // Positive control for every refusal above, driven by the keyboard
+        // alone: a good zip now starts, and is the only download since the
+        // protected folder.
+        await menuButton(fixtureName).focus();
+        await page.keyboard.press('Enter');
+        const control = await expectDownload(page, () => page.keyboard.press('Enter'));
+        check('Enter on Download as zip downloads the folder', control && control.suggestedFilename(), `${fixtureName}.zip`);
+        check('after its action, focus is back on the ⋯ button',
+            { hidden: await menuHidden(), focus: await focused() },
+            (v) => v.hidden && v.focus === `Actions for ${fixtureName}`);
+        check('no refusal (protected, 404, 429, network) started a download',
+            zipPaths(since), (v) => v.length === 1 && v[0] === SIDEBAR_DIR);
+        check('the notice can be dismissed', await (async () => {
+            await wrapper.locator('#files-notice-close').click();
+            return (await notice()).text;
+        })(), '');
     } finally {
         await context.close();
     }
@@ -1003,6 +1238,7 @@ async function run(engine, mode, url) {
 
     await checkStaleView(browser, url);
     await checkDownloads(browser, url);
+    await checkZipMenu(browser, url);
     await checkLateProtectedPreview(browser, url);
     await checkPreviewRequests(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);

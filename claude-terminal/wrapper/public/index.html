@@ -663,6 +663,48 @@
             border: 0;
         }
 
+        /* One line of news about a folder action (a zip's progress or its
+           refusal), above the tree, until dismissed or replaced. */
+        #files-notice {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            padding: 6px 8px;
+            border-bottom: 1px solid #333;
+            background: #2d2d2d;
+            color: #ddd;
+            font-size: 11px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            flex-shrink: 0;
+        }
+
+        #files-notice[hidden] {
+            display: none;
+        }
+
+        #files-notice.error {
+            color: #f48771;
+        }
+
+        #files-notice.busy {
+            color: #ffd27a;
+        }
+
+        #files-notice-text {
+            flex: 1;
+        }
+
+        #files-notice-close {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 13px;
+            line-height: 1;
+            padding: 0 2px;
+        }
+
         #files-list {
             flex: 1;
             overflow: auto;
@@ -696,6 +738,91 @@
 
         .files-row.sensitive .files-name {
             color: #999;
+        }
+
+        /* A folder row and its always-visible actions button. The row stays
+           a <button> of its own; a button cannot hold another. */
+        .files-row-wrap {
+            display: flex;
+            align-items: center;
+        }
+
+        .files-row-wrap > .files-row {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .files-menu-btn {
+            flex-shrink: 0;
+            width: 24px;
+            height: 22px;
+            margin-right: 4px;
+            background: none;
+            border: none;
+            border-radius: 3px;
+            color: #999;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1;
+        }
+
+        .files-menu-btn:hover,
+        .files-menu-btn[aria-expanded="true"] {
+            background: #37373d;
+            color: #fff;
+        }
+
+        /* One menu element for every folder, placed under the ⋯ that opened
+           it; absolute against the sidebar (position: relative). */
+        #files-menu {
+            position: absolute;
+            z-index: 20;
+            min-width: 160px;
+            max-width: calc(100% - 8px);
+            padding: 4px 0;
+            background: #2d2d2d;
+            border: 1px solid #454545;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        #files-menu[hidden] {
+            display: none;
+        }
+
+        .files-menu-item {
+            display: block;
+            width: 100%;
+            padding: 6px 12px;
+            background: none;
+            border: none;
+            color: #ddd;
+            font: inherit;
+            text-align: left;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+
+        .files-menu-item:hover:not([aria-disabled="true"]),
+        .files-menu-item:focus-visible {
+            background: #094771;
+            outline: none;
+        }
+
+        /* aria-disabled, not disabled: the item stays focusable, so the
+           keyboard reaches it and its reason, and its tooltip still shows. */
+        .files-menu-item[aria-disabled="true"] {
+            color: #777;
+            cursor: not-allowed;
+        }
+
+        /* The reason a disabled item is disabled, on screen: a tooltip is
+           out of reach on a touch screen. */
+        .files-menu-hint {
+            display: block;
+            margin-top: 2px;
+            font-size: 11px;
+            white-space: normal;
         }
 
         .files-twisty {
@@ -833,6 +960,11 @@
                 display: none !important;
             }
 
+            .files-menu-btn {
+                width: 32px;
+                height: 28px;
+            }
+
             #files-sidebar.collapsed {
                 display: none;
             }
@@ -941,11 +1073,16 @@
                     <button type="button" id="files-refresh" title="Refresh" aria-label="Refresh">&#8635;</button>
                 </div>
                 <div id="files-protected-strip" role="status"></div>
+                <div id="files-notice" role="status" aria-live="polite" hidden>
+                    <span id="files-notice-text"></span>
+                    <button type="button" id="files-notice-close" title="Dismiss" aria-label="Dismiss">&times;</button>
+                </div>
                 <div id="files-list" role="tree"></div>
                 <div id="files-footer">
                     <button type="button" id="ha-check-btn" title="Run Home Assistant's configuration check (ha core check)">&#10003; Check HA configuration</button>
                     <div id="ha-check-result" role="status" aria-live="polite"></div>
                 </div>
+                <div id="files-menu" role="menu" hidden></div>
             </aside>
         </div>
     </div>
@@ -2133,6 +2270,9 @@
             const previewMeta = document.getElementById('files-preview-meta');
             const previewBody = document.getElementById('files-preview-body');
             const downloadBtn = document.getElementById('files-download-btn');
+            const menu = document.getElementById('files-menu');
+            const notice = document.getElementById('files-notice');
+            const noticeText = document.getElementById('files-notice-text');
 
             const PHONE = window.matchMedia('(max-width: 700px)');
             const STORE = { open: 'filesSidebar.open', width: 'filesSidebar.width', tab: 'filesSidebar.tab' };
@@ -2157,10 +2297,19 @@
             let previewGen = 0;
             let selectedRow = null;
 
+            // A refusal throws with its HTTP status and the server's own
+            // message (when it sent one) attached. A network failure is
+            // fetch's own error, with no status.
             async function getJson(url) {
                 const res = await fetch(url, { cache: 'no-store' });
                 const data = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(data.error || data.message || res.statusText || 'Request failed');
+                if (!res.ok) {
+                    const said = data.error || data.message || '';
+                    const err = new Error(said || res.statusText || 'Request failed');
+                    err.status = res.status;
+                    err.serverMessage = said;
+                    throw err;
+                }
                 return data;
             }
 
@@ -2235,7 +2384,15 @@
                 for (const entry of entries) {
                     const meta = entry.type === 'file' ? helpers.formatSize(entry.size) : '';
                     const row = makeRow(entry, depth, entry.name, meta);
-                    container.append(row);
+                    if (entry.type === 'dir') {
+                        const wrap = document.createElement('div');
+                        wrap.className = 'files-row-wrap';
+                        wrap.setAttribute('role', 'none');
+                        wrap.append(row, makeMenuButton(entry));
+                        container.append(wrap);
+                    } else {
+                        container.append(row);
+                    }
                     if (entry.type === 'dir') {
                         const children = document.createElement('div');
                         children.setAttribute('role', 'group');
@@ -2284,6 +2441,7 @@
             }
 
             function refresh() {
+                closeMenu();
                 tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === currentTab)));
                 hiddenToggle.hidden = currentTab !== 'files';
                 placeProtectedToggle();
@@ -2292,6 +2450,146 @@
                 const gen = ++viewGen;
                 if (currentTab === 'files') renderFolder(rootPath, list, 0, gen);
                 else renderRecent(gen);
+            }
+
+            // kind: '' (news), 'busy' (try again shortly) or 'error'.
+            function showNotice(text, kind = '') {
+                noticeText.textContent = text;
+                notice.className = kind;
+                notice.hidden = !text;
+            }
+
+            // What a refused zip preflight says in the notice. 429 is the
+            // server being busy (two zips already running, or the zip rate
+            // limit), not something wrong with the folder: "try again".
+            function zipRefusal(err, zipName) {
+                if (err.status === 429) {
+                    const said = err.serverMessage || 'The add-on is busy.';
+                    return ['⏳ ' + zipName + ' did not start: ' + said
+                        + (/try again/i.test(said) ? '' : ' Try again shortly.'), 'busy'];
+                }
+                if (err.status === undefined) {
+                    return ['⚠️ Could not reach the add-on to prepare ' + zipName + ' (' + err.message
+                        + '). Check the connection and try again.', 'error'];
+                }
+                return ['⚠️ ' + zipName + ': ' + err.message, 'error'];
+            }
+
+            // A zip is checked first (check=1: the same walk, answered as
+            // JSON), so a refusal - over the size cap, too many files, a
+            // protected or vanished folder, a busy server - shows here with
+            // its reason, and no download starts. Once the browser has the
+            // download, an error could only appear as a failed download with
+            // no reason.
+            async function downloadZip(entry) {
+                if (entry.sensitive) return;   // never offered; the server refuses it too
+                const zipName = entry.name + '.zip';
+                showNotice('Preparing ' + zipName + '…');
+                let plan;
+                try {
+                    plan = await getJson(helpers.downloadUrl(entry.path, { zip: true, check: true }));
+                } catch (err) {
+                    showNotice(...zipRefusal(err, zipName));
+                    return;
+                }
+                startDownload(helpers.downloadUrl(entry.path, { zip: true }));
+                showNotice('Downloading ' + (plan.name || zipName) + ': ' + plan.files
+                    + (plan.files === 1 ? ' file, ' : ' files, ') + helpers.formatSize(plan.bytes)
+                    + ' before compression. Protected files are left out.');
+            }
+
+            // Folder actions, behind the always-visible ⋯ on each folder row
+            // (hover-only controls do not exist on a touch screen). A list,
+            // so another action (the upload PR's "Upload here") is one more
+            // entry. `hint` is shown under a disabled action, since a tooltip
+            // is out of reach on touch.
+            function folderActions(entry) {
+                return [{
+                    label: 'Download as zip',
+                    disabled: !!entry.sensitive,
+                    hint: entry.sensitive ? 'Protected folders are never zipped' : '',
+                    title: entry.sensitive
+                        ? 'This folder may hold secrets, so it is never zipped. Its files open one at a time with Show protected files on.'
+                        : 'Download this folder as a .zip; protected files are left out',
+                    run: () => downloadZip(entry),
+                }];
+            }
+
+            let menuOwner = null;   // the ⋯ button whose menu is open
+
+            function closeMenu({ focusOwner = false } = {}) {
+                if (!menuOwner) return;
+                const owner = menuOwner;
+                menuOwner = null;
+                menu.hidden = true;
+                menu.replaceChildren();
+                owner.setAttribute('aria-expanded', 'false');
+                if (focusOwner && owner.isConnected) owner.focus();
+            }
+
+            function openMenu(button, entry) {
+                closeMenu();
+                menuOwner = button;
+                button.setAttribute('aria-expanded', 'true');
+                menu.setAttribute('aria-label', button.getAttribute('aria-label'));
+                // Each action is fixed as the menu opens: an item marked
+                // disabled stays inert even if the mark is later removed.
+                for (const action of folderActions(entry)) {
+                    const item = document.createElement('button');
+                    item.type = 'button';
+                    item.className = 'files-menu-item';
+                    item.setAttribute('role', 'menuitem');
+                    item.tabIndex = -1;
+                    item.textContent = action.label;
+                    item.title = action.title || '';
+                    if (action.disabled) {
+                        item.setAttribute('aria-disabled', 'true');
+                        if (action.hint) {
+                            const hint = document.createElement('span');
+                            hint.className = 'files-menu-hint';
+                            hint.textContent = action.hint;
+                            item.append(hint);
+                        }
+                    }
+                    item.addEventListener('click', () => {
+                        if (action.disabled) return;   // stays open, its reason showing
+                        closeMenu({ focusOwner: true });
+                        action.run();
+                    });
+                    menu.append(item);
+                }
+                menu.hidden = false;
+                // Under the button, right edges aligned, kept inside the
+                // sidebar; flipped above it near the bottom.
+                const bar = sidebar.getBoundingClientRect();
+                const btn = button.getBoundingClientRect();
+                menu.style.right = Math.max(4, bar.right - btn.right) + 'px';
+                menu.style.top = (btn.bottom - bar.top + 2) + 'px';
+                const box = menu.getBoundingClientRect();
+                if (box.bottom > bar.bottom - 4) {
+                    menu.style.top = Math.max(4, btn.top - bar.top - box.height - 2) + 'px';
+                }
+                // The first item, disabled or not: aria-disabled keeps it
+                // focusable, so the keyboard reaches its reason.
+                const first = menu.querySelector('.files-menu-item');
+                if (first) first.focus({ preventScroll: true });
+            }
+
+            function makeMenuButton(entry) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'files-menu-btn';
+                btn.textContent = '⋯';
+                btn.title = 'Folder actions';
+                btn.setAttribute('aria-label', 'Actions for ' + entry.name);
+                btn.setAttribute('aria-haspopup', 'menu');
+                btn.setAttribute('aria-controls', 'files-menu');
+                btn.setAttribute('aria-expanded', 'false');
+                btn.addEventListener('click', () => {
+                    if (menuOwner === btn) closeMenu();
+                    else openMenu(btn, entry);
+                });
+                return btn;
             }
 
             // Hand a download to the browser without leaving this page: a
@@ -2358,6 +2656,7 @@
             }
 
             function setOpen(open, { persist = true } = {}) {
+                if (!open) closeMenu();
                 sidebar.classList.toggle('collapsed', !open);
                 filesBtn.setAttribute('aria-expanded', String(open));
                 if (persist) save(STORE.open, open ? '1' : '0');
@@ -2444,6 +2743,37 @@
             // previewPath is read at click time: a blanked preview has none,
             // and a protected file never goes out with the toggle off (by
             // construction its preview is blanked then; checked anyway).
+            // The menu closes on a press anywhere else, Escape, Tab, scrolling
+            // the tree, a resize, and the window losing focus - which is also
+            // what a click into the terminal iframe looks like from this page.
+            // Escape and Tab hand focus back to the ⋯ that opened it.
+            document.addEventListener('pointerdown', (e) => {
+                if (menuOwner && !menu.contains(e.target) && !menuOwner.contains(e.target)) closeMenu();
+            });
+            menu.addEventListener('keydown', (e) => {
+                const items = Array.from(menu.querySelectorAll('.files-menu-item'));
+                const at = items.indexOf(document.activeElement);
+                let next = null;
+                if (e.key === 'Escape' || e.key === 'Tab') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    closeMenu({ focusOwner: true });
+                    return;
+                }
+                if (e.key === 'ArrowDown') next = items[(at + 1) % items.length];
+                else if (e.key === 'ArrowUp') next = items[(at - 1 + items.length) % items.length];
+                else if (e.key === 'Home') next = items[0];
+                else if (e.key === 'End') next = items[items.length - 1];
+                if (next) {
+                    e.preventDefault();
+                    next.focus({ preventScroll: true });
+                }
+            });
+            list.addEventListener('scroll', () => closeMenu());
+            window.addEventListener('resize', () => closeMenu());
+            window.addEventListener('blur', () => closeMenu());
+            document.getElementById('files-notice-close').addEventListener('click', () => showNotice(''));
+
             downloadBtn.addEventListener('click', () => {
                 if (!previewPath || downloadBtn.disabled) return;
                 if (previewSensitive && !showProtected.checked) return;
