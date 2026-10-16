@@ -41,8 +41,16 @@ const MAX_CONCURRENT_ZIPS = 2;
 const LARGEST_NAMED = 5;
 
 // Formats that are compressed already: deflating them again costs a
-// Raspberry Pi's CPU and saves next to nothing, so they are stored.
-const STORED = /\.(jpe?g|png|webp|gif|mp3|mp4|mkv|gz|tgz|zip|7z|xz|bz2|zst)$/i;
+// Raspberry Pi's CPU and saves next to nothing, so they are stored. Images,
+// audio, video, archives and compressed streams, and the zip-based office
+// and Java/Android packages.
+const STORED = new RegExp('\\.(' + [
+    'jpe?g', 'png', 'webp', 'gif', 'heic', 'avif',
+    'mp3', 'm4a', 'aac', 'ogg', 'opus', 'flac',
+    'mp4', 'mkv', 'webm', 'mov',
+    'gz', 'tgz', 'zip', '7z', 'xz', 'bz2', 'zst', 'rar', 'br', 'lz4',
+    'docx', 'xlsx', 'pptx', 'jar', 'apk',
+].join('|') + ')$', 'i');
 
 // Zip names use '/' only, and yazl reads a backslash as one; a Linux name
 // holding one keeps a '_' instead.

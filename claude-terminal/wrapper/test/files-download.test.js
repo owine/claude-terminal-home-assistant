@@ -785,7 +785,9 @@ test('zip: a non-ASCII folder gets filename* and UTF-8 entry names', async () =>
 
 test('zip: already-compressed files are stored, everything else deflated', async () => {
     const stored = ['photo.JPG', 'a.jpeg', 'b.png', 'c.webp', 'd.gif', 'e.mp3', 'f.mp4', 'g.mkv',
-        'h.gz', 'i.tgz', 'j.zip', 'k.7z', 'l.xz', 'm.bz2', 'n.zst'];
+        'h.gz', 'i.tgz', 'j.zip', 'k.7z', 'l.xz', 'm.bz2', 'n.zst',
+        'o.heic', 'p.avif', 'q.m4a', 'r.aac', 's.ogg', 't.opus', 'u.flac', 'v.webm', 'w.MOV', 'x.rar',
+        'y.br', 'z.lz4', 'aa.docx', 'ab.xlsx', 'ac.pptx', 'ad.jar', 'ae.apk'];
     for (const name of stored) write(`media/${name}`, 'm'.repeat(1024));
     write('media/notes.txt', 'n'.repeat(1024));
     write('media/png.txt', 'p'.repeat(1024));   // the extension, not a substring
