@@ -67,19 +67,61 @@ function exactSize(size) {
 // has no socket timeout of its own.
 const IDLE_MS = 60 * 1000;
 
+// Headers a failed download may already have set. An error answer is JSON and
+// must never be saved as an attachment.
+function dropAttachmentHeaders(res) {
+    for (const header of ['Content-Disposition', 'Content-Type', 'Content-Length', 'X-Content-Type-Options']) {
+        res.removeHeader(header);
+    }
+}
+
 /**
- * Stream an opened file ({ handle, stat }) as an attachment. Total: it never
- * throws, and the handle is closed on every path (a client that left, a
- * failed setup, a transfer that ends or aborts, a client that stalls for
- * idleMs). The filename goes through Express's res.attachment(), which
- * encodes it per RFC 6266 (ASCII fallback plus filename* in UTF-8). Shared
- * by every route that streams, so they cannot differ in cleanup.
+ * Pipe a source stream into a response, totally: it never throws, and
+ * `release` (closing whatever the source reads from) runs on every path -
+ * the response already gone, a setup that fails, a transfer that ends or
+ * aborts, a client that stalls for idleMs. `release` must be idempotent.
+ * Shared by single-file and zip downloads, so they cannot differ in cleanup.
+ *
+ * makeSource() builds the source; `through` are Transforms between it and the
+ * response. A client that simply left (ERR_STREAM_PREMATURE_CLOSE) is not
+ * logged; anything else is, with `label` JSON-quoted so a name cannot forge a
+ * line.
  */
-function sendAttachment({ handle, stat, name }, req, res, { log = console.error, idleMs = IDLE_MS } = {}) {
-    const release = () => handle.close().catch(() => {});
+function streamBody(res, { makeSource, through = [], release, label = 'download', log = console.error, idleMs = IDLE_MS }) {
     let source = null;
     try {
-        if (res.destroyed || res.writableEnded) return release();
+        if (res.destroyed || res.writableEnded) {
+            release();
+            return;
+        }
+        res.setTimeout(idleMs, () => res.destroy(new Error('client stalled')));
+        source = makeSource();
+        pipeline(source, ...through, res, (err) => {
+            release();
+            if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+                log(`Download of ${JSON.stringify(label)} aborted: ${err.message}`);
+            }
+        });
+    } catch (err) {
+        if (source) source.destroy();
+        release();
+        dropAttachmentHeaders(res);
+        sendError(res, err, log);
+    }
+}
+
+/**
+ * Send an opened file ({ handle, stat }) as an attachment, on streamBody. The
+ * filename goes through Express's res.attachment(), which encodes it per
+ * RFC 6266 (ASCII fallback plus filename* in UTF-8).
+ */
+function sendAttachment({ handle, stat, name }, req, res, { log = console.error, idleMs = IDLE_MS } = {}) {
+    const release = () => { handle.close().catch(() => {}); };
+    try {
+        if (res.destroyed || res.writableEnded) {
+            release();
+            return;
+        }
         res.status(200);
         res.attachment(name);
         res.set({
@@ -87,27 +129,27 @@ function sendAttachment({ handle, stat, name }, req, res, { log = console.error,
             'Content-Length': String(stat.size),
             'X-Content-Type-Options': 'nosniff',
         });
-        if (stat.size === 0 || req.method === 'HEAD') {
-            release();
-            res.end();
-            return undefined;
-        }
-        res.setTimeout(idleMs, () => res.destroy(new Error('client stalled')));
-        // Exactly the bytes Content-Length announced: a file that grows
-        // meanwhile is cut at it (end), one that shrinks fails (exactSize).
-        source = handle.createReadStream({ start: 0, end: stat.size - 1 });
-        pipeline(source, exactSize(stat.size), res, (err) => {
-            // A client that simply left is not an error worth a log line.
-            if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
-                log(`Download of ${JSON.stringify(name)} aborted: ${err.message}`);
-            }
-        });
     } catch (err) {
-        if (source) source.destroy();
-        else release();
+        release();
+        dropAttachmentHeaders(res);
         sendError(res, err, log);
+        return;
     }
-    return undefined;
+    if (stat.size === 0 || req.method === 'HEAD') {
+        release();
+        res.end();
+        return;
+    }
+    // Exactly the bytes Content-Length announced: a file that grows meanwhile
+    // is cut at it (end), one that shrinks fails (exactSize).
+    streamBody(res, {
+        makeSource: () => handle.createReadStream({ start: 0, end: stat.size - 1 }),
+        through: [exactSize(stat.size)],
+        release,
+        label: name,
+        log,
+        idleMs,
+    });
 }
 
 /**
@@ -295,5 +337,6 @@ module.exports = {
     createDownloads,
     createDownloadRouter,
     sendAttachment,
+    streamBody,
     MAX_ZIP_BYTES,
 };

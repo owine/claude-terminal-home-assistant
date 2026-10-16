@@ -18,7 +18,7 @@ const net = require('node:net');
 const { once } = require('node:events');
 const express = require('express');
 const { createFilesApi } = require('../files-api.js');
-const { createDownloads, createDownloadRouter, MAX_ZIP_BYTES } = require('../files-download.js');
+const { createDownloads, createDownloadRouter, sendAttachment, streamBody, MAX_ZIP_BYTES } = require('../files-download.js');
 const { createRateLimiter } = require('../http-guards.js');
 
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'files-download-')));
@@ -228,7 +228,7 @@ test('a folder swapped for a symlink after it was listed is not entered', async 
 
 // --- routes ---
 
-async function withServer(options, fn) {
+async function withServer({ escapes = [], ...options }, fn) {
     const app = express();
     app.use('/api/files', createDownloadRouter({
         downloads,
@@ -237,6 +237,12 @@ async function withServer(options, fn) {
         log: () => {},
         ...options,
     }));
+    // Express 5 routes an async handler's rejection here, not to the process:
+    // anything that lands here escaped the route.
+    app.use((err, req, res, next) => {
+        escapes.push(err);
+        next(err);
+    });
     const server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     try {
@@ -388,25 +394,19 @@ test('download: a sensitive-named symlink to an ordinary file needs protected=1'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// An api whose opened handles are counted until they close, so a leak shows.
-function tracked(extra = {}) {
-    const live = new Set();
-    const wrapped = {
-        ...api,
-        openRequested: async (...args) => {
-            const opened = await api.openRequested(...args);
-            live.add(opened.handle);
-            // Counts an explicit close() only: a handle closed by the garbage
-            // collector is a leak, not a release.
-            const close = opened.handle.close.bind(opened.handle);
-            opened.handle.close = () => {
-                live.delete(opened.handle);
-                return close();
-            };
-            return opened;
-        },
-    };
-    return { live, downloads: createDownloads({ api: wrapped, ...extra }) };
+// Descriptors this process holds on a file, counted by inode: independent of
+// how the code under test opens or closes it, so a leak cannot hide behind a
+// wrapped function. (A handle closed late by the garbage collector would
+// still show here until it ran.)
+function openFds(ino) {
+    const dir = fs.existsSync('/proc/self/fd') ? '/proc/self/fd' : '/dev/fd';
+    return fs.readdirSync(dir).filter((fd) => {
+        try {
+            return fs.fstatSync(Number(fd)).ino === ino;
+        } catch {
+            return false;
+        }
+    }).length;
 }
 
 async function until(predicate, ms = 3000) {
@@ -417,6 +417,7 @@ async function until(predicate, ms = 3000) {
 
 const BIG = 'big.bin';
 write(BIG, Buffer.alloc(32 * 1024 * 1024, 1));
+const bigIno = fs.statSync(path.join(root, BIG)).ino;
 
 function rawGet(port, target, method = 'GET') {
     return new Promise((resolve) => {
@@ -428,48 +429,58 @@ function rawGet(port, target, method = 'GET') {
 }
 
 test('download: a client that leaves while the file is being opened leaks no descriptor', async () => {
-    const { live, downloads: d } = tracked({ beforeStream: () => sleep(300) });
+    let entered;
+    const inBeforeStream = new Promise((r) => { entered = r; });
+    const d = createDownloads({ api, beforeStream: async () => { entered(openFds(bigIno)); await sleep(300); } });
     const logged = [];
+    const escapes = [];
     // Nothing may throw out of the route: not synchronously, not as a rejection.
-    const escaped = [];
-    const onEscape = (err) => escaped.push(err);
-    process.on('uncaughtException', onEscape);
-    process.on('unhandledRejection', onEscape);
-    await withServer({ downloads: d, log: (m) => logged.push(m) }, async (url) => {
-        const sock = await rawGet(Number(new URL(url).port), BIG);
-        await sleep(80);
-        sock.destroy();
-        assert.ok(await until(() => live.size === 0 && true, 2000), 'handle still open');
-        await sleep(400);
-        process.off('uncaughtException', onEscape);
-        process.off('unhandledRejection', onEscape);
-        assert.deepStrictEqual(escaped.map(String), []);
-        assert.strictEqual(live.size, 0);
-        // still serving
-        assert.strictEqual((await fetch(`${url}/download?path=configuration.yaml`)).status, 200);
-    });
+    const stray = [];
+    const onStray = (err) => stray.push(err);
+    process.on('uncaughtException', onStray);
+    process.on('unhandledRejection', onStray);
+    try {
+        await withServer({ downloads: d, escapes, log: (m) => logged.push(m) }, async (url) => {
+            const sock = await rawGet(Number(new URL(url).port), BIG);
+            // Positive control: the file is open while the request waits.
+            assert.strictEqual(await inBeforeStream, 1);
+            sock.destroy();
+            await sleep(600);
+            assert.strictEqual(openFds(bigIno), 0, 'descriptor left open');
+            // still serving
+            assert.strictEqual((await fetch(`${url}/download?path=configuration.yaml`)).status, 200);
+        });
+    } finally {
+        process.off('uncaughtException', onStray);
+        process.off('unhandledRejection', onStray);
+    }
+    assert.deepStrictEqual(escapes.map((e) => e.code || String(e)), []);
+    assert.deepStrictEqual(stray.map(String), []);
 });
 
 test('download: a client that leaves mid-transfer releases the descriptor, quietly', async () => {
-    const { live, downloads: d } = tracked();
     const logged = [];
-    await withServer({ downloads: d, log: (m) => logged.push(m) }, async (url) => {
+    const escapes = [];
+    await withServer({ escapes, log: (m) => logged.push(m) }, async (url) => {
         const sock = await rawGet(Number(new URL(url).port), BIG);
         await once(sock, 'data');
+        assert.ok(openFds(bigIno) >= 1, 'not streaming');
         sock.destroy();
-        assert.ok(await until(() => live.size === 0), 'handle still open');
+        assert.ok(await until(() => openFds(bigIno) === 0), 'descriptor left open');
+        await sleep(100);   // the pipeline has settled; now it must not have logged
     });
     assert.deepStrictEqual(logged, []);
+    assert.deepStrictEqual(escapes.map((e) => e.code || String(e)), []);
 });
 
 test('download: a client that stops reading is cut off after idleMs and its descriptor closed', async () => {
-    const { live, downloads: d } = tracked({ idleMs: 300 });
+    const d = createDownloads({ api, idleMs: 300 });
     await withServer({ downloads: d }, async (url) => {
         const sock = await rawGet(Number(new URL(url).port), BIG);
         sock.pause();
         await sleep(100);
-        assert.strictEqual(live.size, 1);
-        assert.ok(await until(() => live.size === 0, 4000), 'stalled download kept its descriptor');
+        assert.strictEqual(openFds(bigIno), 1);
+        assert.ok(await until(() => openFds(bigIno) === 0, 4000), 'stalled download kept its descriptor');
         sock.destroy();
     });
 });
@@ -501,14 +512,13 @@ test('download: a quote or newline in the name cannot break the header', async (
 });
 
 test('download: HEAD sends the headers and no body, and closes the file', async () => {
-    const { live, downloads: d } = tracked();
-    await withServer({ downloads: d }, async (url) => {
+    await withServer({}, async (url) => {
         const res = await fetch(`${url}/download?path=${BIG}`, { method: 'HEAD' });
         assert.strictEqual(res.status, 200);
         assert.strictEqual(res.headers.get('content-length'), String(32 * 1024 * 1024));
         assert.match(res.headers.get('content-disposition'), /big\.bin/);
         assert.strictEqual((await res.arrayBuffer()).byteLength, 0);
-        assert.ok(await until(() => live.size === 0), 'handle still open');
+        assert.ok(await until(() => openFds(bigIno) === 0), 'descriptor left open');
     });
 });
 
@@ -531,4 +541,48 @@ test('download: a name in the log cannot forge a line', async () => {
     });
     assert.ok(logged.length > 0 && logged.every((m) => !m.includes('\n')), JSON.stringify(logged));
     fs.unlinkSync(file);
+});
+
+test('download: a refusal is JSON, never saved as an attachment', async () => {
+    await withServer({}, async (url) => {
+        const res = await fetch(`${url}/download?path=${q('blueprints/automation/.env')}`);
+        assert.strictEqual(res.status, 403);
+        assert.strictEqual(res.headers.get('content-disposition'), null);
+        assert.match(res.headers.get('content-type'), /json/);
+        assert.match((await res.json()).error, /to download it/);
+    });
+});
+
+test('sendAttachment: a failure while setting up the response sends JSON without attachment headers', async () => {
+    const stat = { size: 5 };
+    const closed = [];
+    const handle = {
+        close: async () => { closed.push(1); },
+        createReadStream: () => { throw new Error('no stream'); },
+    };
+    const app = express();
+    app.get('/x', (req, res) => sendAttachment({ handle, stat, name: 'f.txt' }, req, res, { log: () => {} }));
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+        const res = await fetch(`http://127.0.0.1:${server.address().port}/x`);
+        assert.strictEqual(res.status, 500);
+        assert.strictEqual(res.headers.get('content-disposition'), null);
+        assert.deepStrictEqual(await res.json(), { error: 'Internal error' });
+        assert.ok(closed.length >= 1, 'handle not closed');
+    } finally {
+        server.closeAllConnections();
+        await new Promise((r) => server.close(r));
+    }
+});
+
+test('streamBody: runs its cleanup when the response is already gone, and builds nothing', () => {
+    let made = 0;
+    let released = 0;
+    streamBody({ destroyed: true }, {
+        makeSource: () => { made++; },
+        release: () => { released++; },
+    });
+    assert.strictEqual(made, 0);
+    assert.strictEqual(released, 1);
 });
