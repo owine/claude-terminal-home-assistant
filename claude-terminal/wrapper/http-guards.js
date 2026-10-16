@@ -130,6 +130,29 @@ function createOriginGuard({ log = console.warn } = {}) {
 }
 
 /**
+ * CSRF protection for GETs that act on the user's behalf: the Files sidebar's
+ * downloads, which make the browser save a file or build a zip.
+ *
+ * A page on another site can start a GET (a link, an <img>) but cannot read
+ * the answer, so a download leaks nothing to it; refused anyway, so another
+ * site cannot make the browser save /config files or start zips. Browsers
+ * mark such a request `Sec-Fetch-Site: cross-site`. `same-origin` (the
+ * sidebar, ingress included: the wrapper frame shares HA's origin),
+ * `same-site`, `none` (typed or bookmarked) and an absent header (older
+ * browsers, curl) pass. Origin cannot do this job: a browser sends none on a
+ * plain GET.
+ */
+function createCrossSiteGuard({ log = console.warn } = {}) {
+    return (req, res, next) => {
+        const site = String(req.get('sec-fetch-site') || '').toLowerCase();
+        if (site !== 'cross-site') return next();
+
+        log(`Blocked cross-site request for ${JSON.stringify(`${req.baseUrl || ''}${req.path || ''}`)}`);
+        return res.status(403).json({ error: 'Downloads cannot be started from another site. Use the Files sidebar.' });
+    };
+}
+
+/**
  * Cross-site WebSocket hijacking protection for the terminal socket.
  *
  * Upgrades are dispatched from the http server's 'upgrade' event and never pass
@@ -173,6 +196,7 @@ function errorResponseFor(err) {
 module.exports = {
     createRateLimiter,
     createOriginGuard,
+    createCrossSiteGuard,
     createUpgradeGuard,
     errorResponseFor,
     INVALID_FILE_TYPE,

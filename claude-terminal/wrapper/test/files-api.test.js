@@ -20,6 +20,8 @@ const {
     classifyRelative,
     looksBinary,
     procFdPath,
+    sendError,
+    FilesError,
 } = require('../files-api.js');
 const { createRateLimiter } = require('../http-guards.js');
 
@@ -585,4 +587,170 @@ test('routes: the rate limiter applies', async () => {
         assert.strictEqual((await fetch(`${url}/files/list`)).status, 200);
         assert.strictEqual((await fetch(`${url}/files/list`)).status, 429);
     });
+});
+
+// --- protected=1: the "Show protected files" toggle ---
+
+test('allowSensitive lifts the sensitive tier for preview, and nothing else', async () => {
+    assert.strictEqual((await api.preview('.env', { allowSensitive: true })).content, 'TOKEN=1\n');
+    assert.strictEqual((await api.preview('.storage/auth', { allowSensitive: true })).content, '{"refresh_tokens": []}\n');
+    assert.strictEqual((await api.preview('claude-config/.credentials.json', { allowSensitive: true })).content, '{"token": "t"}\n');
+    // a symlink named innocently, pointing at .env
+    assert.strictEqual((await api.preview('innocent.yaml', { allowSensitive: true })).content, 'TOKEN=1\n');
+    // never-shown and outside the root stay refused
+    await refused(api.preview('.git/config', { allowSensitive: true }));
+    await refused(api.preview('repo-meta/config', { allowSensitive: true }));
+    await refused(api.preview('../data/.credentials.json', { allowSensitive: true }));
+    await refused(api.preview('creds-link', { allowSensitive: true }));
+});
+
+test('preview says whether the file it opened is protected, by name or target', async () => {
+    // The UI clears a protected preview when the toggle goes off, and must
+    // know it is one even when its listing was stale (a file since replaced
+    // by a link to .env), so the server says so on every answer.
+    const open = (p) => api.preview(p, { allowSensitive: true });
+    assert.strictEqual((await open('configuration.yaml')).sensitive, false);
+    assert.strictEqual((await open('autos-link.yaml')).sensitive, false);
+    assert.strictEqual((await api.preview('configuration.yaml')).sensitive, false);
+    assert.strictEqual((await open('.env')).sensitive, true);
+    assert.strictEqual((await open('.storage/auth')).sensitive, true);
+    assert.strictEqual((await open('innocent.yaml')).sensitive, true);   // link named innocently, to .env
+    assert.strictEqual((await open('notes.txt')).sensitive, true);       // to .storage/auth
+    write('certs/blob.key', Buffer.from([0, 1, 2]));
+    try {
+        const binary = await open('certs/blob.key');
+        assert.strictEqual(binary.binary, true);
+        assert.strictEqual(binary.sensitive, true);
+    } finally {
+        fs.rmSync(path.join(root, 'certs', 'blob.key'));
+    }
+    // A descriptor that turns out to be a protected file (a parent folder
+    // swapped after resolve()) is reported as one too.
+    const swapped = createFilesApi({ root, fdPath: async () => path.join(root, '.storage', 'auth') });
+    assert.strictEqual((await swapped.preview('configuration.yaml', { allowSensitive: true })).sensitive, true);
+});
+
+test('openFile: a regular file comes back open, with its stat', async () => {
+    const { handle, stat } = await api.openFile(path.join(root, 'configuration.yaml'));
+    try {
+        assert.strictEqual(stat.isFile(), true);
+        assert.strictEqual(stat.size, 'homeassistant:\n  name: Home\n'.length);
+    } finally {
+        await handle.close();
+    }
+});
+
+test('openFile refuses a symlink as the last component, and a folder', async () => {
+    await refused(api.openFile(path.join(root, 'autos-link.yaml')), 400);   // O_NOFOLLOW
+    await refused(api.openFile(path.join(root, 'packages')), 400);
+});
+
+test('the descriptor check honours allowSensitive, never for hidden or outside', async () => {
+    const at = (p) => createFilesApi({ root, fdPath: async () => p });
+    const storage = path.join(root, '.storage', 'auth');
+    assert.match((await at(storage).preview('configuration.yaml', { allowSensitive: true })).content, /name: Home/);
+    await refused(at(storage).openFile(path.join(root, 'configuration.yaml')), 403);
+    await refused(at(path.join(root, '.git', 'config')).preview('configuration.yaml', { allowSensitive: true }));
+    await refused(at(path.join(outside, 'f.txt')).preview('configuration.yaml', { allowSensitive: true }));
+});
+
+test('routes: protected=1 lifts the refusal for preview; list ignores it', async () => {
+    await withServer({}, async (url) => {
+        let res = await fetch(`${url}/files/preview?path=.env&protected=1`);
+        assert.strictEqual(res.status, 200);
+        const body = await res.json();
+        assert.strictEqual(body.content, 'TOKEN=1\n');
+        assert.strictEqual(body.sensitive, true);
+        res = await fetch(`${url}/files/preview?path=configuration.yaml&protected=1`);
+        assert.strictEqual((await res.json()).sensitive, false);
+
+        // only exactly '1' counts; a repeated flag arrives as an array
+        for (const flag of ['0', 'true', 'yes', '1&protected=1']) {
+            res = await fetch(`${url}/files/preview?path=.env&protected=${flag}`);
+            assert.strictEqual(res.status, 403, `protected=${flag}`);
+            assert.match((await res.json()).error, /Show protected files/);
+        }
+
+        res = await fetch(`${url}/files/preview?path=${encodeURIComponent('.git/config')}&protected=1`);
+        assert.strictEqual(res.status, 404);
+
+        const plain = await (await fetch(`${url}/files/list`)).json();
+        const flagged = await (await fetch(`${url}/files/list?protected=1`)).json();
+        assert.deepStrictEqual(flagged, plain);
+    });
+});
+
+// --- openFile checks the path itself, not only the descriptor ---
+
+test('openFile enforces the tiers without /proc (fdPath unavailable)', async () => {
+    const bare = createFilesApi({ root, fdPath: async () => null });
+    await refused(bare.openFile(path.join(root, '.env')), 403);
+    const { handle } = await bare.openFile(path.join(root, '.env'), { allowSensitive: true });
+    await handle.close();
+    await refused(bare.openFile(path.join(root, '.git', 'config')), 404);
+    await refused(bare.openFile(path.join(root, '.git', 'config'), { allowSensitive: true }), 404);
+    await refused(bare.openFile(path.join(outside, 'f.txt')), 404);
+    await refused(bare.openFile(path.join(outside, 'f.txt'), { allowSensitive: true }), 404);
+});
+
+test('a refused openFile leaks no descriptor', { skip: !hasProcFd && 'needs /proc/self/fd (Linux)' }, async () => {
+    const count = () => fs.readdirSync('/proc/self/fd').length;
+    const gitConfig = path.join(root, '.git', 'config');
+    const viaFd = createFilesApi({ root, fdPath: async () => gitConfig });
+    const before = count();
+    await refused(viaFd.openFile(path.join(root, 'configuration.yaml')));   // refused after the open
+    await refused(api.openFile(path.join(root, 'packages')), 400);          // a folder
+    assert.strictEqual(count(), before);
+});
+
+test('sendError destroys the response instead of throwing once headers are sent', () => {
+    const logged = [];
+    let destroyed = false;
+    const res = {
+        headersSent: true,
+        destroy() { destroyed = true; },
+        status() { throw new Error('must not write after headers'); },
+    };
+    assert.doesNotThrow(() => sendError(res, new FilesError(403, 'x'), (m) => logged.push(m)));
+    assert.strictEqual(destroyed, true);
+    assert.strictEqual(logged.length, 1);
+});
+
+test('openFile normalises its input: a ../ path out of the root is refused without /proc', async () => {
+    const bare = createFilesApi({ root, fdPath: async () => null });
+    const sneaky = `${root}/../${path.basename(outside)}/f.txt`;   // not normalised
+    assert.ok(fs.existsSync(sneaky), 'the target exists, so only the check can refuse it');
+    await refused(bare.openFile(sneaky, { allowSensitive: true }), 404);
+});
+
+// --- one visibility rule for the listing, recent changes and zips ---
+
+test('a *.part folder is hidden from the listing and from recent changes alike', async () => {
+    const partRoot = path.join(base, 'parts');
+    write('kept/a.txt', 'x', partRoot);
+    write('upload.part/inner.txt', 'x', partRoot);
+    const partApi = createFilesApi({ root: partRoot });
+    assert.deepStrictEqual((await partApi.list('')).entries.map((e) => e.name), ['kept']);
+    const found = (await partApi.recent(24)).entries.map((e) => e.relative);
+    assert.deepStrictEqual(found, [path.join('kept', 'a.txt')]);
+});
+
+test('the api exposes the root it was configured with', () => {
+    assert.strictEqual(api.root, root);
+});
+
+// Documents a LIMIT, not a goal. Without /proc the before-open check is a
+// string-prefix check and O_NOFOLLOW covers only the last component, so a
+// symlinked PARENT folder escapes. Callers must pass paths from resolve() or
+// from a walk that never follows symlinks (see openFile's JSDoc). If this
+// ever starts failing, the limit was lifted: update the JSDoc.
+test('openFile limit: without /proc a symlinked parent folder is NOT caught', async () => {
+    fs.symlinkSync(outside, path.join(root, 'escape-dir'));
+    try {
+        const bare = createFilesApi({ root, fdPath: async () => null });
+        const { handle } = await bare.openFile(path.join(root, 'escape-dir', 'f.txt'));
+        await handle.close();
+    } finally {
+        fs.unlinkSync(path.join(root, 'escape-dir'));
+    }
 });

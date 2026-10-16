@@ -1,4 +1,4 @@
-const CACHE_NAME = 'claude-ha-v11';
+const CACHE_NAME = 'claude-ha-v12';
 const OFFLINE_URL = './offline.html';
 // Every path is relative: under Home Assistant ingress the app is served
 // beneath a per-session path prefix, and these resolve against sw.js's URL.
@@ -46,6 +46,12 @@ self.addEventListener('fetch', (event) => {
 
     // Skip WebSocket and non-http(s) requests
     if (!event.request.url.startsWith('http')) return;
+
+    // Downloads go straight to the network, never through this worker. A
+    // zip streams for as long as the folder takes to deflate, nothing in
+    // one is cacheable, and offline the navigation branch below would hand
+    // the browser offline.html to save under the download's name.
+    if (/\/api\/files\/download(-zip)?$/.test(new URL(event.request.url).pathname)) return;
 
     // Navigations: network, else the offline page - never a cached page.
     // The terminal needs a live connection to the add-on, so an offline copy

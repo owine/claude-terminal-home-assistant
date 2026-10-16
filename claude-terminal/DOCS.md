@@ -320,7 +320,7 @@ The terminal starts directly in your `/config` directory, giving you immediate a
 - **Auto-Launching**: Claude starts automatically when you open the terminal (configurable)
 - **Claude AI**: Access Claude's AI capabilities for programming, troubleshooting and more
 - **Image Paste Support**: Paste images (Ctrl+V), drag-drop, or upload for Claude analysis
-- **Files Sidebar**: Browse and preview `/config`, see recently changed files, and run Home Assistant's configuration check
+- **Files Sidebar**: Browse, preview and download files in `/config` (folders as a zip), see recently changed files, and run Home Assistant's configuration check
 - **Direct Config Access**: Terminal starts in `/config` for immediate access to all Home Assistant files
 - **Simple Setup**: Uses OAuth for easy authentication
 - **Home Assistant Integration**: Access directly from your dashboard
@@ -527,7 +527,9 @@ entirely when closed.
 - **Files** is a tree of `/config`. Click a file to preview it, then **Insert
   path** types its path at the prompt (quoted if it has spaces, never followed
   by Enter) so you can hand it to Claude. **Copy path** puts it on the
-  clipboard. Dotfiles appear when you tick **Hidden files**.
+  clipboard, and **Download** saves the file to your device. Each folder row
+  has a **⋯** button with **Download as zip**. Dotfiles appear when you tick
+  **Hidden files**.
 - **Recent changes** lists the files in `/config` changed in the last hour,
   day or week, newest first, so you can see what Claude just edited. What Home
   Assistant rewrites by itself is left out: `.storage`, `deps`, `tts`,
@@ -537,15 +539,17 @@ entirely when closed.
 - **✓ Check HA configuration** runs `ha core check` and shows the result, so
   you can validate an edit before restarting Home Assistant.
 
-The sidebar is read-only and limited to `/config`. Paths are resolved through
+The sidebar never changes anything, and it is limited to `/config`. Paths are resolved through
 symlinks and must stay inside it, so `/data`, where your Claude login lives, is
 not reachable. Which files it shows follows Studio Code Server's defaults:
 
 - `.git`, and any folder ending in `.git` (a bare repository), is never
-  listed or previewed: remote URLs in its `config` can carry access tokens.
-- `secrets.yaml` is an ordinary file, listed and previewed like any other.
-- Files that are typically credentials are listed with a 🔒 but not
-  previewed: `.storage`, `.cloud`, `.ssh`, `.gnupg`, `claude-config`, `.env`
+  listed, previewed, downloaded or zipped: remote URLs in its `config` can carry access tokens.
+- `secrets.yaml` is an ordinary file: listed, previewed, downloaded and zipped
+  like any other.
+- Files that are typically credentials are listed with a 🔒, and are not
+  previewed or downloaded unless **Show protected files** is on (see below):
+  `.storage`, `.cloud`, `.ssh`, `.gnupg`, `claude-config`, `.env`
   files and `.envrc`, Google Assistant's `service_account.json`, keys and
   certificates (`*.key`, `*.pem`, `*.p12`, `id_rsa` and
   friends), `.git-credentials`, `.gitconfig`, `.netrc`, `.npmrc`, `.pypirc`,
@@ -555,6 +559,51 @@ not reachable. Which files it shows follows Studio Code Server's defaults:
 
 Previews show at most the first 256 KB of a file, as plain text; binary files
 are recognised and not shown. A folder lists at most 1000 entries.
+
+**Show protected files.** Tick it to preview and download the files marked
+🔒. An amber strip across the sidebar stays up while it is on. Nothing
+remembers it: it is off again every time the page loads. It shows on the Files
+tab, and on Recent changes while it is on. Turning it off closes any protected
+preview that is open. It works with **Hidden files**: most protected entries
+are dotfiles, so to open `.storage/auth`, tick **Hidden files** to see
+`.storage` and **Show protected files** to open what is inside. `.git` stays
+unavailable either way.
+
+**Downloads.** **Download** in a file's preview saves the file as it is. A file
+reached through a symlink is saved under the name you clicked, not the name of
+its target. **Download as zip** in a folder's **⋯** menu packs the folder and
+everything below it, by these rules:
+
+- Protected files and folders, `.git`, symlinks and unfinished downloads are
+  never put in a zip, even with **Show protected files** on, and a protected
+  folder's **Download as zip** is disabled. A symlinked folder zipped from its
+  own **⋯** packs the folder it points to, under the name you clicked; it is
+  only symlinks *inside* the folder being zipped that are left out.
+- A zip holds at most 200 MB before compression. A bigger folder is refused,
+  and the message in the sidebar names its largest files so you can zip the
+  parts you need. There is no zip of all of `/config` (the recorder database,
+  `home-assistant_v2.db`, is usually over the limit on its own); use Home
+  Assistant's backups for that.
+- A folder with more than 20,000 entries, nested more than 8 levels deep, or
+  that takes more than 3 seconds to list, is refused too.
+- Two zips can be prepared or sent at once. A third does not start; the
+  sidebar says so, and you can try again when one has finished.
+- Within each folder, files come first and then subfolders, each sorted by
+  name (capital letters before lowercase ones). Empty folders are left out.
+  Photos, video, audio, archives and Office documents are stored as they are,
+  not compressed again.
+- If the folder you zip is named like a Windows drive (`C:x`), the zip and the
+  folder inside it are named `C_x`. Folders and files inside it keep their
+  names.
+- Dotfiles that are not protected, such as `.gitignore`, are included whether
+  or not **Hidden files** is ticked.
+
+A link on another site cannot make your browser download a file or a zip from
+the add-on: such a request is refused.
+
+In the Home Assistant Companion app, the app's web view may preview a download
+instead of saving it. If a download does not save, open Home Assistant in a
+browser and download it from there.
 
 #### Persistent Package Management
 - **System packages**: Install APK packages that survive restarts

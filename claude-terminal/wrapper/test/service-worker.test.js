@@ -189,6 +189,35 @@ test('an offline request for an uncached asset fails with 503', async () => {
     assert.strictEqual(res.status, 503);
 });
 
+// --- downloads ---
+//
+// A file or zip download must not pass through the worker: a zip can stream
+// for minutes, and an offline navigation would get offline.html saved under
+// the download's name. Both the plain request and the navigation an
+// <a download> click makes are left to the browser.
+
+test('downloads bypass the worker, under the ingress prefix', async () => {
+    const sw = await installedWorker();
+    for (const p of ['api/files/download?path=%2Fconfig%2Fa.yaml', 'api/files/download-zip?path=%2Fconfig%2Fblueprints']) {
+        assert.strictEqual(await sw.request(`${SCOPE}${p}`), null, p);
+        assert.strictEqual(await sw.request(`${SCOPE}${p}`, { mode: 'navigate' }), null, `${p} (navigate)`);
+    }
+});
+
+test('other API requests still go through the worker', async () => {
+    const sw = await installedWorker();
+    const res = await sw.request(`${SCOPE}api/files/list?path=x`);
+    assert.strictEqual(res.text, `network:${SCOPE}api/files/list?path=x`);
+});
+
+test('only the download endpoints bypass, not look-alike paths', async () => {
+    const sw = await installedWorker();
+    for (const p of ['api/files/preview?path=download', 'api/files/downloads', 'api/files/download-zip-x', 'api/files/download/x', 'download']) {
+        const res = await sw.request(`${SCOPE}${p}`);
+        assert.strictEqual(res.text, `network:${SCOPE}${p}`, p);
+    }
+});
+
 test('non-GET requests are left to the browser', async () => {
     const sw = await installedWorker();
     assert.strictEqual(await sw.request(`${SCOPE}upload`, { method: 'POST' }), null);

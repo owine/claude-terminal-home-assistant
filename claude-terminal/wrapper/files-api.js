@@ -37,6 +37,8 @@ const MAX_PREVIEW_BYTES = 256 * 1024;
 const BINARY_SNIFF_BYTES = 8000;
 // Recent changes: result size, folder depth, entries visited and wall clock.
 // Whichever runs out first ends the walk; the response says it was cut short.
+// The zip walk in files-download.js shares MAX_RECENT_DEPTH, MAX_RECENT_VISITS
+// and RECENT_TIME_BUDGET_MS.
 const MAX_RECENT = 100;
 const MAX_RECENT_DEPTH = 8;
 const MAX_RECENT_VISITS = 20000;
@@ -50,8 +52,9 @@ const HA_CHECK_TIMEOUT_MS = 180000;
 const HA_CHECK_MAX_BUFFER = 1024 * 1024;
 const HA_CHECK_MAX_MESSAGE = 4000;
 
-// Never listed, never previewed, never in recent changes: .git/config can
-// hold access tokens in remote URLs (upstream 2.3.1).
+// Never listed, previewed, downloaded or zipped, never in recent changes,
+// whatever protected=1 says: .git/config can hold access tokens in remote
+// URLs (upstream 2.3.1).
 //
 // secrets.yaml is deliberately NOT here. This follows Studio Code Server
 // (hassio-addons/addon-vscode), whose default files.exclude hides .git and
@@ -63,13 +66,15 @@ const HA_CHECK_MAX_MESSAGE = 4000;
 // that is rare enough not to be worth telling the two apart.
 const HIDDEN_NAME = /\.git$/i;
 
-// In-progress downloads and partial writes: left out of listings and recent
-// changes, since they are about to be renamed or deleted.
+// In-progress downloads and partial writes: left out of listings, recent
+// changes and zips (walkEntryType), since they are about to be renamed or
+// deleted.
 const PARTIAL_FILE = /\.part$/i;
 
-// Listed (so the tree is honest about what is there) but never previewed, and
-// left out of recent changes. Any path segment matching one of these refuses
-// everything under it.
+// Listed (so the tree is honest about what is there), but previewed or
+// downloaded only with protected=1 ("Show protected files"), never zipped,
+// and left out of recent changes. Any path segment matching one of these
+// covers everything under it.
 //   .storage: HA's auth store, refresh tokens and integration credentials.
 //   .cloud: the Nabu Casa login.
 //   .ssh, .gnupg: keys.
@@ -120,7 +125,8 @@ function isHiddenName(name) {
 
 /**
  * Classify a path relative to the root: 'hidden' (never shown), 'sensitive'
- * (listed but not previewed) or 'ok'. Case-insensitive, so a case-insensitive
+ * (listed, but opened for preview or download only with protected=1, and
+ * never zipped) or 'ok'. Case-insensitive, so a case-insensitive
  * filesystem cannot be used to sidestep it.
  */
 function classifyRelative(relative) {
@@ -160,6 +166,9 @@ class FilesError extends Error {
     }
 }
 const notAllowed = () => new FilesError(404, 'Not found or not allowed');
+// The sensitive tier's refusal. The UI lifts it with "Show protected files",
+// which adds protected=1 to preview and download requests.
+const secretRefusal = (action = 'open') => new FilesError(403, `This file may hold secrets. Turn on "Show protected files" to ${action} it.`);
 
 /**
  * Looks binary if the sample holds a NUL byte or is not valid UTF-8. A
@@ -240,6 +249,27 @@ function createHaCheck({
 }
 
 /**
+ * The one visibility rule for a directory entry, shared by the listing, the
+ * recent-changes walk and the zip walk (files-download.js), so they cannot
+ * disagree. `relative` is the entry's path below the real root.
+ *
+ * Returns null for an entry that is never shown: hidden, a partial file or
+ * folder (PARTIAL_FILE) and, unless `allowSensitive`, a sensitive one.
+ * Otherwise 'dir', 'file', 'symlink' or 'other' from the folder listing's own
+ * type, which says what the entry itself is, never what a link points at.
+ * Walks use only 'dir' and 'file', which is how they never follow a link.
+ */
+function walkEntryType(relative, dirent, { allowSensitive = false } = {}) {
+    const kind = classifyRelative(relative);
+    if (kind === 'hidden' || (kind === 'sensitive' && !allowSensitive)) return null;
+    if (PARTIAL_FILE.test(dirent.name)) return null;
+    if (dirent.isSymbolicLink()) return 'symlink';
+    if (dirent.isDirectory()) return 'dir';
+    if (dirent.isFile()) return 'file';
+    return 'other';
+}
+
+/**
  * The read-only file API, confined to `root` (default FILES_ROOT, else
  * /config). `now` is injectable for the recent-changes window.
  */
@@ -313,8 +343,7 @@ function createFilesApi({
     async function describe(dir, dirent, rootReal) {
         const full = path.join(dir, dirent.name);
         const relative = path.relative(rootReal, full);
-        if (classifyRelative(relative) === 'hidden') return null;
-        if (PARTIAL_FILE.test(dirent.name)) return null;
+        if (walkEntryType(relative, dirent, { allowSensitive: true }) === null) return null;
         try {
             let kind = classifyRelative(relative);
             if (dirent.isSymbolicLink()) {
@@ -374,20 +403,44 @@ function createFilesApi({
         return { path: real, root: rootReal, entries, truncated };
     }
 
-    async function preview(requested) {
-        const { real, kind } = await resolve(requested);
-        if (kind === 'sensitive') throw new FilesError(403, 'This file may hold secrets and is not previewed');
+    /**
+     * Open a file for reading. `requestedPath` must be absolute and come
+     * from resolve() or from a walk that never follows symlinks. It is
+     * normalised with path.resolve() and classified before the open, which
+     * stops a "../" or a plain outside path, but NOT a symlinked parent
+     * folder: that check is a string-prefix one. A raw request path is not
+     * safe here, and where /proc is unavailable it can escape through a
+     * symlinked parent folder.
+     *
+     * O_NONBLOCK so a FIFO cannot hang the open. O_NOFOLLOW refuses a
+     * symlink in the FINAL component only: a parent folder swapped for a
+     * symlink between resolve() and here is still followed. That case is
+     * caught after the open, by asking the kernel which file the
+     * descriptor actually is (/proc/self/fd, Linux) and checking that
+     * path again. Where /proc is unavailable only that second check is
+     * skipped. The type is checked on the open descriptor, not the path.
+     *
+     * Both checks apply the tiers: the path is classified BEFORE the open
+     * (which refuses hidden and outside-the-root paths even without /proc),
+     * and the descriptor's path again AFTER it, as the race guard. Only the
+     * second one sees through a symlinked parent folder.
+     *
+     * Resolves to { handle, stat, sensitive }, `sensitive` being true when
+     * either check found a protected file (only possible with
+     * `allowSensitive`); the caller closes the handle. Hidden and
+     * outside-the-root are always refused, sensitive unless
+     * `allowSensitive`.
+     */
+    async function openFile(requestedPath, { allowSensitive = false, action = 'open' } = {}) {
+        // Normalise first: inside() is a string-prefix check, and a "../" left
+        // in the path would pass it and still open a file outside the root.
+        const real = path.resolve(requestedPath);
+        const rootBefore = await realRoot();
+        if (!inside(rootBefore, real)) throw notAllowed();
+        const kindBefore = classifyRelative(path.relative(rootBefore, real));
+        if (kindBefore === 'hidden') throw notAllowed();
+        if (kindBefore === 'sensitive' && !allowSensitive) throw secretRefusal(action);
 
-        if (onResolved) await onResolved(real);
-
-        // O_NONBLOCK so a FIFO cannot hang the open. O_NOFOLLOW refuses a
-        // symlink in the FINAL component only: a parent folder swapped for a
-        // symlink between resolve() and here is still followed. That case is
-        // caught after the open, by asking the kernel which file the
-        // descriptor actually is (/proc/self/fd, Linux) and checking that
-        // path again. Where /proc is unavailable the check is skipped and
-        // only the last component is protected. The type is checked on the
-        // open descriptor, not the path.
         let handle;
         try {
             handle = await fsp.open(real, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_NOFOLLOW || 0));
@@ -395,6 +448,7 @@ function createFilesApi({
             if (err.code === 'EISDIR') throw new FilesError(400, 'Not a file');
             throw new FilesError(400, `Cannot read file (${err.code || 'error'})`);
         }
+        let sensitive = kindBefore === 'sensitive';
         try {
             const opened = await fdPath(handle.fd);
             if (opened !== null) {
@@ -402,10 +456,47 @@ function createFilesApi({
                 if (!inside(rootReal, opened)) throw notAllowed();
                 const openedKind = classifyRelative(path.relative(rootReal, opened));
                 if (openedKind === 'hidden') throw notAllowed();
-                if (openedKind === 'sensitive') throw new FilesError(403, 'This file may hold secrets and is not previewed');
+                if (openedKind === 'sensitive' && !allowSensitive) throw secretRefusal(action);
+                if (openedKind === 'sensitive') sensitive = true;
             }
             const stat = await handle.stat();
             if (!stat.isFile()) throw new FilesError(400, 'Not a file');
+            return { handle, stat, sensitive };
+        } catch (err) {
+            await handle.close().catch(() => {});
+            if (err instanceof FilesError) throw err;
+            throw new FilesError(400, `Cannot read file (${err.code || 'error'})`);
+        }
+    }
+
+    /**
+     * Resolve a REQUESTED path and open it: { handle, stat, real, kind }.
+     * The one place that checks the kind before opening. resolve() marks a
+     * path sensitive by its requested name too (a symlink called .env to an
+     * ordinary file), which openFile, seeing only the realpath, cannot know.
+     * `kind` is 'sensitive' if either resolve() or openFile found a
+     * protected file, so neither check alone can clear it.
+     * `.git` and anything outside the root are a 404 whatever allowSensitive
+     * says. `action` words the 403 ("open" or "download"). The caller owns
+     * the handle.
+     */
+    async function openRequested(requested, { allowSensitive = false, action = 'open' } = {}) {
+        const { real, kind } = await resolve(requested);
+        if (kind === 'sensitive' && !allowSensitive) throw secretRefusal(action);
+        if (onResolved) await onResolved(real);
+        const { handle, stat, sensitive } = await openFile(real, { allowSensitive, action });
+        return { handle, stat, real, kind: sensitive ? 'sensitive' : kind };
+    }
+
+    /**
+     * Up to maxPreviewBytes of a file. `sensitive` says whether what was
+     * opened is a protected file: the UI clears such a preview when "Show
+     * protected files" goes off, and takes this answer over its listing,
+     * which can be stale (a file replaced by a link to .env since).
+     */
+    async function preview(requested, { allowSensitive = false } = {}) {
+        const { handle, stat, real, kind } = await openRequested(requested, { allowSensitive });
+        try {
             const length = Math.min(stat.size, maxPreviewBytes);
             const buffer = Buffer.alloc(length);
             let read = 0;
@@ -416,7 +507,7 @@ function createFilesApi({
             }
             const data = buffer.subarray(0, read);
             const truncated = stat.size > read;
-            const base = { path: real, size: stat.size, mtime: stat.mtimeMs, limit: maxPreviewBytes };
+            const base = { path: real, size: stat.size, mtime: stat.mtimeMs, limit: maxPreviewBytes, sensitive: kind === 'sensitive' };
             if (looksBinary(data, truncated)) return { ...base, binary: true };
             return {
                 ...base,
@@ -458,14 +549,14 @@ function createFilesApi({
                     }
                     const full = path.join(dir, dirent.name);
                     const relative = path.relative(rootReal, full);
-                    if (classifyRelative(relative) !== 'ok') continue;
-                    if (dirent.isDirectory()) {
+                    const type = walkEntryType(relative, dirent);
+                    if (type === 'dir') {
                         const name = lower(dirent.name);
                         const parent = lower(path.basename(dir));
                         const skip = RECENT_SKIP_DIRS.has(name)
                             || RECENT_SKIP_NESTED.some(([p, n]) => p === parent && n === name);
                         if (!skip) subdirs.push(full);
-                    } else if (dirent.isFile() && !RECENT_SKIP_FILE.test(dirent.name) && !PARTIAL_FILE.test(dirent.name)) {
+                    } else if (type === 'file' && !RECENT_SKIP_FILE.test(dirent.name)) {
                         let stat;
                         try { stat = await fsp.stat(full); } catch { continue; }
                         if (stat.mtimeMs >= since) {
@@ -495,7 +586,36 @@ function createFilesApi({
         };
     }
 
-    return { resolve, list, preview, recent };
+    return { root, resolve, list, preview, recent, openFile, openRequested };
+}
+
+/**
+ * protected=1, sent by the UI only while "Show protected files" is on, lifts
+ * the sensitive tier's refusal for preview and download. Exactly '1': an
+ * array (?protected=1&protected=1) or any other value is off. list never
+ * reads it: a sensitive folder's names were always listable.
+ */
+const allowsProtected = (req) => req.query.protected === '1';
+
+/**
+ * Answer a failed request with JSON: a FilesError's own status and message,
+ * anything else a logged 500. Shared with files-download.js, so every Files
+ * route fails the same way.
+ */
+function sendError(res, err, log = console.error) {
+    if (res.headersSent) {
+        // Mid-stream: a JSON body can no longer be sent. Cut the connection
+        // so the client sees a failed transfer, not a truncated "success".
+        log(`Files API error after headers were sent: ${err && err.message}`);
+        res.destroy();
+        return;
+    }
+    if (err instanceof FilesError) {
+        res.status(err.status).json({ error: err.message });
+    } else {
+        log(`Files API error: ${err && err.message}`);
+        res.status(500).json({ error: 'Internal error' });
+    }
 }
 
 /**
@@ -517,12 +637,7 @@ function createFilesRouter({ api, haCheck, readLimiter, checkLimiter, log = cons
         try {
             res.json(await handler(req));
         } catch (err) {
-            if (err instanceof FilesError) {
-                res.status(err.status).json({ error: err.message });
-            } else {
-                log(`Files API error: ${err && err.message}`);
-                res.status(500).json({ error: 'Internal error' });
-            }
+            sendError(res, err, log);
         }
     };
 
@@ -531,7 +646,7 @@ function createFilesRouter({ api, haCheck, readLimiter, checkLimiter, log = cons
     const queryPath = (req) => req.query.path;
 
     router.get('/list', readLimiter, reply((req) => api.list(queryPath(req))));
-    router.get('/preview', readLimiter, reply((req) => api.preview(queryPath(req))));
+    router.get('/preview', readLimiter, reply((req) => api.preview(queryPath(req), { allowSensitive: allowsProtected(req) })));
     router.get('/recent', readLimiter, reply((req) => api.recent(req.query.hours)));
 
     router.post('/ha-check', checkLimiter, async (req, res) => {
@@ -554,9 +669,15 @@ module.exports = {
     createFilesRouter,
     createHaCheck,
     classifyRelative,
+    walkEntryType,
     looksBinary,
     procFdPath,
     FilesError,
+    allowsProtected,
+    sendError,
     MAX_ENTRIES,
     MAX_PREVIEW_BYTES,
+    MAX_RECENT_DEPTH,
+    MAX_RECENT_VISITS,
+    RECENT_TIME_BUDGET_MS,
 };

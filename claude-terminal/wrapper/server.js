@@ -11,6 +11,7 @@
  * - WebSocket proxy for Home Assistant ingress compatibility
  * - Image uploads via POST /upload (paste/drag-drop)
  * - Read-only /config browser and HA config check for the Files sidebar (/api/files)
+ * - File and folder (zip) downloads from /config for the Files sidebar
  * - ARM-compatible (no native dependencies)
  */
 
@@ -32,6 +33,7 @@ const {
 const { uploadFilename, isAllowedImageMime } = require('./upload-naming');
 const { loginNotifierFromEnv } = require('./login-notifier');
 const { createFilesApi, createFilesRouter, createHaCheck } = require('./files-api');
+const { createDownloads, createDownloadRouter } = require('./files-download');
 
 const app = express();
 const PORT = process.env.WRAPPER_PORT || 7680;
@@ -49,6 +51,11 @@ const uploadLimiter = createRateLimiter({ windowMs: 60000, max: 10, message: 'Up
 // The config check runs a process, so it gets the strict one.
 const filesLimiter = createRateLimiter({ windowMs: 60000, max: 240, message: 'Too many file requests, try again in a minute' });
 const haCheckLimiter = createRateLimiter({ windowMs: 60000, max: 6, message: 'Too many configuration checks, try again in a minute' });
+// A zip walks a folder and deflates up to 200 MB on the Pi. The UI makes two
+// requests per zip (check=1, then the download). The integration test budgets
+// its requests against this max (ZIP_LIMIT in
+// test/integration/mouse-and-clipboard.mjs); change both together.
+const zipLimiter = createRateLimiter({ windowMs: 60000, max: 20, message: 'Too many zip downloads, try again in a minute' });
 
 // Ensure upload directory exists
 if (!fs.existsSync(UPLOAD_DIR)) {
@@ -137,11 +144,20 @@ app.post('/upload', uploadLimiter, upload.single('image'), (req, res) => {
 
 // Files sidebar: read-only /config browser and `ha core check` (files-api.js).
 // FILES_ROOT is a test seam; production browses /config.
+const filesApi = createFilesApi({ root: process.env.FILES_ROOT || '/config' });
 app.use('/api/files', createFilesRouter({
-    api: createFilesApi({ root: process.env.FILES_ROOT || '/config' }),
+    api: filesApi,
     haCheck: createHaCheck(),
     readLimiter: filesLimiter,
     checkLimiter: haCheckLimiter,
+}));
+// Downloads (files-download.js): the same api instance, so the same root,
+// resolve() and tiers as above. Still among the API routes: before the
+// terminal proxy and static files.
+app.use('/api/files', createDownloadRouter({
+    downloads: createDownloads({ api: filesApi }),
+    fileLimiter: filesLimiter,
+    zipLimiter,
 }));
 
 // Proxy endpoint for ttyd terminal
