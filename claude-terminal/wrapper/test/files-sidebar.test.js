@@ -14,6 +14,7 @@ const {
     formatAgo,
     clampWidth,
     relativeTo,
+    downloadUrl,
 } = require('../public/files-sidebar.js');
 
 test('plain paths are typed as-is', () => {
@@ -91,4 +92,19 @@ test('clampWidth keeps the sidebar sane and the terminal usable', () => {
 test('relativeTo', () => {
     assert.strictEqual(relativeTo('/config', '/config/packages/x.yaml'), 'packages/x.yaml');
     assert.strictEqual(relativeTo('/config', '/configuration/x'), '/configuration/x');
+});
+
+test('downloadUrl: relative and encoded; protected=1 for single files only', () => {
+    assert.strictEqual(downloadUrl('/config/with space.yaml'),
+        'api/files/download?path=%2Fconfig%2Fwith%20space.yaml');
+    assert.strictEqual(downloadUrl('/config/.env', { protectedOn: true }),
+        'api/files/download?path=%2Fconfig%2F.env&protected=1');
+    assert.strictEqual(downloadUrl('/config/a&b=c#d?.yaml'),
+        'api/files/download?path=%2Fconfig%2Fa%26b%3Dc%23d%3F.yaml');
+    assert.strictEqual(downloadUrl('/config/blueprints', { zip: true }),
+        'api/files/download-zip?path=%2Fconfig%2Fblueprints');
+    assert.strictEqual(downloadUrl('/config/blueprints', { zip: true, check: true, protectedOn: true }),
+        'api/files/download-zip?path=%2Fconfig%2Fblueprints&check=1');
+    assert.strictEqual(downloadUrl('/config/x.yaml', { check: true }),
+        'api/files/download?path=%2Fconfig%2Fx.yaml');
 });

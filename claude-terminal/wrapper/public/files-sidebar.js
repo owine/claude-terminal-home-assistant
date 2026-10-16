@@ -70,7 +70,21 @@
         return p;
     }
 
-    const api = { shellQuote, formatSize, formatAgo, clampWidth, relativeTo, DEFAULT_WIDTH };
+    /**
+     * URL of a file download, or of a folder's zip. Relative, so under
+     * ingress it resolves below /api/hassio_ingress/<token>/; a leading slash
+     * would leave the add-on. `check` asks for the zip's plan as JSON instead
+     * of the zip. `protectedOn` adds protected=1 to single files only: a zip
+     * never holds protected files, so the flag would mean nothing there.
+     */
+    function downloadUrl(p, { zip = false, check = false, protectedOn = false } = {}) {
+        let url = (zip ? 'api/files/download-zip' : 'api/files/download') + '?path=' + encodeURIComponent(p);
+        if (zip && check) url += '&check=1';
+        if (!zip && protectedOn) url += '&protected=1';
+        return url;
+    }
+
+    const api = { shellQuote, formatSize, formatAgo, clampWidth, relativeTo, downloadUrl, DEFAULT_WIDTH };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.FilesSidebar = api;
 })(typeof self !== 'undefined' ? self : this);
