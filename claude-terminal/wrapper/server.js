@@ -52,7 +52,9 @@ const uploadLimiter = createRateLimiter({ windowMs: 60000, max: 10, message: 'Up
 const filesLimiter = createRateLimiter({ windowMs: 60000, max: 240, message: 'Too many file requests, try again in a minute' });
 const haCheckLimiter = createRateLimiter({ windowMs: 60000, max: 6, message: 'Too many configuration checks, try again in a minute' });
 // A zip walks a folder and deflates up to 200 MB on the Pi. The UI makes two
-// requests per zip (check=1, then the download).
+// requests per zip (check=1, then the download). The integration test budgets
+// its requests against this max (ZIP_LIMIT in
+// test/integration/mouse-and-clipboard.mjs); change both together.
 const zipLimiter = createRateLimiter({ windowMs: 60000, max: 20, message: 'Too many zip downloads, try again in a minute' });
 
 // Ensure upload directory exists

@@ -93,6 +93,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // takes its share here, waiting until the last 61 s (a second's slack for
 // the server's later clock) leave room. Routed fakes never reach the
 // server and take none. The limiter itself stays as shipped.
+// Must match zipLimiter's max in server.js; if that changes, change this.
 const ZIP_LIMIT = 20;
 const ZIP_WINDOW_MS = 61000;
 const zipHits = [];
