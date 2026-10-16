@@ -324,6 +324,13 @@ function createDownloads({
     beforeStream = null,
     idleMs = IDLE_MS,
 } = {}) {
+    // The name the user asked for: the requested path's last component once
+    // normalised, so 'a.txt/.', 'a.txt/' and 'x/../a.txt' all name a.txt. A
+    // symlink's own name, not its target's. Only called after resolve() has
+    // accepted the path, so it is a string inside the root. Empty only for
+    // the filesystem root, which the callers fall back from.
+    const requestedName = (requested) => path.basename(path.resolve(api.root, requested));
+
     /**
      * Resolve and open one file for download: { handle, stat, name }.
      * files-api's openRequested() makes the checks (kind by requested name
@@ -339,7 +346,7 @@ function createDownloads({
             await handle.close().catch(() => {});
             throw err;
         }
-        return { handle, stat, name: path.basename(String(requested)) || path.basename(real) };
+        return { handle, stat, name: requestedName(requested) || path.basename(real) };
     }
 
     /**
@@ -363,14 +370,19 @@ function createDownloads({
         }
         if (!stat.isDirectory()) throw new FilesError(400, 'Not a folder');
 
-        // The archive's top folder. For the root, its name as configured
-        // (config), not its realpath (/homeassistant on a real install).
+        // The archive's top folder, and the zip's name. For the root, its
+        // name as configured (config), not its realpath (/homeassistant on a
+        // real install). Otherwise the name that was asked for, as for a
+        // single download: a symlinked folder zips under the link's name,
+        // not its target's.
         // Every entry name starts with it, so it alone can trip the checks
         // yazl makes on a whole name (validateMetadataPath): a leading drive
         // letter ("C:backup") is refused as absolute, and would fail the
         // download after its preflight had passed. A leading '/', a '..'
         // component and an empty name cannot come out of the walk.
-        const top = zipSafe(relative === '' ? path.basename(path.resolve(api.root)) : path.basename(real))
+        const top = zipSafe(relative === ''
+            ? path.basename(path.resolve(api.root))
+            : requestedName(requested) || path.basename(real))
             .replace(/^([a-zA-Z]):/, '$1_');
         const files = [];
         let bytes = 0;

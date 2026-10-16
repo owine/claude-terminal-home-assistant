@@ -161,6 +161,41 @@ test('a folder named like a drive (C:backup) zips under a name yazl accepts', as
     }
 });
 
+test('a symlinked folder zips under the name that was asked for, not its target\'s', async () => {
+    write('link-target/a.txt', 'a\n');
+    write('link-target/sub/b.txt', 'b\n');
+    fs.symlinkSync(path.join(root, 'link-target'), path.join(root, 'link'));
+    fs.symlinkSync(path.join(root, 'link-target'), path.join(root, 'C:lnk'));
+    try {
+        const plan = await downloads.planZip('link');
+        assert.strictEqual(plan.name, 'link.zip');
+        assert.deepStrictEqual(names(plan), ['link/a.txt', 'link/sub/b.txt']);
+        // The name is the requested path's, normalised, with the same
+        // treatment as a real folder's: a drive letter becomes C_.
+        assert.strictEqual((await downloads.planZip('link/')).name, 'link.zip');
+        assert.strictEqual((await downloads.planZip('link/.')).name, 'link.zip');
+        assert.strictEqual((await downloads.planZip(path.join(root, 'link'))).name, 'link.zip');
+        assert.deepStrictEqual(names(await downloads.planZip('C:lnk')), ['C_lnk/a.txt', 'C_lnk/sub/b.txt']);
+        // A path that normalises to a real folder is named after it.
+        assert.strictEqual((await downloads.planZip('link/sub/..')).name, 'link.zip');
+        assert.strictEqual((await downloads.planZip('blueprints/..')).name, 'config.zip');
+        await withServer({}, async (url) => {
+            const check = await fetch(`${url}/download-zip?path=link&check=1`);
+            assert.strictEqual(check.status, 200);
+            assert.strictEqual((await check.json()).name, 'link.zip');
+            const res = await fetch(`${url}/download-zip?path=link`);
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual(res.headers.get('content-disposition'), 'attachment; filename=link.zip');
+            const entries = await unzip(Buffer.from(await res.arrayBuffer()));
+            assert.deepStrictEqual(Object.keys(entries).sort(), ['link/a.txt', 'link/sub/b.txt']);
+        });
+    } finally {
+        fs.unlinkSync(path.join(root, 'link'));
+        fs.unlinkSync(path.join(root, 'C:lnk'));
+        fs.rmSync(path.join(root, 'link-target'), { recursive: true });
+    }
+});
+
 test('a zip lists each folder\'s files by name, then its folders by name', async () => {
     // Created out of order, so the listing order of the filesystem (hash
     // order on ext4, its own on APFS) would show through.
@@ -608,6 +643,22 @@ test('download: a symlink downloads under the name that was asked for', async ()
         assert.strictEqual(res.status, 200);
         assert.strictEqual(res.headers.get('content-disposition'), 'attachment; filename=inside-link.yaml');
         assert.strictEqual(await res.text(), 'homeassistant:\n');
+    });
+});
+
+test('download: the name is taken from the requested path once normalised', async () => {
+    await withServer({}, async (url) => {
+        for (const [asked, name] of [
+            ['configuration.yaml/.', 'configuration.yaml'],
+            ['blueprints/../configuration.yaml', 'configuration.yaml'],
+            ['blueprints/inside-link.yaml/', 'inside-link.yaml'],
+            ['./blueprints/./inside-link.yaml/.', 'inside-link.yaml'],
+        ]) {
+            const res = await fetch(`${url}/download?path=${q(asked)}`);
+            assert.strictEqual(res.status, 200, asked);
+            assert.strictEqual(res.headers.get('content-disposition'), `attachment; filename=${name}`, asked);
+            assert.strictEqual(await res.text(), 'homeassistant:\n');
+        }
     });
 });
 
