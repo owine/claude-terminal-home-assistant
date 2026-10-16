@@ -122,7 +122,8 @@ function isHiddenName(name) {
 
 /**
  * Classify a path relative to the root: 'hidden' (never shown), 'sensitive'
- * (listed but not previewed) or 'ok'. Case-insensitive, so a case-insensitive
+ * (listed, but opened for preview or download only with protected=1, and
+ * never zipped) or 'ok'. Case-insensitive, so a case-insensitive
  * filesystem cannot be used to sidestep it.
  */
 function classifyRelative(relative) {
