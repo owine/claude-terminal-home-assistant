@@ -292,6 +292,15 @@ async function checkDownloads(browser, url) {
     context.on('request', (r) => {
         if (new URL(r.url()).searchParams.get('protected') === '1') flagged.push({ on: toggleOn, url: r.url() });
     });
+    // A download is not a 'request' event (nor is it routable): the browser
+    // fetches it outside the page. Every attempt, a refused one included,
+    // is a 'download' event in both engines, so downloads are tracked here
+    // and their protected=1 ones fed into `flagged` too.
+    const downloads = [];
+    page.on('download', (d) => {
+        downloads.push(d.url());
+        if (new URL(d.url()).searchParams.get('protected') === '1') flagged.push({ on: toggleOn, url: d.url() });
+    });
     try {
         await page.goto(url, { waitUntil: 'load' });
         let wrapper = await wrapperFrame(page);
@@ -414,13 +423,39 @@ async function checkDownloads(browser, url) {
         const secret = await expectDownload(page, () => downloadBtn().click());
         check('with the toggle on, a protected file downloads',
             secret && readFileSync(await secret.path(), 'utf8'), 'TOKEN=1\n');
+        // Positive control for the "no protected=1 download while off"
+        // check below: download requests do reach `flagged`.
+        check('fixture: the protected download went out with protected=1',
+            flagged.some((f) => f.on && /\/api\/files\/download\?/.test(f.url)), true);
+
+        // The click handler's own guards, which the disabled button hides:
+        // each probe forces the button on before clicking it.
+        const forceClick = `(() => {
+            const el = document.getElementById('files-download-btn');
+            el.disabled = false;
+            el.click();
+        })()`;
+        // The toggle reads off (unticked without its change event, so the
+        // protected preview is still up): its file must not go out.
+        let before = { flagged: flagged.length, downloads: downloads.length };
+        const unticked = await expectDownload(page, () => wrapper.evaluate(
+            `document.getElementById('files-show-protected').checked = false; ${forceClick}`), { timeout: 2000 });
+        check('Download refuses a protected preview once the toggle reads off',
+            { started: unticked !== null,
+                flagged: flagged.length - before.flagged,
+                downloads: downloads.length - before.downloads },
+            (v) => !v.started && v.flagged === 0 && v.downloads === 0);
+        await wrapper.evaluate("document.getElementById('files-show-protected').checked = true");
+
         // Switching off blanks the protected preview: nothing is left to
         // download, so even a click that reaches the button starts nothing.
         await turnOffByKeyboard();
         check('switching off disables Download for the blanked preview', await downloadDisabled(), true);
-        const stray = await expectDownload(page,
-            () => wrapper.evaluate('document.getElementById("files-download-btn").click()'), { timeout: 2000 });
-        check('a click on Download after switch-off starts nothing', stray, null);
+        before = { downloads: downloads.length };
+        const stray = await expectDownload(page, () => wrapper.evaluate(forceClick), { timeout: 2000 });
+        check('a forced click on Download after switch-off starts nothing',
+            { started: stray !== null, downloads: downloads.length - before.downloads },
+            (v) => !v.started && v.downloads === 0);
         check('no protected=1 download goes out while the toggle is off',
             flagged.filter((f) => !f.on).map((f) => f.url), (v) => v.length === 0);
     } finally {
