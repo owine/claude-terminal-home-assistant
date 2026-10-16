@@ -611,6 +611,7 @@
 
         #files-toolbar {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             gap: 6px;
             padding: 6px 8px;
@@ -640,6 +641,17 @@
             cursor: pointer;
             padding: 2px 8px;
             font-size: 11px;
+        }
+
+        /* Shown while "Show protected files" is on: the sidebar is then
+           opening and downloading what it normally refuses. */
+        #files-protected-strip {
+            background: #4d3800;
+            color: #ffd27a;
+            border-bottom: 1px solid #a87b00;
+            padding: 4px 8px;
+            font-size: 11px;
+            flex-shrink: 0;
         }
 
         #files-list {
@@ -903,7 +915,10 @@
                     <button type="button" id="files-hide" title="Hide the sidebar" aria-label="Hide the sidebar">&raquo;</button>
                 </div>
                 <div id="files-toolbar">
-                    <label id="files-hidden-toggle"><input type="checkbox" id="files-show-hidden"> Hidden files</label>
+                    <label id="files-hidden-toggle" title="List names that start with a dot"><input type="checkbox" id="files-show-hidden"> Hidden files</label>
+                    <!-- autocomplete="off": Firefox would otherwise restore the
+                         tick on a reload. The toggle must start off every time. -->
+                    <label id="files-protected-toggle" title="Open and download the files marked &#128274;. Off again on every page load; zips never include them."><input type="checkbox" id="files-show-protected" autocomplete="off"> Show protected files</label>
                     <select id="files-recent-hours" aria-label="Period" hidden>
                         <option value="1">Last hour</option>
                         <option value="24" selected>Last 24 hours</option>
@@ -911,6 +926,7 @@
                     </select>
                     <button type="button" id="files-refresh" title="Refresh" aria-label="Refresh">&#8635;</button>
                 </div>
+                <div id="files-protected-strip" role="status" hidden>&#128274; Protected files can be opened and downloaded. Turn off &ldquo;Show protected files&rdquo; when you are done.</div>
                 <div id="files-list" role="tree"></div>
                 <div id="files-footer">
                     <button type="button" id="ha-check-btn" title="Run Home Assistant's configuration check (ha core check)">&#10003; Check HA configuration</button>
@@ -2089,6 +2105,9 @@
             const tabs = Array.from(document.querySelectorAll('.files-tab'));
             const showHidden = document.getElementById('files-show-hidden');
             const hiddenToggle = document.getElementById('files-hidden-toggle');
+            const showProtected = document.getElementById('files-show-protected');
+            const protectedToggle = document.getElementById('files-protected-toggle');
+            const protectedStrip = document.getElementById('files-protected-strip');
             const recentHours = document.getElementById('files-recent-hours');
             const refreshBtn = document.getElementById('files-refresh');
             const checkBtn = document.getElementById('ha-check-btn');
@@ -2137,7 +2156,9 @@
                 row.className = 'files-row' + (entry.sensitive ? ' sensitive' : '');
                 row.setAttribute('role', 'treeitem');
                 row.style.paddingLeft = (8 + depth * 14) + 'px';
-                row.title = entry.sensitive ? entry.path + ' (not previewed: may hold secrets)' : entry.path;
+                row.title = entry.sensitive
+                    ? entry.path + ' (protected: may hold secrets; opens only with Show protected files on)'
+                    : entry.path;
                 const twisty = document.createElement('span');
                 twisty.className = 'files-twisty';
                 twisty.textContent = entry.type === 'dir' ? '▸' : '';
@@ -2243,6 +2264,7 @@
             function refresh() {
                 tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === currentTab)));
                 hiddenToggle.hidden = currentTab !== 'files';
+                placeProtectedToggle();
                 recentHours.hidden = currentTab !== 'recent';
                 selectedRow = null;
                 const gen = ++viewGen;
@@ -2257,7 +2279,8 @@
                 previewBody.textContent = 'Loading…';
                 preview.classList.add('active');
                 try {
-                    const data = await getJson('api/files/preview?path=' + encodeURIComponent(filePath));
+                    const data = await getJson('api/files/preview?path=' + encodeURIComponent(filePath)
+                        + (showProtected.checked ? '&protected=1' : ''));
                     if (previewPath !== filePath) return;   // another file was opened meanwhile
                     const parts = [helpers.formatSize(data.size), 'modified ' + new Date(data.mtime).toLocaleString()];
                     if (data.truncated) parts.push('showing the first ' + helpers.formatSize(data.limit));
@@ -2301,6 +2324,24 @@
             }));
             tabs.forEach((tab) => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
             showHidden.addEventListener('change', refresh);
+
+            // "Show protected files" is never remembered: cleared on every
+            // load, and again when the browser brings the page back from its
+            // back/forward cache, which keeps form state as it was.
+            function setProtected(on) {
+                showProtected.checked = on;
+                protectedStrip.hidden = !on;
+                placeProtectedToggle();
+            }
+            // Off, it is a Files-tab control like Hidden files. On, it shows
+            // on every tab, as the amber strip does, so it can always be
+            // switched off from where the strip is showing.
+            function placeProtectedToggle() {
+                protectedToggle.hidden = currentTab !== 'files' && !showProtected.checked;
+            }
+            setProtected(false);
+            window.addEventListener('pageshow', (e) => { if (e.persisted) setProtected(false); });
+            showProtected.addEventListener('change', () => setProtected(showProtected.checked));
             recentHours.addEventListener('change', refresh);
             refreshBtn.addEventListener('click', refresh);
 
@@ -2409,6 +2450,7 @@
             // add-on expects to see.
             tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === currentTab)));
             hiddenToggle.hidden = currentTab !== 'files';
+            placeProtectedToggle();
             recentHours.hidden = currentTab !== 'recent';
             if (load(STORE.open) === '1' && !PHONE.matches) setOpen(true, { persist: false });
         })();

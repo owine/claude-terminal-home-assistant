@@ -18,6 +18,7 @@
 //     -e SUPERVISOR_API=http://host.docker.internal:8099 \
 //     --add-host=host.docker.internal:host-gateway local/ctp
 //   mkdir -p /tmp/pw && cd /tmp/pw && npm i playwright && npx playwright install webkit chromium
+//   # the zip checks read archives with the host's python3 (zipfile module)
 //   CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \
 //     node claude-terminal/wrapper/test/integration/mouse-and-clipboard.mjs
 //
@@ -121,6 +122,12 @@ const PICK_DIR = mkdtempSync(join(tmpdir(), 'ctp-upload-'));
 // space so Insert path has something to quote.
 const SIDEBAR_DIR = '/config/ctp-sidebar-fixture';
 const SIDEBAR_FILE = 'with space.yaml';
+// Added for the download checks: a protected file, an in-flight upload part,
+// and a folder over the zip cap. Its name must not contain SIDEBAR_DIR's, or
+// the hasText row lookups below would match both folders.
+const PROTECTED_FILE = '.env';
+const UPLOAD_PART = '.ctp-upload-0a1b2c.part';
+const ZIP_CAP_DIR = '/config/ctp-zip-cap-fixture';
 
 // Leave the pane at a plain shell prompt with plenty of scrollback.
 //
@@ -207,6 +214,85 @@ async function checkStaleView(browser, url) {
                     .filter((m) => /ago|just now/.test(m.textContent)).length,
             })`), JSON.stringify({ filesSelected: 'true', recentRows: 0 }));
         check('the tree is still there after the stale answer', await folderRow.count(), 1);
+    } finally {
+        await context.close();
+    }
+}
+
+// 7. Downloads and the "Show protected files" toggle. Its own context, so a
+//    reload and the downloads here cannot disturb the main run, and so
+//    acceptDownloads is explicit. Playwright reports a download started in
+//    any frame of the page, so under ingress the nested wrapper frame is
+//    covered by the same waitForEvent.
+async function checkDownloads(browser, url) {
+    dexec(['sh', '-c', 'printf "TOKEN=1\\n" > "$1"; printf partial > "$2"; mkdir -p "$3"; '
+        + 'truncate -s 210M "$3/huge.bin"', 'sh',
+        `${SIDEBAR_DIR}/${PROTECTED_FILE}`, `${SIDEBAR_DIR}/${UPLOAD_PART}`, ZIP_CAP_DIR]);
+    const context = await browser.newContext({ acceptDownloads: true });
+    const page = await context.newPage();
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        let wrapper = await wrapperFrame(page);
+        const fixtureName = SIDEBAR_DIR.split('/').pop();
+
+        // Opens the sidebar (it reopens by itself after a reload), lists
+        // dotfiles, and expands the fixture folder.
+        async function openFixture() {
+            if (await wrapper.evaluate('document.getElementById("files-sidebar").classList.contains("collapsed")')) {
+                await wrapper.locator('#files-btn').click();
+            }
+            await wrapper.locator('#files-show-hidden').check();
+            const tree = wrapper.locator('#files-list');
+            const folder = tree.locator('.files-row', { hasText: fixtureName });
+            await waitFor(async () => (await folder.count()) === 1);
+            await folder.click();
+            await waitFor(async () => (await tree.locator('.files-row', { hasText: SIDEBAR_FILE }).count()) === 1);
+            return tree;
+        }
+        const previewText = () => wrapper.evaluate(
+            'document.getElementById("files-preview").classList.contains("active") '
+            + '&& document.getElementById("files-preview-body").textContent');
+        const closePreview = () => wrapper.locator('#files-close-btn').click();
+        const toggleState = () => wrapper.evaluate(`JSON.stringify({
+            checked: document.getElementById('files-show-protected').checked,
+            strip: !document.getElementById('files-protected-strip').hidden,
+        })`);
+        const OFF = JSON.stringify({ checked: false, strip: false });
+        const toggleShown = () => wrapper.locator('#files-protected-toggle').isVisible();
+        const switchTab = (tab) => wrapper.locator(`.files-tab[data-tab="${tab}"]`).click();
+
+        check('Show protected files is off on load, with no strip', await toggleState(), OFF);
+        let list = await openFixture();
+        await list.locator('.files-row', { hasText: PROTECTED_FILE }).click();
+        check('with the toggle off, a protected file is refused',
+            await waitFor(async () => /Show protected files/.test((await previewText()) || '')), true);
+        await closePreview();
+
+        await wrapper.locator('#files-show-protected').check();
+        check('turning it on shows the amber strip', await toggleState(), JSON.stringify({ checked: true, strip: true }));
+        await list.locator('.files-row', { hasText: PROTECTED_FILE }).click();
+        check('with the toggle on, a protected file previews',
+            await waitFor(async () => (await previewText()) === 'TOKEN=1\n'), true);
+        await closePreview();
+
+        // Off, the toggle is a Files-tab control like Hidden files. On, it
+        // stays wherever the amber strip shows, so it can always be switched
+        // off from there.
+        await switchTab('recent');
+        check('while on, the toggle stays visible on the Recent tab', await waitFor(toggleShown), true);
+        await wrapper.locator('#files-show-protected').uncheck();
+        check('turning it off on the Recent tab hides it and the strip',
+            { shown: await toggleShown(), state: await toggleState() },
+            (v) => !v.shown && v.state === OFF);
+        await switchTab('files');
+        check('off, the toggle is back on the Files tab', await waitFor(toggleShown), true);
+        // On again, so the reload below has something to reset.
+        await wrapper.locator('#files-show-protected').check();
+
+        await page.reload({ waitUntil: 'load' });
+        wrapper = await wrapperFrame(page);
+        check('the toggle is off again after a reload', await toggleState(), OFF);
+        list = await openFixture();
     } finally {
         await context.close();
     }
@@ -631,7 +717,8 @@ async function run(engine, mode, url) {
         { cols: await cols(), tmux: windowWidth(), colsOpen }, (v) => v.cols > v.colsOpen && v.tmux === v.cols);
 
     await checkStaleView(browser, url);
-    dexec(['rm', '-rf', SIDEBAR_DIR]);
+    await checkDownloads(browser, url);
+    dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {
         await saveArtifacts(page, consoleLog, `${engine.name()}-${mode}`);
@@ -650,7 +737,7 @@ try {
     ingress.close();
     cancelCopyMode();
     rmSync(PICK_DIR, { recursive: true, force: true });
-    try { dexec(['rm', '-rf', SIDEBAR_DIR]); } catch { /* container gone */ }
+    try { dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]); } catch { /* container gone */ }
 }
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`);
