@@ -35,6 +35,8 @@ const {
 // database alone is often bigger, so zipping all of /config is usually
 // refused, and the refusal names the biggest files so the user can see why.
 const MAX_ZIP_BYTES = 200 * 1024 * 1024;
+// Zips running at once, from the request until the transfer settles.
+const MAX_CONCURRENT_ZIPS = 2;
 // How many of the largest files a refusal names.
 const LARGEST_NAMED = 5;
 
@@ -196,13 +198,17 @@ function sendAttachment({ handle, stat, name }, req, res, { log = console.error,
  * before and after each open, and destroys the entry being read, which
  * closes its handle.
  */
-function sendZipBody(plan, req, res, { openFile, log = console.error, idleMs = IDLE_MS }) {
+function sendZipBody(plan, req, res, { openFile, log = console.error, idleMs = IDLE_MS, onSettled = () => {} }) {
     try {
-        if (res.destroyed || res.writableEnded) return;
+        if (res.destroyed || res.writableEnded) {
+            onSettled();
+            return;
+        }
         res.status(200);
         res.attachment(plan.name);   // also Content-Type: application/zip
         res.set('X-Content-Type-Options', 'nosniff');
     } catch (err) {
+        onSettled();
         dropAttachmentHeaders(res);
         sendError(res, err, log);
         return;
@@ -210,15 +216,18 @@ function sendZipBody(plan, req, res, { openFile, log = console.error, idleMs = I
     // A zip's length is not known before it is built; a HEAD would build it
     // only to throw it away.
     if (req.method === 'HEAD') {
+        onSettled();
         res.end();
         return;
     }
 
     let aborted = false;
     let reading = null;   // the entry stream being read, if any
+    // streamBody runs this once the transfer has settled, on every path.
     const release = () => {
         aborted = true;
         if (reading) reading.destroy();
+        onSettled();
     };
 
     // Resolves to the entry's stream, or null once the download is gone (the
@@ -434,16 +443,19 @@ function createDownloads({
 
     /**
      * Stream a planned zip. Never throws: a failure before the first byte is
-     * a JSON error, one after it an aborted response.
+     * a JSON error, one after it an aborted response. `onSettled` runs once
+     * the zip is over, however it ended (it may run more than once; the
+     * caller makes it idempotent).
      */
-    async function sendZip(plan, req, res, log = console.error) {
+    async function sendZip(plan, req, res, log = console.error, onSettled = () => {}) {
         try {
             if (beforeStream) await beforeStream(plan);
         } catch (err) {
+            onSettled();
             sendError(res, err, log);
             return;
         }
-        sendZipBody(plan, req, res, { openFile: api.openFile, log, idleMs });
+        sendZipBody(plan, req, res, { openFile: api.openFile, log, idleMs, onSettled });
     }
 
     return {
@@ -461,9 +473,15 @@ function createDownloads({
  * GET, read-only, no CORS headers: like the other Files GETs, another site
  * can start one but cannot read the answer. Every failure before the first
  * byte is a JSON error; after it, the response is aborted and logged.
+ *
+ * At most `maxZips` zips run at once, counted from the request until the
+ * transfer settles: each walks a tree and deflates up to 200 MB, and on a
+ * Raspberry Pi a few at once would starve the terminal. The rate limiter
+ * bounds how often they start; this bounds how many run together.
  */
-function createDownloadRouter({ downloads, fileLimiter, zipLimiter, log = console.error }) {
+function createDownloadRouter({ downloads, fileLimiter, zipLimiter, maxZips = MAX_CONCURRENT_ZIPS, log = console.error }) {
     const router = express.Router();
+    let zipsInFlight = 0;
 
     router.get('/download', fileLimiter, async (req, res) => {
         res.set('Cache-Control', 'no-store');
@@ -479,21 +497,36 @@ function createDownloadRouter({ downloads, fileLimiter, zipLimiter, log = consol
     // protected=1 is not read here: zips never hold protected files.
     router.get('/download-zip', zipLimiter, async (req, res) => {
         res.set('Cache-Control', 'no-store');
+        if (zipsInFlight >= maxZips) {
+            return res.status(429).json({
+                error: `${maxZips} zips are already being prepared or sent. Try again when one has finished.`,
+            });
+        }
+        zipsInFlight++;
+        let settled = false;
+        const settle = () => {
+            if (settled) return;
+            settled = true;
+            zipsInFlight--;
+        };
         let plan;
         try {
             plan = await downloads.planZip(req.query.path);
         } catch (err) {
+            settle();
             return sendError(res, err, log);
         }
         // check=1 is the UI's preflight: the same plan, answered as JSON, so
         // a refusal reaches the sidebar as a message before the browser is
         // handed a download that could only fail silently.
         if (req.query.check === '1') {
+            settle();
             return res.json({ name: plan.name, files: plan.files.length, bytes: plan.bytes });
         }
         try {
-            await downloads.sendZip(plan, req, res, log);
+            await downloads.sendZip(plan, req, res, log, settle);
         } catch (err) {
+            settle();
             sendError(res, err, log);   // destroys the response if it had begun
         }
     });
@@ -507,4 +540,5 @@ module.exports = {
     sendAttachment,
     streamBody,
     MAX_ZIP_BYTES,
+    MAX_CONCURRENT_ZIPS,
 };

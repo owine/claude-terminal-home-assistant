@@ -20,7 +20,7 @@ const express = require('express');
 const yauzl = require('yauzl');
 const yazl = require('yazl');
 const { createFilesApi } = require('../files-api.js');
-const { createDownloads, createDownloadRouter, sendAttachment, streamBody, MAX_ZIP_BYTES } = require('../files-download.js');
+const { createDownloads, createDownloadRouter, sendAttachment, streamBody, MAX_ZIP_BYTES, MAX_CONCURRENT_ZIPS } = require('../files-download.js');
 const { createRateLimiter } = require('../http-guards.js');
 
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'files-download-')));
@@ -194,8 +194,9 @@ test('over the size cap: 413, naming the largest files', async () => {
     });
 });
 
-test('the default cap is 200 MB', () => {
+test('the default cap is 200 MB, and two zips at once', () => {
     assert.strictEqual(MAX_ZIP_BYTES, 200 * 1024 * 1024);
+    assert.strictEqual(MAX_CONCURRENT_ZIPS, 2);
 });
 
 test('a walk that hits a bound is a 413, never a partial zip', async () => {
@@ -1062,6 +1063,88 @@ test('zip: a client that stops reading is cut off after idleMs, its entry closed
     });
     assert.strictEqual(logged.length, 1, logged.join('\n'));
     assert.match(logged[0], /^Download of "zipdir\.zip" cut off: client stalled/);
+});
+
+test('zip: at most two at once; a third is a 429 before any planning', async () => {
+    let planned = 0;
+    const counting = { ...downloads, planZip: (...a) => { planned++; return downloads.planZip(...a); } };
+    await withServer({ downloads: counting, maxZips: 2 }, async (url) => {
+        const port = Number(new URL(url).port);
+        // Two stalled clients hold their zips open.
+        const held = [await rawRequest(port, zipTarget), await rawRequest(port, zipTarget)];
+        for (const sock of held) sock.pause();
+        try {
+            assert.ok(await until(() => zipFds() === 2, 3000), 'positive control: two zips streaming');
+            const before = planned;
+            for (const extra of ['', '&check=1']) {
+                const res = await fetch(`${url}/download-zip?path=blueprints${extra}`);
+                assert.strictEqual(res.status, 429);
+                assert.match(res.headers.get('content-type'), /^application\/json/);
+                assert.strictEqual(res.headers.get('content-disposition'), null);
+                assert.match((await res.json()).error, /2 zips are already being prepared or sent/);
+            }
+            assert.strictEqual(planned, before, 'a refused zip was planned');
+            // One finishes (its client leaves); a new zip gets its slot.
+            held.shift().destroy();
+            assert.ok(await until(() => zipFds() === 1, 3000), 'the zip left behind kept its descriptor');
+            let res;
+            const end = Date.now() + 3000;
+            do {
+                res = await fetch(`${url}/download-zip?path=blueprints`);
+                if (res.status === 429) await res.arrayBuffer();
+            } while (res.status === 429 && Date.now() < end && (await sleep(20), true));
+            assert.strictEqual(res.status, 200);
+            const entries = await unzip(Buffer.from(await res.arrayBuffer()));
+            assert.deepStrictEqual(Object.keys(entries).sort(), BLUEPRINT_NAMES);
+        } finally {
+            for (const sock of held) sock.destroy();
+        }
+    });
+});
+
+test('zip: every way a zip ends frees its slot', async () => {
+    const victim = path.join(root, 'blueprints', 'zz-slot.yaml');
+    let next = null;   // what beforeStream does to the next zip
+    const d = createDownloads({
+        api,
+        beforeStream: async () => {
+            const what = next;
+            next = null;
+            if (what === 'throw') throw new Error('beforeStream failed');
+            if (what === 'shrink') fs.truncateSync(victim, 3);
+        },
+    });
+    // With one slot, a zip that kept it would turn the next request away.
+    // The slot is freed when the transfer settles, which may trail the
+    // client by a moment, so a 429 is retried briefly.
+    const status = async (u, init) => {
+        const end = Date.now() + 1000;
+        for (;;) {
+            const res = await fetch(u, init);
+            await res.arrayBuffer();
+            if (res.status !== 429 || Date.now() > end) return res.status;
+            await sleep(20);
+        }
+    };
+    try {
+        await withServer({ downloads: d, maxZips: 1 }, async (url) => {
+            assert.strictEqual(await status(`${url}/download-zip?path=nope`), 404);
+            assert.strictEqual(await status(`${url}/download-zip?path=.storage`), 403);
+            assert.strictEqual(await status(`${url}/download-zip?path=blueprints&check=1`), 200);
+            assert.strictEqual(await status(`${url}/download-zip?path=blueprints`, { method: 'HEAD' }), 200);
+            next = 'throw';
+            assert.strictEqual(await status(`${url}/download-zip?path=blueprints`), 500);
+            assert.strictEqual(await status(`${url}/download-zip?path=blueprints`), 200);
+            // A transfer that aborts mid-stream.
+            write('blueprints/zz-slot.yaml', 'z'.repeat(64 * 1024));
+            next = 'shrink';
+            assert.strictEqual(await aborted(fetch(`${url}/download-zip?path=blueprints`)), true);
+            fs.rmSync(victim, { force: true });
+            assert.strictEqual(await status(`${url}/download-zip?path=blueprints&check=1`), 200);
+        });
+    } finally {
+        fs.rmSync(victim, { force: true });
+    }
 });
 
 test('routes: the zip rate limiter applies', async () => {
