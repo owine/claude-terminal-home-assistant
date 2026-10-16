@@ -2,7 +2,7 @@
 
 // Files sidebar helpers - pure logic (no DOM, no fetch). Shipped to the
 // browser (attaches to window.FilesSidebar) AND required by the Node test
-// harness (module.exports). The DOM wiring lives in index.html.
+// harness (module.exports). The DOM wiring is files-sidebar-ui.js.
 (function (root) {
     // Characters a POSIX shell gives no special meaning anywhere in a word that
     // starts with '/'. A path made only of these is typed as-is.

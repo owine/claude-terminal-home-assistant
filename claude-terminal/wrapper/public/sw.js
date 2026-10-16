@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'claude-ha-';
-const CACHE_NAME = `${CACHE_PREFIX}v12`;
+const CACHE_NAME = `${CACHE_PREFIX}v13`;
 const OFFLINE_URL = './offline.html';
 // Every path is relative: under Home Assistant ingress the app is served
 // beneath a per-session path prefix, and these resolve against sw.js's URL.
@@ -11,6 +11,7 @@ const SHELL_ASSETS = [
     './login-link.js',
     './terminal-clipboard.js',
     './files-sidebar.js',
+    './files-sidebar-ui.js',
     OFFLINE_URL,
     './manifest.json',
     './icon-192.png',
