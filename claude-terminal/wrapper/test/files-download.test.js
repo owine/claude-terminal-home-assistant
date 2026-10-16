@@ -484,14 +484,18 @@ test('download: a client that leaves mid-transfer releases the descriptor, quiet
 
 test('download: a client that stops reading is cut off after idleMs and its descriptor closed', async () => {
     const d = createDownloads({ api, idleMs: 300 });
-    await withServer({ downloads: d }, async (url) => {
+    const logged = [];
+    await withServer({ downloads: d, log: (m) => logged.push(m) }, async (url) => {
         const sock = await rawGet(Number(new URL(url).port), BIG);
         sock.pause();
         await sleep(100);
         assert.strictEqual(openFds(bigIno), 1);
         assert.ok(await until(() => openFds(bigIno) === 0, 4000), 'stalled download kept its descriptor');
         sock.destroy();
+        await sleep(100);
     });
+    // One quiet line, so a proxy that stops reading can be diagnosed.
+    assert.deepStrictEqual(logged, ['Download of "big.bin" cut off: client stalled for 300 ms']);
 });
 
 test('download: a file that grows is cut at the announced length', async () => {

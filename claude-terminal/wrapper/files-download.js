@@ -84,21 +84,30 @@ function dropAttachmentHeaders(res) {
  *
  * makeSource() builds the source; `through` are Transforms between it and the
  * response. A client that simply left (ERR_STREAM_PREMATURE_CLOSE) is not
- * logged; anything else is, with `label` JSON-quoted so a name cannot forge a
+ * logged, one cut off for stalling is logged once as such, and any other
+ * failure as an abort, with `label` JSON-quoted so a name cannot forge a
  * line.
  */
 function streamBody(res, { makeSource, through = [], release, label = 'download', log = console.error, idleMs = IDLE_MS }) {
     let source = null;
+    let stalled = false;
     try {
         if (res.destroyed || res.writableEnded) {
             release();
             return;
         }
-        res.setTimeout(idleMs, () => res.destroy(new Error('client stalled')));
+        res.setTimeout(idleMs, () => {
+            stalled = true;
+            res.destroy(new Error('client stalled'));
+        });
         source = makeSource();
         pipeline(source, ...through, res, (err) => {
             release();
-            if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            if (stalled) {
+                // One quiet line, so a proxy that stops reading (ingress)
+                // can be told apart from a user who cancelled.
+                log(`Download of ${JSON.stringify(label)} cut off: client stalled for ${idleMs} ms`);
+            } else if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
                 log(`Download of ${JSON.stringify(label)} aborted: ${err.message}`);
             }
         });
