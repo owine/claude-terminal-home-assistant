@@ -656,6 +656,25 @@ async function checkZipMenu(browser, url) {
         await wrapper.locator('#files-footer').click({ position: { x: 40, y: 3 } });
         check('a click outside closes the menu', await menuHidden(), true);
 
+        // A click into the terminal, with focus in the open menu, must leave
+        // focus in the terminal (CLAUDE.md, mouse ownership). The wrapper
+        // never sees that click, only its window losing focus; closing the
+        // menu then must not hand focus back to the ⋯. Proof is a key typed
+        // next arriving in tmux, read from tmux itself.
+        await menuButton(fixtureName).focus();
+        await page.keyboard.press('Enter');
+        check('fixture: focus is in the open menu before the terminal click', await focused(), (v) => /^item:/.test(v));
+        const term = await wrapper.locator('#terminal-frame').boundingBox();
+        await page.mouse.click(term.x + term.width / 2, term.y + term.height / 2);
+        check('a click into the terminal closes the menu', await waitFor(menuHidden), true);
+        check('and leaves focus in the terminal frame',
+            await wrapper.evaluate('document.activeElement && document.activeElement.tagName'), 'IFRAME');
+        const MARK = 'ctpmenufocus';
+        const lastLine = () => dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop();
+        await page.keyboard.type(MARK);
+        check('a key typed after that click reaches tmux', await waitFor(() => lastLine().endsWith(MARK)), true);
+        sendKeys('C-u');
+
         // A folder deleted after it was listed: the server's 404, in the
         // notice, and no download. Also the positive control for the
         // preflight counter that the protected folder's check relies on.

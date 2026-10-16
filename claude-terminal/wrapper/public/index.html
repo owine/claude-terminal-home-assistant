@@ -2546,18 +2546,22 @@
 
             let menuOwner = null;   // the ⋯ button whose menu is open
 
-            // Focus inside the menu goes back to its ⋯ whatever closed it (a
-            // scroll or a resize included); emptying the menu would otherwise
-            // drop it on the page body.
-            function closeMenu({ focusOwner = false } = {}) {
+            // Focus inside the menu goes back to its ⋯ when the menu closes
+            // under it (a scroll, a resize); emptying the menu would otherwise
+            // drop it on the page body. Not when focus is leaving anyway
+            // (restoreFocus: false): a press elsewhere, or the window losing
+            // focus, which is what a click into the terminal iframe looks
+            // like from here - taking focus back then would pull it out of
+            // the terminal on the very click meant to put it there.
+            function closeMenu({ focusOwner = false, restoreFocus = true } = {}) {
                 if (!menuOwner) return;
                 const owner = menuOwner;
                 menuOwner = null;
-                const hadFocus = menu.contains(document.activeElement);
+                const hadFocus = restoreFocus && menu.contains(document.activeElement);
                 menu.hidden = true;
                 menu.replaceChildren();
                 owner.setAttribute('aria-expanded', 'false');
-                if ((focusOwner || hadFocus) && owner.isConnected) owner.focus();
+                if ((focusOwner || hadFocus) && owner.isConnected) owner.focus({ preventScroll: true });
             }
 
             function openMenu(button, entry) {
@@ -2782,9 +2786,12 @@
             // The menu closes on a press anywhere else, Escape, Tab, scrolling
             // the tree, a change of width, and the window losing focus -
             // which is also what a click into the terminal iframe looks like
-            // from this page. Focus that was in it goes back to the ⋯.
+            // from this page. Focus that was in it goes back to the ⋯, except
+            // when it is leaving anyway (see closeMenu).
             document.addEventListener('pointerdown', (e) => {
-                if (menuOwner && !menu.contains(e.target) && !menuOwner.contains(e.target)) closeMenu();
+                if (menuOwner && !menu.contains(e.target) && !menuOwner.contains(e.target)) {
+                    closeMenu({ restoreFocus: false });
+                }
             });
             menu.addEventListener('keydown', (e) => {
                 const items = Array.from(menu.querySelectorAll('.files-menu-item'));
@@ -2814,7 +2821,7 @@
                 menuWidth = window.innerWidth;
                 closeMenu();
             });
-            window.addEventListener('blur', () => closeMenu());
+            window.addEventListener('blur', () => closeMenu({ restoreFocus: false }));
             document.getElementById('files-notice-close').addEventListener('click', () => showNotice(''));
 
             // previewPath is read at click time: a blanked preview has none,
