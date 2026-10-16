@@ -576,21 +576,30 @@ everything below it, by these rules:
 
 - Protected files and folders, `.git`, symlinks and unfinished downloads are
   never put in a zip, even with **Show protected files** on, and a protected
-  folder's **Download as zip** is disabled.
+  folder's **Download as zip** is disabled. A symlinked folder zipped from its
+  own **⋯** packs the folder it points to, under the name you clicked; it is
+  only symlinks *inside* the folder being zipped that are left out.
 - A zip holds at most 200 MB before compression. A bigger folder is refused,
   and the message in the sidebar names its largest files so you can zip the
-  parts you need. Zipping all of `/config` is usually refused because of the
-  recorder database (`home-assistant_v2.db`). A zip is not a backup; use Home
-  Assistant's own backups for that.
+  parts you need. There is no zip of all of `/config` (the recorder database,
+  `home-assistant_v2.db`, is usually over the limit on its own); use Home
+  Assistant's backups for that.
 - A folder with more than 20,000 entries, nested more than 8 levels deep, or
   that takes more than 3 seconds to list, is refused too.
 - Two zips can be prepared or sent at once. A third does not start; the
   sidebar says so, and you can try again when one has finished.
-- Entries are in name order. Empty folders are left out. Photos, video, audio,
-  archives and Office documents are stored as they are, not compressed again.
-  A folder named like a Windows drive (`C:x`) is zipped as `C_x`.
+- Within each folder, files come first and then subfolders, each sorted by
+  name (capital letters before lowercase ones). Empty folders are left out.
+  Photos, video, audio, archives and Office documents are stored as they are,
+  not compressed again.
+- If the folder you zip is named like a Windows drive (`C:x`), the zip and the
+  folder inside it are named `C_x`. Folders and files inside it keep their
+  names.
 - Dotfiles that are not protected, such as `.gitignore`, are included whether
   or not **Hidden files** is ticked.
+
+A link on another site cannot make your browser download a file or a zip from
+the add-on: such a request is refused.
 
 In the Home Assistant Companion app, the app's web view may preview a download
 instead of saving it. If a download does not save, open Home Assistant in a

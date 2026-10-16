@@ -77,7 +77,7 @@ A web-based terminal interface with Claude Code CLI pre-installed and enhanced p
   - Supports JPEG, PNG, GIF, WebP, SVG (10MB limit)
   - Persistent storage in `/data/images/`
   - Perfect for OCR, image analysis, screenshot debugging
-- **Files Sidebar**: Browse and preview `/config` (read-only), list recently changed files, insert a file's path at the prompt, and run `ha core check`
+- **Files Sidebar**: Browse and preview `/config` (read-only), download files and folders (as zips), list recently changed files, insert a file's path at the prompt, and run `ha core check`
 - **Persistent Package Management**: Install packages that survive container restarts
 - **Auto-install Packages**: Configure APK and pip packages to auto-install on startup
 - **Python Virtual Environment**: Isolated Python environment for packages
