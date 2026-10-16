@@ -702,8 +702,17 @@ function unzip(buffer, { meta = null } = {}) {
 // stream or emitter callback, or rejected in a promise nobody awaits. Either
 // would restart the wrapper and drop every terminal session.
 // A test signal that never comes fails the test instead of hanging the run.
-function within(promise, what, ms = 5000) {
-    return Promise.race([promise, sleep(ms).then(() => assert.fail(`timed out waiting: ${what}`))]);
+async function within(promise, what, ms = 5000) {
+    // A cleared timer, so a long limit cannot hold the run open once met.
+    let timer;
+    const timeout = new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new assert.AssertionError({ message: `timed out waiting: ${what}` })), ms);
+    });
+    try {
+        return await Promise.race([promise, timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 async function noStrays(fn) {
@@ -1000,21 +1009,19 @@ test('zip: entries open one at a time, and a client that leaves mid-zip releases
         await withServer({ escapes, log: (m) => logged.push(m) }, async (url) => {
             const sock = await rawRequest(Number(new URL(url).port), zipTarget);
             let most = 0;
-            // Read until the zip has moved past its first file.
-            const past = await Promise.race([
-                new Promise((resolve) => {
-                    sock.on('data', () => {
-                        const counts = zipInos.map(openFds);
-                        most = Math.max(most, counts.reduce((x, y) => x + y, 0));
-                        if (counts.slice(1).some((n) => n > 0)) {
-                            sock.pause();
-                            resolve(true);
-                        }
-                    });
-                }),
-                sleep(5000).then(() => false),
-            ]);
-            assert.ok(past, 'the zip never reached its second file');
+            // Read until the zip has moved past its first file. That means
+            // deflating all of a.bin (8 MB of random bytes, deflate's worst
+            // case) first, which takes far longer on a slow aarch64 runner.
+            await within(new Promise((resolve) => {
+                sock.on('data', () => {
+                    const counts = zipInos.map(openFds);
+                    most = Math.max(most, counts.reduce((x, y) => x + y, 0));
+                    if (counts.slice(1).some((n) => n > 0)) {
+                        sock.pause();
+                        resolve();
+                    }
+                });
+            }), 'the zip to reach its second file', 30000);
             assert.strictEqual(most, 1, 'more than one entry open at once');
             // Let the server back up behind the paused client, as it does
             // behind a slow one: a back-pressured entry stream left alone
