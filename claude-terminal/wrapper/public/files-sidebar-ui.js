@@ -113,7 +113,6 @@
             const row = document.createElement('button');
             row.type = 'button';
             row.className = 'files-row' + (entry.sensitive ? ' sensitive' : '');
-            row.setAttribute('role', 'treeitem');
             row.style.paddingLeft = (8 + depth * 14) + 'px';
             if (!entry.sensitive) row.title = entry.path;
             else if (entry.type === 'dir') row.title = entry.path + ' (protected: its files open only with Show protected files on; never zipped)';
@@ -172,10 +171,14 @@
             for (const entry of entries) {
                 const meta = entry.type === 'file' ? helpers.formatSize(entry.size) : '';
                 const row = makeRow(entry, depth, entry.name, meta);
+                // Plain buttons, reached with Tab: a folder is a disclosure
+                // button (aria-expanded below) with its ⋯ beside it, and its
+                // contents a group named after it. Not a role="tree": only
+                // treeitems may sit in one, so the ⋯ could not, and a tree
+                // promises arrow-key navigation this list never had.
                 if (entry.type === 'dir') {
                     const wrap = document.createElement('div');
                     wrap.className = 'files-row-wrap';
-                    wrap.setAttribute('role', 'none');
                     wrap.append(row, makeMenuButton(entry));
                     container.append(wrap);
                 } else {
@@ -184,6 +187,7 @@
                 if (entry.type === 'dir') {
                     const children = document.createElement('div');
                     children.setAttribute('role', 'group');
+                    children.setAttribute('aria-label', entry.name);
                     children.hidden = true;
                     container.append(children);
                     row.setAttribute('aria-expanded', 'false');
