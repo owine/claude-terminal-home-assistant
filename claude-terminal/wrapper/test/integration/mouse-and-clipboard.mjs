@@ -1956,6 +1956,67 @@ async function checkUploadClientMissing(browser, url) {
     }
 }
 
+// Inside Home Assistant the on-screen keyboard shrinks only the TOP window's
+// visual viewport (iOS, and Chromium by default); the ingress frame's own
+// stays full height, so following it alone left the prompt behind the
+// keyboard. A page scale on the top page reproduces that condition: the top
+// visual viewport shrinks while innerHeight and the frame stay as they are.
+// CDP is Chromium-only, so WebKit skips; the direct port has no outer window.
+// Its own context, so the zoom cannot leak into the other checks.
+async function checkKeyboardViewport(browser, engine, mode, url) {
+    if (mode !== 'ingress') return;
+    if (engine.name() !== 'chromium') {
+        console.log('skip  - the keyboard fit under ingress (needs CDP page scale, Chromium only)');
+        return;
+    }
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const cdp = await context.newCDPSession(page);
+        const topView = () => page.evaluate(`JSON.stringify({
+            height: visualViewport.height,
+            offsetTop: visualViewport.offsetTop,
+            inner: innerHeight,
+            frameTop: document.getElementById('ingress-frame').getBoundingClientRect().top,
+        })`).then(JSON.parse);
+        const layout = () => wrapper.evaluate(`JSON.stringify({
+            app: getComputedStyle(document.documentElement).getPropertyValue('--app-height').trim(),
+            container: document.getElementById('container').getBoundingClientRect().height,
+            own: visualViewport.height,
+            rows: ${TERM}.rows,
+        })`).then(JSON.parse);
+        const near = (a, b) => Math.abs(a - b) <= 1;
+
+        const before = await layout();
+        check('fixture: the page fills the ingress frame before any zoom',
+            before, (v) => near(v.container, v.own));
+
+        await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
+        await waitFor(async () => { const t = await topView(); return t.height < t.inner - 1; });
+        const zoomed = await topView();
+        check('fixture: page scale shrinks the top visual viewport but not innerHeight',
+            zoomed, (t) => t.height < t.inner - 1 && near(t.inner, before.own + t.frameTop));
+        const aboveKeyboard = zoomed.offsetTop + zoomed.height - zoomed.frameTop;
+        await waitFor(async () => near((await layout()).container, aboveKeyboard));
+        const shrunk = await layout();
+        check('with the top viewport shrunk (the keyboard), the page keeps to the part of the frame above it',
+            { ...shrunk, expected: aboveKeyboard },
+            (v) => near(v.container, v.expected) && near(parseFloat(v.app), v.container) && v.own === before.own);
+        await waitFor(async () => (await layout()).rows < before.rows);
+        check('the terminal refits to the shorter page', (await layout()).rows, (r) => r < before.rows);
+
+        await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+        await waitFor(async () => near((await layout()).container, before.own));
+        await waitFor(async () => (await layout()).rows === before.rows);
+        check('with the top viewport restored, the page and terminal get their height back',
+            await layout(), (v) => near(v.container, before.own) && v.rows === before.rows);
+    } finally {
+        await context.close();
+    }
+}
+
 async function run(engine, mode, url) {
     console.log(`\n=== ${engine.name()} / ${mode} ===`);
     const failuresBefore = failures;
@@ -2432,6 +2493,7 @@ async function run(engine, mode, url) {
     await checkUploads(browser, url);
     await checkTerminalUploads(browser, url);
     await checkUploadClientMissing(browser, url);
+    await checkKeyboardViewport(browser, engine, mode, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {
