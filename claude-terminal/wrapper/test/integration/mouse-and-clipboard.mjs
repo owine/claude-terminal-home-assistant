@@ -531,8 +531,8 @@ async function checkDownloads(browser, url) {
             } catch (e) {
                 listing = `(unreadable: ${e.message})`;
             }
-            check('the zip holds the fixture files',
-                [SIDEBAR_FILE, 'secrets.yaml'].every((n) => listing.includes(`${fixtureName}/${n}`)), true);
+            check('the zip holds the fixture files, a user\'s own *.part among them',
+                [SIDEBAR_FILE, 'secrets.yaml', 'download.part'].every((n) => listing.includes(`${fixtureName}/${n}`)), true);
             check('the zip leaves out protected files, .git and upload parts',
                 [PROTECTED_FILE, '.git/', UPLOAD_PART].filter((n) => listing.includes(`${fixtureName}/${n}`)), (v) => v.length === 0);
         }
@@ -1364,9 +1364,9 @@ async function run(engine, mode, url) {
     dexec(['rm', '-rf', SIDEBAR_DIR]);
     dexec(['mkdir', '-p', SIDEBAR_DIR]);
     dexec(['sh', '-c', 'printf "sidebar: ok\\n" > "$1"; printf "k: v\\n" > "$2"; '
-        + 'mkdir "$3"; printf "ref: x\\n" > "$3/HEAD"; printf partial > "$4"', 'sh',
+        + 'mkdir "$3"; printf "ref: x\\n" > "$3/HEAD"; printf partial > "$4"; printf partial > "$5"', 'sh',
         `${SIDEBAR_DIR}/${SIDEBAR_FILE}`, `${SIDEBAR_DIR}/secrets.yaml`,
-        `${SIDEBAR_DIR}/.git`, `${SIDEBAR_DIR}/download.part`]);
+        `${SIDEBAR_DIR}/.git`, `${SIDEBAR_DIR}/download.part`, `${SIDEBAR_DIR}/${UPLOAD_PART}`]);
 
     const cols = () => wrapper.evaluate(`${TERM}.cols`);
     const windowWidth = () => Number(tmux('#{window_width}'));
@@ -1391,9 +1391,12 @@ async function run(engine, mode, url) {
     const fileRow = list.locator('.files-row', { hasText: SIDEBAR_FILE });
     check('a folder expands to its files', await waitFor(async () => (await fileRow.count()) === 1), true);
     const names = await list.locator('.files-name').allTextContents();
-    check('the tree hides .git and *.part, and shows secrets.yaml',
-        { git: names.includes('.git'), part: names.includes('download.part'), secrets: names.includes('secrets.yaml') },
-        (v) => !v.git && !v.part && v.secrets);
+    // Only the wrapper's own upload parts are hidden: a user's download.part
+    // is an ordinary file.
+    check('the tree hides .git and upload parts, and shows secrets.yaml and other *.part files',
+        { git: names.includes('.git'), part: names.includes(UPLOAD_PART), mine: names.includes('download.part'),
+            secrets: names.includes('secrets.yaml') },
+        (v) => !v.git && !v.part && v.mine && v.secrets);
 
     // The list's roles must match how it behaves. It was a role="tree" with
     // each folder's ⋯ button inside it, but only treeitems belong in a tree

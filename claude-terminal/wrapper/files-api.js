@@ -66,10 +66,12 @@ const HA_CHECK_MAX_MESSAGE = 4000;
 // that is rare enough not to be worth telling the two apart.
 const HIDDEN_NAME = /\.git$/i;
 
-// In-progress downloads and partial writes: left out of listings, recent
-// changes and zips (walkEntryType), since they are about to be renamed or
-// deleted.
-const PARTIAL_FILE = /\.part$/i;
+// An upload being written (files-upload.js streams each one to
+// `.ctp-upload-<hex>.part` beside its destination, then renames it): left out
+// of listings, recent changes and zips (walkEntryType), since it is about to
+// be renamed or deleted. Only the wrapper's own prefix: a user's `backup.part`
+// is an ordinary file and stays visible.
+const PARTIAL_FILE = /^\.ctp-upload-.*\.part$/i;
 
 // Listed (so the tree is honest about what is there), but previewed or
 // downloaded only with protected=1 ("Show protected files"), never zipped,
