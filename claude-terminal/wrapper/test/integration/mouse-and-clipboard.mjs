@@ -1104,7 +1104,7 @@ async function run(engine, mode, url) {
     };
     check('the Files sidebar UI script is served, with revalidation',
         await served('files-sidebar-ui.js'), (v) => v.status === 200 && v.cacheControl === 'no-cache');
-    check('the Files sidebar runs from its own script',
+    check('the Files sidebar UI script is loaded by the page',
         await wrapper.evaluate('typeof window.FilesSidebarUI?.init'), 'function');
     check('icons stay cacheable, and never immutably',
         await cacheControl('icon-192.png'),
