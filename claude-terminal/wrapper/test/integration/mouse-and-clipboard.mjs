@@ -1038,6 +1038,31 @@ async function checkStaleListingPreview(browser, url) {
     }
 }
 
+// If files-sidebar-ui.js does not load (a 404 while the add-on updates), the
+// page carries on without the sidebar: the Files button goes, as it does for a
+// missing files-sidebar.js. The button is hidden by the last statement of the
+// page script, so a hidden button also proves nothing before it threw. Its own
+// context with service workers blocked, so the worker's precached copy cannot
+// answer the aborted request.
+async function checkSidebarScriptMissing(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    let aborted = 0;
+    await page.route('**/files-sidebar-ui.js', (route) => { aborted++; return route.abort(); });
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        check('fixture: the sidebar UI script was blocked', aborted, (n) => n >= 1);
+        check('without files-sidebar-ui.js the page hides the Files button',
+            await wrapper.evaluate(`JSON.stringify({
+                button: getComputedStyle(document.getElementById('files-btn')).display,
+                ui: typeof window.FilesSidebarUI,
+            })`), JSON.stringify({ button: 'none', ui: 'undefined' }));
+    } finally {
+        await context.close();
+    }
+}
+
 async function run(engine, mode, url) {
     console.log(`\n=== ${engine.name()} / ${mode} ===`);
     const failuresBefore = failures;
@@ -1069,6 +1094,18 @@ async function run(engine, mode, url) {
         await cacheControl('terminal-clipboard.js'), 'no-cache');
     check('the service worker is served with revalidation',
         await cacheControl('sw.js'), 'no-cache');
+    // The Files sidebar's UI moved out of index.html into its own script. It
+    // must be served, with the same revalidation as every other script (or a
+    // browser could pair a cached old copy with a new index.html), and it
+    // must be what runs the sidebar.
+    const served = async (path) => {
+        const res = await fetch(base + path);
+        return { status: res.status, cacheControl: res.headers.get('cache-control') };
+    };
+    check('the Files sidebar UI script is served, with revalidation',
+        await served('files-sidebar-ui.js'), (v) => v.status === 200 && v.cacheControl === 'no-cache');
+    check('the Files sidebar UI script is loaded by the page',
+        await wrapper.evaluate('typeof window.FilesSidebarUI?.init'), 'function');
     check('icons stay cacheable, and never immutably',
         await cacheControl('icon-192.png'),
         (v) => v === 'public, max-age=86400');
@@ -1358,6 +1395,36 @@ async function run(engine, mode, url) {
         { git: names.includes('.git'), part: names.includes('download.part'), secrets: names.includes('secrets.yaml') },
         (v) => !v.git && !v.part && v.secrets);
 
+    // The list's roles must match how it behaves. It was a role="tree" with
+    // each folder's ⋯ button inside it, but only treeitems belong in a tree
+    // (axe flags it), and a tree promises arrow-key navigation the list never
+    // had. Now every row is a plain button reached with Tab: a folder is a
+    // disclosure button (aria-expanded) with its ⋯ beside it, and an open
+    // folder's contents are a group named after it. The fixture folder is
+    // open here, so folder rows, file rows and a group are all present.
+    const listRoles = await wrapper.evaluate(`(() => {
+        const list = document.getElementById('files-list');
+        const name = ${JSON.stringify(SIDEBAR_DIR.split('/').pop())};
+        const wrap = [...list.querySelectorAll('.files-row-wrap')]
+            .find((w) => w.querySelector('.files-name')?.textContent === name);
+        const row = wrap?.querySelector('.files-row');
+        const group = wrap?.nextElementSibling;
+        return JSON.stringify({
+            listRole: list.getAttribute('role'),
+            roles: [...new Set([...list.querySelectorAll('[role]')].map((e) => e.getAttribute('role')))],
+            buttonsWithRoles: list.querySelectorAll('button[role]').length,
+            otherFocusable: list.querySelectorAll('a[href], input, select, textarea, [tabindex]').length,
+            folder: row ? row.getAttribute('aria-expanded') : null,
+            menu: wrap?.querySelector(':scope > .files-menu-btn')?.getAttribute('aria-haspopup') ?? null,
+            group: group ? group.getAttribute('role') + ':' + group.getAttribute('aria-label') : null,
+        });
+    })()`).then(JSON.parse);
+    check('the file list is plain buttons, not a tree, with each ⋯ beside its folder', listRoles,
+        (v) => v.listRole === null && JSON.stringify(v.roles) === '["group"]'
+            && v.buttonsWithRoles === 0 && v.otherFocusable === 0
+            && v.folder === 'true' && v.menu === 'menu'
+            && v.group === `group:${SIDEBAR_DIR.split('/').pop()}`);
+
     await fileRow.click();
     const previewBody = () => wrapper.evaluate(
         'document.getElementById("files-preview").classList.contains("active") '
@@ -1462,6 +1529,7 @@ async function run(engine, mode, url) {
     await checkLateProtectedPreview(browser, url);
     await checkPreviewRequests(browser, url);
     await checkStaleListingPreview(browser, url);
+    await checkSidebarScriptMissing(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {

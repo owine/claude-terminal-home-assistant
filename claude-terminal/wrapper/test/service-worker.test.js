@@ -185,6 +185,30 @@ test('the offline page is precached under the ingress prefix', async () => {
     assert.ok(await store.match(`${SCOPE}offline.html`), 'offline.html not in cache');
 });
 
+// --- precache ---
+//
+// Each script index.html loads is precached, so an asset request that fails
+// while the page itself loaded (a flaky connection, a wrapper restart) can
+// still be answered. A script added to index.html and forgotten here would
+// silently miss that fallback.
+
+test('the Files sidebar UI script is precached under the ingress prefix', async () => {
+    const sw = await installedWorker();
+    const store = await sw.caches.open(sw.cacheName);
+    assert.ok(await store.match(`${SCOPE}files-sidebar-ui.js`), 'files-sidebar-ui.js not in cache');
+});
+
+test('every script index.html loads is precached', async () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1]);
+    assert.ok(scripts.length > 0, 'no <script src> found in index.html');
+    const sw = await installedWorker();
+    const store = await sw.caches.open(sw.cacheName);
+    for (const src of scripts) {
+        assert.ok(await store.match(`${SCOPE}${src}`), `${src} is loaded by index.html but not precached`);
+    }
+});
+
 // --- assets: unchanged behaviour ---
 
 test('an online asset request comes from the network', async () => {
