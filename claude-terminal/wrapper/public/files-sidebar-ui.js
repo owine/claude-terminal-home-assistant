@@ -119,6 +119,9 @@
             else row.title = entry.path + ' (protected: may hold secrets; opens only with Show protected files on)';
             const twisty = document.createElement('span');
             twisty.className = 'files-twisty';
+            // Decorative: aria-expanded on the row carries the state, and the
+            // glyph would otherwise be read out as part of the folder's name.
+            twisty.setAttribute('aria-hidden', 'true');
             twisty.textContent = entry.type === 'dir' ? '▸' : '';
             const icon = document.createElement('span');
             icon.setAttribute('aria-hidden', 'true');
