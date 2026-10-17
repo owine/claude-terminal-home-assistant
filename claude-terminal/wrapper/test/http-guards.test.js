@@ -249,6 +249,15 @@ test('reads Sec-Fetch-Site case-insensitively', () => {
     assert.strictEqual(crossSite({ 'Sec-Fetch-Site': 'Cross-Site' }).passedOn, false);
 });
 
+test('words its refusal as the route asks, and downloads by default', () => {
+    const res = makeRes();
+    createCrossSiteGuard({ log: () => {}, message: 'Uploads cannot come from another site.' })(
+        makeReq({ method: 'POST', headers: { 'Sec-Fetch-Site': 'cross-site' } }), res, () => {});
+    assert.strictEqual(res.statusCode, 403);
+    assert.deepStrictEqual(res.body, { error: 'Uploads cannot come from another site.' });
+    assert.match(crossSite({ 'Sec-Fetch-Site': 'cross-site' }).res.body.error, /^Downloads cannot be started/);
+});
+
 test('logs a refused cross-site request', () => {
     const lines = [];
     crossSite({ 'Sec-Fetch-Site': 'cross-site' }, (line) => lines.push(line));

@@ -130,8 +130,9 @@ function createOriginGuard({ log = console.warn } = {}) {
 }
 
 /**
- * CSRF protection for GETs that act on the user's behalf: the Files sidebar's
- * downloads, which make the browser save a file or build a zip.
+ * CSRF protection for requests that act on the user's behalf: the Files
+ * sidebar's downloads, which make the browser save a file or build a zip, and
+ * its uploads, which write into /config.
  *
  * A page on another site can start a GET (a link, an <img>) but cannot read
  * the answer, so a download leaks nothing to it; refused anyway, so another
@@ -141,14 +142,22 @@ function createOriginGuard({ log = console.warn } = {}) {
  * `same-site`, `none` (typed or bookmarked) and an absent header (older
  * browsers, curl) pass. Origin cannot do this job: a browser sends none on a
  * plain GET.
+ *
+ * On a POST (uploads) it backs up createOriginGuard rather than replacing it:
+ * that guard lets a request with no Origin and no Referer through, and an
+ * HA-ingress one whatever its Origin, where Sec-Fetch-Site still says what the
+ * browser saw. `message` words the refusal for the route.
  */
-function createCrossSiteGuard({ log = console.warn } = {}) {
+function createCrossSiteGuard({
+    log = console.warn,
+    message = 'Downloads cannot be started from another site. Use the Files sidebar.',
+} = {}) {
     return (req, res, next) => {
         const site = String(req.get('sec-fetch-site') || '').toLowerCase();
         if (site !== 'cross-site') return next();
 
         log(`Blocked cross-site request for ${JSON.stringify(`${req.baseUrl || ''}${req.path || ''}`)}`);
-        return res.status(403).json({ error: 'Downloads cannot be started from another site. Use the Files sidebar.' });
+        return res.status(403).json({ error: message });
     };
 }
 
