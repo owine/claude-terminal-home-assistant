@@ -1,4 +1,5 @@
-const CACHE_NAME = 'claude-ha-v12';
+const CACHE_PREFIX = 'claude-ha-';
+const CACHE_NAME = `${CACHE_PREFIX}v12`;
 const OFFLINE_URL = './offline.html';
 // Every path is relative: under Home Assistant ingress the app is served
 // beneath a per-session path prefix, and these resolve against sw.js's URL.
@@ -31,8 +32,12 @@ self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys()
             .then((keys) => Promise.all(
+                // Only this app's superseded caches. Under Home Assistant
+                // ingress the add-on shares HA's origin, and with it
+                // CacheStorage: HA's own frontend and other add-ons keep
+                // caches here too, and must not be wiped on every update.
                 keys
-                    .filter((key) => key !== CACHE_NAME)
+                    .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
                     .map((key) => caches.delete(key))
             ))
             .then(() => self.clients.claim())

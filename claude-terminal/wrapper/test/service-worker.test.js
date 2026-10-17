@@ -98,6 +98,12 @@ async function installedWorker() {
     return {
         caches,
         cacheName: vm.runInContext('CACHE_NAME', context),
+        // Dispatches the activate event and waits for its cleanup.
+        async activate() {
+            let activating;
+            listeners.activate({ waitUntil(p) { activating = p; } });
+            await activating;
+        },
         goOffline() { online = false; },
         // Dispatches a fetch event. Resolves to the text of the response the
         // worker chose, or null when it declined to handle the request (the
@@ -127,6 +133,19 @@ function test(name, fn) { tests.push({ name, fn }); }
 // terminal iframe can never connect, instead of the offline page that says
 // the add-on is unreachable. offline.html was only ever shown for URLs that
 // happened not to be cached.
+
+// Under Home Assistant ingress the add-on shares HA's origin, so CacheStorage
+// also holds caches this worker does not own (HA's own frontend, other
+// add-ons). Activation may clear only this app's superseded caches.
+test('activation deletes only this app\'s older caches, never other apps\' caches', async () => {
+    const sw = await installedWorker();
+    await sw.caches.open('claude-ha-v1');
+    await sw.caches.open('workbox-precache-v2-https://ha.example/');
+    await sw.caches.open('other-addon-cache');
+    await sw.activate();
+    const left = (await sw.caches.keys()).sort();
+    assert.deepEqual(left, [sw.cacheName, 'other-addon-cache', 'workbox-precache-v2-https://ha.example/'].sort());
+});
 
 test('an offline navigation to the start URL shows the offline page', async () => {
     const sw = await installedWorker();
