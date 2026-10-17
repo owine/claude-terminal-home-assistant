@@ -14,10 +14,15 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const net = require('node:net');
+const { once } = require('node:events');
+const express = require('express');
 const { createFilesApi } = require('../files-api.js');
+const { createRateLimiter } = require('../http-guards.js');
 const { createPartRecord } = require('../upload-parts.js');
 const {
     createUploads,
+    createUploadRouter,
     sanitizeUploadName,
     withSuffix,
     uploadMaxBytes,
@@ -190,4 +195,647 @@ test('the inbox is made on first use, never followed when it is a link or a file
     fs.writeFileSync(path.join(inboxRoot, 'uploads'), 'a file');
     await refused(u.plan({ name: 'a.txt' }), 409, 'not-plain-folder');
     assert.deepStrictEqual(fs.readdirSync(outside), ['target.txt']);
+});
+
+// --- the route: helpers ---
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(predicate, ms = 3000) {
+    const end = Date.now() + ms;
+    while (!predicate() && Date.now() < end) await sleep(20);
+    return predicate();
+}
+
+// A test signal that never comes fails the test instead of hanging the run.
+async function within(promise, what, ms = 5000) {
+    let timer;
+    const timeout = new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new assert.AssertionError({ message: `timed out waiting: ${what}` })), ms);
+    });
+    try {
+        return await Promise.race([promise, timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+// Descriptors this process holds on a file, counted by inode: independent of
+// how the code under test opens or closes it, so a leak cannot hide behind a
+// wrapped function. Linux has /proc/self/fd, macOS /dev/fd.
+function openFds(ino) {
+    const dir = fs.existsSync('/proc/self/fd') ? '/proc/self/fd' : '/dev/fd';
+    return fs.readdirSync(dir).filter((fd) => {
+        try {
+            return fs.fstatSync(Number(fd)).ino === ino;
+        } catch {
+            return false;
+        }
+    }).length;
+}
+
+// Parts anywhere under the root: what a failed upload must never leave.
+function partsUnder(dir = root) {
+    const found = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (/^\.ctp-upload-.*\.part$/.test(entry.name)) found.push(full);
+        if (entry.isDirectory()) found.push(...partsUnder(full));
+    }
+    return found;
+}
+const recorded = () => JSON.parse(fs.readFileSync(recordFile, 'utf8'));
+
+async function withServer({ escapes = [], ...options }, fn) {
+    const app = express();
+    app.use('/api/files', createUploadRouter({
+        uploads,
+        uploadLimiter: createRateLimiter({ max: 1000 }),
+        checkLimiter: createRateLimiter({ max: 1000 }),
+        log: () => {},
+        ...options,
+    }));
+    // Express 5 routes an async handler's rejection here, not to the process:
+    // anything that lands here escaped the route.
+    app.use((err, req, res, next) => {
+        escapes.push(err);
+        next(err);
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+        await fn(`http://127.0.0.1:${server.address().port}/api/files`);
+    } finally {
+        server.closeAllConnections();
+        await new Promise((r) => server.close(r));
+    }
+}
+
+// Errors that left the route by a way the server cannot see: thrown in a
+// stream or emitter callback, or rejected in a promise nobody awaits. Either
+// would restart the wrapper and drop every terminal session.
+async function noStrays(fn) {
+    const stray = [];
+    const onStray = (err) => stray.push(err);
+    process.on('uncaughtException', onStray);
+    process.on('unhandledRejection', onStray);
+    try {
+        await fn();
+        await sleep(100);   // let a late emit land inside the window
+    } finally {
+        process.off('uncaughtException', onStray);
+        process.off('unhandledRejection', onStray);
+    }
+    assert.deepStrictEqual(stray.map(String), []);
+}
+
+const q = (params) => new URLSearchParams(params).toString();
+const post = (url, params, body = '') => fetch(`${url}/upload?${q(params)}`, { method: 'POST', body });
+
+// Sends the headers and `first` bytes of a body, and returns the socket.
+function rawUpload(url, params, { length, first = '', headers = '' } = {}) {
+    const { port } = new URL(url);
+    return new Promise((resolve) => {
+        const sock = net.connect(Number(port), '127.0.0.1', () => {
+            const size = length === undefined ? '' : `Content-Length: ${length}\r\n`;
+            sock.write(`POST /api/files/upload?${q(params)} HTTP/1.1\r\nHost: x\r\n${size}${headers}\r\n${first}`);
+            resolve(sock);
+        });
+        sock.on('error', () => {});
+    });
+}
+// Everything the server answers on a raw socket, until it closes.
+function answer(sock) {
+    return new Promise((resolve) => {
+        let text = '';
+        sock.on('data', (d) => { text += d; });
+        sock.on('close', () => resolve(text));
+    });
+}
+
+// --- the route: collisions and writes ---
+
+test('upload: a new file lands with its bytes, mode 0644 whatever the umask', async () => {
+    const old = process.umask(0o077);
+    try {
+        await withServer({}, async (url) => {
+            const res = await post(url, { name: 'new file.yaml', dest: 'blueprints' }, 'hello: 1\n');
+            assert.strictEqual(res.status, 200);
+            const body = await res.json();
+            assert.deepStrictEqual(body, {
+                path: path.join(root, 'blueprints', 'new file.yaml'),
+                name: 'new file.yaml',
+                replaced: false,
+                size: 9,
+                dir: path.join(root, 'blueprints'),
+                inbox: false,
+            });
+            assert.strictEqual(res.headers.get('cache-control'), 'no-store');
+        });
+    } finally {
+        process.umask(old);
+    }
+    const full = path.join(root, 'blueprints', 'new file.yaml');
+    assert.strictEqual(fs.readFileSync(full, 'utf8'), 'hello: 1\n');
+    assert.strictEqual(fs.statSync(full).mode & 0o777, 0o644);
+    assert.deepStrictEqual(partsUnder(), []);
+    assert.deepStrictEqual(recorded(), []);
+    fs.unlinkSync(full);
+});
+
+test('upload: the inbox keeps every file, numbering a name that is taken', async () => {
+    await withServer({}, async (url) => {
+        const names = [];
+        for (const body of ['one', 'two', 'three']) {
+            const res = await post(url, { name: 'a b.txt' }, body);
+            assert.strictEqual(res.status, 200);
+            const json = await res.json();
+            assert.strictEqual(json.inbox, true);
+            names.push(json.name);
+        }
+        assert.deepStrictEqual(names, ['a b.txt', 'a b (1).txt', 'a b (2).txt']);
+    });
+    const inbox = path.join(root, 'uploads');
+    assert.strictEqual(fs.readFileSync(path.join(inbox, 'a b (2).txt'), 'utf8'), 'three');
+    fs.rmSync(inbox, { recursive: true });
+});
+
+test('upload: a taken name in a chosen folder is a 409 that says whether Replace is possible', async () => {
+    write('blueprints/folder-named/inner.txt', 'x');
+    await withServer({}, async (url) => {
+        let res = await post(url, { name: 'motion.yaml', dest: 'blueprints/automation' }, 'new');
+        assert.strictEqual(res.status, 409);
+        assert.deepStrictEqual(await res.json(), {
+            reason: 'exists',
+            replaceable: true,
+            error: `motion.yaml already exists in ${path.join(root, 'blueprints', 'automation')}.`,
+        });
+        res = await post(url, { name: 'folder-named', dest: 'blueprints' }, 'new');
+        assert.strictEqual(res.status, 409);
+        assert.strictEqual((await res.json()).replaceable, false);
+        // a folder is never replaced, even when asked
+        res = await post(url, { name: 'folder-named', dest: 'blueprints', onConflict: 'replace' }, 'new');
+        assert.strictEqual(res.status, 409);
+        assert.strictEqual((await res.json()).replaceable, false);
+        // Keep both works for either
+        res = await post(url, { name: 'folder-named', dest: 'blueprints', onConflict: 'keep-both' }, 'kept');
+        assert.strictEqual((await res.json()).name, 'folder-named (1)');
+    });
+    assert.strictEqual(fs.readFileSync(path.join(root, 'blueprints/automation/motion.yaml'), 'utf8'), 'old motion\n');
+    assert.strictEqual(fs.readFileSync(path.join(root, 'blueprints/folder-named (1)'), 'utf8'), 'kept');
+    fs.rmSync(path.join(root, 'blueprints/folder-named'), { recursive: true });
+    fs.unlinkSync(path.join(root, 'blueprints/folder-named (1)'));
+});
+
+test('upload: Keep both numbers the new file; Replace swaps the whole file and keeps its mode', async () => {
+    const target = write('blueprints/automation/key.yaml', 'OLD CONTENT\n');
+    fs.chmodSync(target, 0o600);
+    const oldFd = fs.openSync(target, 'r');   // the old file, as a reader mid-read sees it
+    try {
+        await withServer({}, async (url) => {
+            let res = await post(url, { name: 'key.yaml', dest: 'blueprints/automation', onConflict: 'keep-both' }, 'both');
+            assert.strictEqual((await res.json()).name, 'key (1).yaml');
+            res = await post(url, { name: 'key.yaml', dest: 'blueprints/automation', onConflict: 'replace' }, 'NEW\n');
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual((await res.json()).replaced, true);
+        });
+        assert.strictEqual(fs.readFileSync(target, 'utf8'), 'NEW\n');
+        assert.strictEqual(fs.statSync(target).mode & 0o777, 0o600);
+        // Swapped, not rewritten in place: the old file is intact behind the
+        // reader's descriptor, so no reader ever saw half of each.
+        const buf = Buffer.alloc(64);
+        assert.strictEqual(buf.subarray(0, fs.readSync(oldFd, buf, 0, 64, 0)).toString(), 'OLD CONTENT\n');
+        assert.strictEqual(fs.readFileSync(path.join(root, 'blueprints/automation/key (1).yaml'), 'utf8'), 'both');
+    } finally {
+        fs.closeSync(oldFd);
+        fs.unlinkSync(target);
+        fs.unlinkSync(path.join(root, 'blueprints/automation/key (1).yaml'));
+    }
+});
+
+test('upload: Replace keeps the permission bits but never setuid, setgid or sticky', async () => {
+    const target = write('blueprints/automation/tool.sh', '#!/bin/sh\n');
+    fs.chmodSync(target, 0o4755);
+    // positive control: the fixture really carries setuid
+    assert.strictEqual(fs.statSync(target).mode & 0o7777, 0o4755);
+    try {
+        await withServer({}, async (url) => {
+            const res = await post(url, { name: 'tool.sh', dest: 'blueprints/automation', onConflict: 'replace' }, '#!/bin/sh\necho new\n');
+            assert.strictEqual(res.status, 200);
+            await res.arrayBuffer();
+        });
+        assert.strictEqual(fs.statSync(target).mode & 0o7777, 0o755);
+    } finally {
+        fs.unlinkSync(target);
+    }
+});
+
+test('upload: replacing a name that is free just writes it, at 0644', async () => {
+    await withServer({}, async (url) => {
+        const res = await post(url, { name: 'free.yaml', dest: 'blueprints', onConflict: 'replace' }, 'x');
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual((await res.json()).replaced, false);
+    });
+    const full = path.join(root, 'blueprints', 'free.yaml');
+    assert.strictEqual(fs.statSync(full).mode & 0o777, 0o644);
+    fs.unlinkSync(full);
+});
+
+test('upload: secrets.yaml and a certificate upload like any file', async () => {
+    write('packages/secrets.yaml', 'old: 1\n');
+    await withServer({}, async (url) => {
+        let res = await post(url, { name: 'secrets.yaml', dest: 'packages' }, 'new: 1\n');
+        assert.strictEqual(res.status, 409);
+        await res.arrayBuffer();
+        res = await post(url, { name: 'secrets.yaml', dest: 'packages', onConflict: 'replace' }, 'new: 1\n');
+        assert.strictEqual(res.status, 200);
+        res = await post(url, { name: 'fullchain.pem', dest: 'packages' }, 'CERT\n');
+        assert.strictEqual(res.status, 200);
+        await res.arrayBuffer();
+    });
+    assert.strictEqual(fs.readFileSync(path.join(root, 'packages/secrets.yaml'), 'utf8'), 'new: 1\n');
+    // listed, with the lock, once it is there
+    const entry = (await api.list('packages')).entries.find((e) => e.name === 'fullchain.pem');
+    assert.strictEqual(entry.sensitive, true);
+    fs.rmSync(path.join(root, 'packages'), { recursive: true });
+});
+
+test('upload: refusals are JSON with the right status, and write nothing', async () => {
+    await withServer({}, async (url) => {
+        const cases = [
+            [{ name: 'a.txt', dest: '.git' }, 404],
+            [{ name: 'a.txt', dest: '.storage' }, 403],
+            [{ name: 'a.txt', dest: 'deps' }, 403],
+            [{ name: 'a.txt', dest: 'bp-link' }, 409],
+            [{ name: 'a.txt', dest: '../outside' }, 404],
+            [{ name: 'repo.git', dest: 'blueprints' }, 400],
+            [{ dest: 'blueprints' }, 400],
+            [{ name: 'a.txt', dest: 'blueprints', onConflict: 'yes' }, 400],
+        ];
+        for (const [params, status] of cases) {
+            const res = await post(url, params, 'body');
+            assert.strictEqual(res.status, status, JSON.stringify(params));
+            assert.strictEqual(typeof (await res.json()).error, 'string', JSON.stringify(params));
+        }
+    });
+    assert.deepStrictEqual(partsUnder(), []);
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'a.txt')), false);
+});
+
+test('upload: a cross-site request is refused before anything else', async () => {
+    await withServer({}, async (url) => {
+        const res = await fetch(`${url}/upload?${q({ name: 'x.txt', dest: 'blueprints' })}`, {
+            method: 'POST', body: 'x', headers: { 'Sec-Fetch-Site': 'cross-site' },
+        });
+        assert.strictEqual(res.status, 403);
+        assert.match((await res.json()).error, /^Uploads cannot be started from another site/);
+    });
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'x.txt')), false);
+});
+
+test('upload: its own limiter for uploads; check=1 counts against the other one', async () => {
+    await withServer({
+        uploadLimiter: createRateLimiter({ max: 1, message: 'Too many uploads' }),
+        checkLimiter: createRateLimiter({ max: 1000 }),
+    }, async (url) => {
+        assert.strictEqual((await post(url, { name: 'r1.txt', dest: 'blueprints' }, 'x')).status, 200);
+        const res = await post(url, { name: 'r2.txt', dest: 'blueprints' }, 'x');
+        assert.strictEqual(res.status, 429);
+        assert.deepStrictEqual(await res.json(), { error: 'Too many uploads' });
+        // asking first is still possible
+        assert.strictEqual((await post(url, { name: 'r2.txt', dest: 'blueprints', check: '1', size: '1' })).status, 200);
+    });
+    fs.unlinkSync(path.join(root, 'blueprints', 'r1.txt'));
+});
+
+// --- check=1 ---
+
+test('check=1 answers the plan and writes nothing, not even the inbox', async () => {
+    await withServer({}, async (url) => {
+        let res = await post(url, { name: '../x y.txt', check: '1', size: '10' });
+        assert.strictEqual(res.status, 200);
+        assert.deepStrictEqual(await res.json(), { name: 'x y.txt', dir: path.join(root, 'uploads'), inbox: true, exists: false });
+        res = await post(url, { name: 'motion.yaml', dest: 'blueprints/automation', check: '1', size: '10' });
+        assert.strictEqual(res.status, 409);
+        assert.strictEqual((await res.json()).replaceable, true);
+        res = await post(url, { name: 'motion.yaml', dest: 'blueprints/automation', onConflict: 'replace', check: '1', size: '10' });
+        assert.deepStrictEqual(await res.json(), { name: 'motion.yaml', dir: path.join(root, 'blueprints', 'automation'), inbox: false, exists: true });
+        res = await post(url, { name: 'a.txt', dest: '.storage', check: '1', size: '10' });
+        assert.strictEqual(res.status, 403);
+        await res.arrayBuffer();
+    });
+    assert.strictEqual(fs.existsSync(path.join(root, 'uploads')), false);
+    assert.deepStrictEqual(partsUnder(), []);
+});
+
+test('check=1 refuses a size over the cap, naming the limit and the option', async () => {
+    const small = createUploads({ api, record, maxBytes: 1024 * 1024 });
+    await withServer({ uploads: small }, async (url) => {
+        let res = await post(url, { name: 'big.bin', check: '1', size: String(3 * 1024 * 1024) });
+        assert.strictEqual(res.status, 413);
+        assert.deepStrictEqual(await res.json(),
+            { error: 'This file is 3.0 MB, over the 1 MB upload limit (the add-on\'s upload_max_mb option).' });
+        for (const size of [undefined, '', 'abc', '-1', '1.5']) {
+            res = await post(url, { name: 'big.bin', check: '1', ...(size === undefined ? {} : { size }) });
+            assert.strictEqual(res.status, 400, String(size));
+            await res.arrayBuffer();
+        }
+    });
+});
+
+// --- the size cap while streaming ---
+
+test('upload: a declared Content-Length over the cap is refused before any check or write', async () => {
+    let adds = 0;
+    const counting = { add: async () => { adds++; }, remove: async () => {} };
+    let planned = 0;
+    const small = createUploads({ api, record: counting, maxBytes: 1024 * 1024, onPlanned: () => { planned++; } });
+    await withServer({ uploads: small }, async (url) => {
+        const sock = await rawUpload(url, { name: 'big.bin', dest: 'blueprints' }, { length: 2 * 1024 * 1024 });
+        const text = await within(answer(sock), 'the 413');
+        assert.match(text, /^HTTP\/1\.1 413 /);
+        assert.match(text, /Connection: close/i);
+        assert.match(text, /This file is 2\.0 MB, over the 1 MB upload limit/);
+        // positive control: a body under the cap goes through
+        assert.strictEqual((await post(url, { name: 'small.bin', dest: 'blueprints' }, 'x'.repeat(1000))).status, 200);
+    });
+    assert.strictEqual(planned, 1);
+    assert.strictEqual(adds, 1);
+    fs.unlinkSync(path.join(root, 'blueprints', 'small.bin'));
+});
+
+test('upload: a body that runs over the cap is cut off with a 413 and leaves no part', async () => {
+    const small = createUploads({ api, record, maxBytes: 1024 * 1024 });
+    const escapes = [];
+    await noStrays(async () => {
+        await withServer({ uploads: small, escapes }, async (url) => {
+            // chunked: no length up front, so only the count can catch it
+            const sock = await rawUpload(url, { name: 'big.bin', dest: 'blueprints' },
+                { headers: 'Transfer-Encoding: chunked\r\n' });
+            const answered = answer(sock);
+            for (let i = 0; i < 3; i++) sock.write(`80000\r\n${'y'.repeat(512 * 1024)}\r\n`);
+            const text = await within(answered, 'the 413');
+            assert.match(text, /^HTTP\/1\.1 413 /);
+            assert.match(text, /This file is over the 1 MB upload limit \(the add-on's upload_max_mb option\)\./);
+        });
+    });
+    assert.deepStrictEqual(escapes, []);
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'big.bin')), false);
+    assert.deepStrictEqual(partsUnder(), []);
+    assert.deepStrictEqual(recorded(), []);
+});
+
+// --- every early end cleans up ---
+
+const PART = '.ctp-upload-00000000000000aa.part';
+const partPath = (dir = 'blueprints') => path.join(root, dir, PART);
+
+test('upload: the record names a part while it is written, and drops it after', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let reached;
+    const atCommit = new Promise((r) => { reached = r; });
+    const held = createUploads({
+        api, record, partName: () => PART,
+        beforeCommit: async () => { reached(); await gate; },
+    });
+    await withServer({ uploads: held }, async (url) => {
+        const done = post(url, { name: 'held.txt', dest: 'blueprints' }, 'held');
+        await within(atCommit, 'the upload to reach its commit');
+        assert.deepStrictEqual(recorded(), [partPath()]);
+        assert.strictEqual(fs.readFileSync(partPath(), 'utf8'), 'held');
+        // not listed meanwhile
+        assert.ok(!(await api.list('blueprints')).entries.some((e) => e.name === PART));
+        release();
+        assert.strictEqual((await done).status, 200);
+    });
+    assert.deepStrictEqual(recorded(), []);
+    assert.strictEqual(fs.existsSync(partPath()), false);
+    fs.unlinkSync(path.join(root, 'blueprints', 'held.txt'));
+});
+
+test('upload: a client that leaves before the first byte is written leaves nothing behind', async () => {
+    let entered;
+    const inPlan = new Promise((r) => { entered = r; });
+    let left;
+    const clientGone = new Promise((r) => { left = r; });
+    const slow = createUploads({
+        api, record, partName: () => PART,
+        onPlanned: async () => { entered(); await clientGone; await sleep(50); },
+    });
+    const escapes = [];
+    await noStrays(async () => {
+        await withServer({ uploads: slow, escapes }, async (url) => {
+            const sock = await rawUpload(url, { name: 'early.txt', dest: 'blueprints' }, { length: 1000, first: 'x'.repeat(10) });
+            await within(inPlan, 'the plan');
+            sock.destroy();
+            left();
+            assert.ok(await until(() => !fs.existsSync(partPath()) && recorded().length === 0), 'part or record left');
+        });
+    });
+    assert.deepStrictEqual(escapes, []);
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'early.txt')), false);
+    assert.deepStrictEqual(partsUnder(), []);
+});
+
+test('upload: a client that leaves mid-upload releases the part\'s descriptor and leaves nothing', async () => {
+    const escapes = [];
+    const named = createUploads({ api, record, partName: () => PART });
+    await noStrays(async () => {
+        await withServer({ uploads: named, escapes }, async (url) => {
+            const sock = await rawUpload(url, { name: 'mid.bin', dest: 'blueprints' },
+                { length: 4 * 1024 * 1024, first: 'z'.repeat(256 * 1024) });
+            assert.ok(await until(() => fs.existsSync(partPath()) && fs.statSync(partPath()).size > 0), 'positive control: the part is being written');
+            const ino = fs.statSync(partPath()).ino;
+            assert.strictEqual(openFds(ino), 1, 'positive control: the part is open');
+            sock.destroy();
+            assert.ok(await until(() => openFds(ino) === 0), 'descriptor left open');
+            assert.ok(await until(() => !fs.existsSync(partPath()) && recorded().length === 0), 'part or record left');
+        });
+    });
+    assert.deepStrictEqual(escapes, []);
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'mid.bin')), false);
+});
+
+test('upload: a client that stops sending is cut off after idleMs, once and quietly logged', async () => {
+    const logged = [];
+    const stalling = createUploads({ api, record, partName: () => PART, idleMs: 300 });
+    await withServer({ uploads: stalling, log: (m) => logged.push(m) }, async (url) => {
+        const sock = await rawUpload(url, { name: 'stall.bin', dest: 'blueprints' }, { length: 1000, first: 'x'.repeat(100) });
+        assert.ok(await until(() => fs.existsSync(partPath()), 2000), 'positive control: the part exists');
+        const ino = fs.statSync(partPath()).ino;
+        assert.ok(await until(() => openFds(ino) === 0 && !fs.existsSync(partPath()), 4000), 'stalled upload kept its part');
+        sock.destroy();
+        assert.ok(await until(() => logged.length > 0, 1000), 'nothing logged');
+        await sleep(100);   // and nothing more
+    });
+    assert.deepStrictEqual(logged, ['Upload of "stall.bin" cut off: client stalled for 300 ms']);
+    assert.deepStrictEqual(recorded(), []);
+});
+
+// Defence in depth: Node errors a request whose client left, so through a
+// real socket this cannot be reached (the tests above cover those). A body
+// that simply ends short must still never become the file.
+test('upload: a body that ends before it is complete is not saved', async () => {
+    const { Readable } = require('node:stream');
+    const short = Object.assign(Readable.from([Buffer.from('partial')]), { complete: false, setTimeout() {} });
+    const named = createUploads({ api, record, partName: () => PART });
+    const planned = await named.plan({ name: 'short.txt', dest: 'blueprints' });
+    await assert.rejects(named.receive(short, planned, { log: () => {} }));
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'short.txt')), false);
+    assert.strictEqual(fs.existsSync(partPath()), false);
+    // positive control: the same body, complete, is saved
+    const whole = Object.assign(Readable.from([Buffer.from('whole')]), { complete: true, setTimeout() {} });
+    assert.strictEqual((await named.receive(whole, planned, { log: () => {} })).size, 5);
+    fs.unlinkSync(path.join(root, 'blueprints', 'short.txt'));
+});
+
+test('upload: a full disk is a 507 that says so, and leaves no part', async () => {
+    let partIno = null;
+    const full = createUploads({
+        api, record, partName: () => PART,
+        openPart: async (p) => {
+            const handle = await require('node:fs/promises').open(p, 'wx', 0o644);
+            partIno = (await handle.stat()).ino;
+            let writes = 0;
+            return {
+                chmod: (m) => handle.chmod(m),
+                datasync: () => handle.datasync(),
+                close: () => handle.close(),
+                write: (...args) => {
+                    if (++writes > 1) return Promise.reject(Object.assign(new Error('no space left on device'), { code: 'ENOSPC' }));
+                    return handle.write(...args);
+                },
+            };
+        },
+    });
+    await withServer({ uploads: full }, async (url) => {
+        const sock = await rawUpload(url, { name: 'full.bin', dest: 'blueprints' }, { length: 2 * 1024 * 1024 });
+        const answered = answer(sock);
+        sock.write('a'.repeat(64 * 1024));
+        await sleep(20);
+        sock.write('b'.repeat(64 * 1024));
+        const text = await within(answered, 'the 507');
+        assert.match(text, /^HTTP\/1\.1 507 /);
+        assert.match(text, /The disk is full/);
+    });
+    assert.ok(partIno !== null, 'positive control: the part was opened');
+    assert.ok(await until(() => openFds(partIno) === 0), 'descriptor left open');
+    assert.deepStrictEqual(partsUnder(), []);
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('upload: a failed rename is a logged 500 that leaves neither file nor part', async () => {
+    const logged = [];
+    const failing = createUploads({
+        api, record, partName: () => PART,
+        fsOps: {
+            link: async () => { throw Object.assign(new Error('simulated EIO'), { code: 'EIO' }); },
+            rename: async () => { throw Object.assign(new Error('simulated EIO'), { code: 'EIO' }); },
+        },
+    });
+    await withServer({ uploads: failing, log: (m) => logged.push(m) }, async (url) => {
+        let res = await post(url, { name: 'eio.txt', dest: 'blueprints' }, 'x');
+        assert.strictEqual(res.status, 500);
+        assert.deepStrictEqual(await res.json(), { error: 'Internal error' });
+        res = await post(url, { name: 'motion.yaml', dest: 'blueprints/automation', onConflict: 'replace' }, 'x');
+        assert.strictEqual(res.status, 500);
+        await res.arrayBuffer();
+    });
+    assert.ok(logged.some((m) => /simulated EIO/.test(m)), logged.join('\n'));
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'eio.txt')), false);
+    assert.strictEqual(fs.readFileSync(path.join(root, 'blueprints/automation/motion.yaml'), 'utf8'), 'old motion\n');
+    assert.deepStrictEqual(partsUnder(), []);
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('upload: without hard links, a new file still lands and a taken name is still not clobbered', async () => {
+    const noLinks = createUploads({
+        api, record,
+        fsOps: {
+            link: async () => { throw Object.assign(new Error('not supported'), { code: 'EPERM' }); },
+            rename: require('node:fs/promises').rename,
+        },
+    });
+    await withServer({ uploads: noLinks }, async (url) => {
+        assert.strictEqual((await post(url, { name: 'nolink.txt', dest: 'blueprints' }, 'one')).status, 200);
+        const res = await post(url, { name: 'nolink.txt', dest: 'blueprints', onConflict: 'keep-both' }, 'two');
+        assert.strictEqual((await res.json()).name, 'nolink (1).txt');
+    });
+    assert.strictEqual(fs.readFileSync(path.join(root, 'blueprints', 'nolink.txt'), 'utf8'), 'one');
+    fs.unlinkSync(path.join(root, 'blueprints', 'nolink.txt'));
+    fs.unlinkSync(path.join(root, 'blueprints', 'nolink (1).txt'));
+    assert.deepStrictEqual(partsUnder(), []);
+});
+
+test('upload: a name taken while the body came in is never clobbered', async () => {
+    const racing = createUploads({
+        api, record,
+        beforeCommit: async (part, planned) => fs.writeFileSync(path.join(planned.dir, planned.name), 'got there first'),
+    });
+    await withServer({ uploads: racing }, async (url) => {
+        let res = await post(url, { name: 'race.txt', dest: 'blueprints' }, 'mine');
+        assert.strictEqual(res.status, 409);
+        assert.strictEqual((await res.json()).reason, 'exists');
+        res = await post(url, { name: 'race2.txt' }, 'mine');   // the inbox numbers it instead
+        assert.strictEqual((await res.json()).name, 'race2 (1).txt');
+    });
+    assert.strictEqual(fs.readFileSync(path.join(root, 'blueprints', 'race.txt'), 'utf8'), 'got there first');
+    fs.unlinkSync(path.join(root, 'blueprints', 'race.txt'));
+    fs.rmSync(path.join(root, 'uploads'), { recursive: true });
+    assert.deepStrictEqual(partsUnder(), []);
+});
+
+test('upload: a folder removed or swapped for a link during the upload gets no file', async () => {
+    write('vanishing/keep.txt', 'x');
+    const vanishing = createUploads({
+        api, record,
+        beforeCommit: async () => fs.rmSync(path.join(root, 'vanishing'), { recursive: true }),
+    });
+    write('swapped/keep.txt', 'x');
+    const swapping = createUploads({
+        api, record,
+        beforeCommit: async () => {
+            fs.renameSync(path.join(root, 'swapped'), path.join(root, 'swapped-away'));
+            fs.symlinkSync(outside, path.join(root, 'swapped'));
+        },
+    });
+    await withServer({ uploads: vanishing }, async (url) => {
+        const res = await post(url, { name: 'v.txt', dest: 'vanishing' }, 'x');
+        assert.strictEqual(res.status, 404);
+        assert.match((await res.json()).error, /was removed during the upload/);
+    });
+    await withServer({ uploads: swapping }, async (url) => {
+        const res = await post(url, { name: 's.txt', dest: 'swapped' }, 'x');
+        assert.strictEqual(res.status, 409);
+        assert.strictEqual((await res.json()).reason, 'not-plain-folder');
+    });
+    assert.deepStrictEqual(fs.readdirSync(outside), ['target.txt']);
+    fs.unlinkSync(path.join(root, 'swapped'));
+    fs.rmSync(path.join(root, 'swapped-away'), { recursive: true });
+    assert.deepStrictEqual(partsUnder(), []);
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('upload: a record that cannot be written refuses the upload before any byte', async () => {
+    const broken = { add: async () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); }, remove: async () => {} };
+    await withServer({ uploads: createUploads({ api, record: broken }) }, async (url) => {
+        const res = await post(url, { name: 'norecord.txt', dest: 'blueprints' }, 'x');
+        assert.strictEqual(res.status, 507);
+        await res.arrayBuffer();
+    });
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'norecord.txt')), false);
+    assert.deepStrictEqual(partsUnder(), []);
+});
+
+test('routes: an unexpected error is a 500 JSON, not a thrown exception', async () => {
+    const escapes = [];
+    const broken = { plan: async () => { throw new TypeError('bug'); }, maxBytes: 1024, tooBig: () => new Error('x') };
+    await withServer({ uploads: broken, escapes }, async (url) => {
+        for (const params of [{ name: 'x' }, { name: 'x', check: '1', size: '1' }]) {
+            const res = await post(url, params, 'x');
+            assert.strictEqual(res.status, 500);
+            assert.deepStrictEqual(await res.json(), { error: 'Internal error' });
+        }
+    });
+    assert.deepStrictEqual(escapes, []);
 });

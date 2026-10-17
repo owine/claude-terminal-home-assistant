@@ -26,8 +26,12 @@
  */
 
 const fsp = require('node:fs/promises');
+const fs = require('node:fs');
 const path = require('node:path');
-const { classifyRelative, inside, FilesError } = require('./files-api');
+const crypto = require('node:crypto');
+const express = require('express');
+const { classifyRelative, inside, sendError, FilesError } = require('./files-api');
+const { createCrossSiteGuard } = require('./http-guards');
 
 const MB = 1024 * 1024;
 // upload_max_mb's default, and what an unusable UPLOAD_MAX_MB falls back to:
@@ -36,11 +40,20 @@ const DEFAULT_MAX_MB = 25;
 // The inbox, relative to the root. run.sh sweeps its top level at startup
 // (upload_retention_days); a folder chosen with "Upload here" is never swept.
 const INBOX = 'uploads';
+// A client that stops sending must not hold a descriptor and a part forever:
+// the server has no socket timeout of its own. Same value as downloads.
+const IDLE_MS = 60 * 1000;
 // Bytes of a sanitised name, extension included. Under the 255 of ext4 with
 // room for a " (999)" suffix; a `.ctp-upload-<16 hex>.part` part is 33.
 const MAX_NAME_BYTES = 200;
 // An extension longer than this is not kept whole when a name is cut short.
 const MAX_EXT_BYTES = 20;
+// "name (1).ext" … "name (999).ext", then a 409.
+const MAX_SUFFIX = 999;
+// link() refusals that mean "no hard links on this filesystem", where a
+// rename after a fresh lstat takes over (see placeNew).
+const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EMLINK']);
+const DISK_FULL = new Set(['ENOSPC', 'EDQUOT']);
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/g;
 
@@ -120,17 +133,38 @@ async function lstatOrNull(p) {
     }
 }
 
+// The client went away (or stalled, which is logged where it is seen): there
+// is no one to answer, so the route sends nothing and logs nothing more.
+class ClientGone extends Error {}
+// A write to the part failed: the disk's fault, never the client's.
+class DiskError extends Error {
+    constructor(cause) {
+        super(cause.message);
+        this.code = cause.code;
+    }
+}
+
 const sizeText = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
 
 /**
- * Uploads over a files-api instance (for locate() and its root): for now the
- * checks every upload gets before its first byte (plan). `now` is injectable
- * for the fallback name.
+ * Uploads over a files-api instance (for locate() and its root). `record` is
+ * upload-parts.js's createPartRecord. The rest are test seams: `fsOps` the
+ * link and rename that put a finished part in place, `openPart` its open,
+ * `partName` its name, `onPlanned` a hook between the checks and the first
+ * byte, and `beforeCommit` one between the last byte and the rename.
  */
 function createUploads({
     api,
+    record,
     maxBytes = DEFAULT_MAX_MB * MB,
+    idleMs = IDLE_MS,
     now = Date.now,
+    partName = () => `.ctp-upload-${crypto.randomBytes(8).toString('hex')}.part`,
+    openPart = (p) => fsp.open(p, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
+        | (fs.constants.O_NOFOLLOW || 0), 0o644),
+    fsOps = { link: fsp.link, rename: fsp.rename },
+    onPlanned = null,
+    beforeCommit = null,
 } = {}) {
     const maxMb = Math.round(maxBytes / MB);
     const limitText = `the ${maxMb} MB upload limit (the add-on's upload_max_mb option)`;
@@ -212,11 +246,195 @@ function createUploads({
         return { ...folder, inbox, name: safe, onConflict, exists: Boolean(existing) };
     }
 
-    return { plan, tooBig, maxBytes };
+    // The request body into the open part. Iterated with destroyOnReturn
+    // false, so stopping early (over the cap, a failed write) leaves the
+    // request alive for the 413 or 507 to go out on.
+    async function writeBody(req, handle, label, log) {
+        let stalled = false;
+        req.setTimeout(idleMs, () => {
+            stalled = true;
+            req.destroy(new Error('client stalled'));
+        });
+        let size = 0;
+        try {
+            for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+                size += chunk.length;
+                if (size > maxBytes) throw tooBig();
+                try {
+                    let at = 0;
+                    while (at < chunk.length) {
+                        const { bytesWritten } = await handle.write(chunk, at, chunk.length - at);
+                        at += bytesWritten;
+                    }
+                } catch (err) {
+                    throw new DiskError(err);
+                }
+            }
+        } catch (err) {
+            if (err instanceof FilesError || err instanceof DiskError) throw err;
+            // Anything else came from reading the request: the client left.
+            if (stalled) log(`Upload of ${JSON.stringify(label)} cut off: client stalled for ${idleMs} ms`);
+            throw new ClientGone();
+        } finally {
+            req.setTimeout(0);
+        }
+        // A request whose client left before sending it all can end without
+        // an error; its bytes are not the file.
+        if (!req.complete) throw new ClientGone();
+        return size;
+    }
+
+    // Put a finished part at `target` unless something is there already:
+    // link() refuses an existing name atomically, which a check followed by
+    // a rename cannot. Where hard links are not supported, a fresh lstat
+    // and a rename are the fallback. False when the name is taken.
+    async function placeNew(part, target) {
+        try {
+            await fsOps.link(part, target);
+            return true;
+        } catch (err) {
+            if (err.code === 'EEXIST') return false;
+            if (!NO_HARD_LINKS.has(err.code)) throw err;
+        }
+        if (await lstatOrNull(target)) return false;
+        await fsOps.rename(part, target);
+        return true;
+    }
+
+    // The folder may have gone, or been swapped for a link, while the body
+    // came in.
+    async function recheck(planned) {
+        const st = await lstatOrNull(planned.dir);
+        if (!st) throw new FilesError(404, `${planned.display} was removed during the upload.`);
+        if (st.isSymbolicLink() || !st.isDirectory()) throw notPlainFolder(planned.display);
+        if (await fsp.realpath(planned.dir) !== planned.dir) throw notPlainFolder(planned.display);
+    }
+
+    async function commit(part, planned) {
+        await recheck(planned);
+        const target = path.join(planned.dir, planned.name);
+        if (planned.onConflict === 'replace') {
+            const old = await lstatOrNull(target);
+            if (old && !old.isFile()) throw exists(planned.name, planned.display, old);
+            // The old file's permissions: a 0600 key stays private, an
+            // executable script stays executable. Never setuid, setgid or
+            // sticky: an upload must not inherit those.
+            if (old) await fsp.chmod(part, old.mode & 0o777);
+            await fsOps.rename(part, target);   // swaps the whole file in at once
+            return { path: target, name: planned.name, replaced: Boolean(old) };
+        }
+        const suffix = planned.inbox || planned.onConflict === 'keep-both';
+        for (let n = 0; n <= (suffix ? MAX_SUFFIX : 0); n++) {
+            const name = n === 0 ? planned.name : withSuffix(planned.name, n);
+            const candidate = path.join(planned.dir, name);
+            if (await placeNew(part, candidate)) return { path: candidate, name, replaced: false };
+        }
+        if (!suffix) throw exists(planned.name, planned.display, await lstatOrNull(target));
+        throw new FilesError(409, `Too many files named like ${planned.name} in ${planned.display}.`,
+            { reason: 'exists', replaceable: false });
+    }
+
+    /**
+     * Stream the request into a part beside the destination, then put it in
+     * place: { path, name, size, dir, replaced, inbox }. On every other way
+     * out - the client gone or stalled, over the cap, a failed write or
+     * rename, the folder gone - the part is deleted and dropped from the
+     * record, and nothing is left at the destination.
+     */
+    async function receive(req, planned, { log = console.error } = {}) {
+        if (onPlanned) await onPlanned(planned);
+        const part = path.join(planned.dir, partName());
+        await record.add(part);
+        let handle = null;
+        try {
+            handle = await openPart(part);
+            await handle.chmod(0o644);   // 0644 whatever the umask
+            const size = await writeBody(req, handle, planned.name, log);
+            await handle.datasync();     // on disk before it replaces anything
+            await handle.close();
+            handle = null;
+            if (beforeCommit) await beforeCommit(part, planned);
+            const placed = await commit(part, planned);
+            return { ...placed, size, dir: planned.display, inbox: planned.inbox };
+        } finally {
+            if (handle) await handle.close().catch(() => {});
+            // After a link() the part is a second name for the file; after a
+            // rename it is gone already (ENOENT); after a failure it is the
+            // unfinished file. Removed in every case.
+            await fsp.unlink(part).catch(() => {});
+            await record.remove(part).catch((err) => log(`Upload parts: record not updated: ${err.message}`));
+        }
+    }
+
+    return { plan, receive, tooBig, maxBytes };
+}
+
+// A failure as the answer the UI shows: a full disk is a 507 that says so.
+function asFilesError(err) {
+    if (err instanceof FilesError) return err;
+    if (err && DISK_FULL.has(err.code)) {
+        return new FilesError(507, 'The disk is full, so the file was not saved. Free some space and try again.');
+    }
+    return err;   // sendError logs it and answers a 500
+}
+
+/**
+ * Express router for uploads. Mounted by server.js at /api/files beside the
+ * other Files routers, before the terminal proxy and static files.
+ *
+ * POST, so the app-wide origin guard (createOriginGuard) has already run.
+ * The cross-site guard runs too: the origin guard passes a request with no
+ * Origin and no Referer, and an ingress one whatever its Origin, while
+ * Sec-Fetch-Site still says whether the browser was on another site. Both
+ * before the limiters, so a refused request costs no one's budget.
+ *
+ * check=1 (no body) goes to `checkLimiter`, the upload itself to
+ * `uploadLimiter`, so asking first does not halve the uploads a minute.
+ * Every failure is a JSON answer from here, never the global error handler
+ * (which words everything as an image upload error). A refusal sent before
+ * the body was read closes the connection rather than read the rest.
+ */
+function createUploadRouter({ uploads, uploadLimiter, checkLimiter, log = console.error }) {
+    const router = express.Router();
+    const sameSite = createCrossSiteGuard({
+        log,
+        message: 'Uploads cannot be started from another site. Use the Files sidebar.',
+    });
+    const limiter = (req, res, next) => (req.query.check === '1' ? checkLimiter : uploadLimiter)(req, res, next);
+
+    router.post('/upload', sameSite, limiter, async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+        const check = req.query.check === '1';
+        try {
+            const query = { name: req.query.name, dest: req.query.dest, onConflict: req.query.onConflict };
+            if (check) {
+                if (typeof req.query.size !== 'string' || !/^[0-9]{1,15}$/.test(req.query.size)) {
+                    throw new FilesError(400, 'size must be the file size in bytes');
+                }
+                const size = Number(req.query.size);
+                if (size > uploads.maxBytes) throw uploads.tooBig(size);
+                const planned = await uploads.plan(query, { create: false });
+                return res.json({ name: planned.name, dir: planned.display, inbox: planned.inbox, exists: planned.exists });
+            }
+            const declared = Number(req.get('content-length'));
+            if (declared > uploads.maxBytes) throw uploads.tooBig(declared);
+            const planned = await uploads.plan(query);
+            res.json(await uploads.receive(req, planned, { log }));
+        } catch (err) {
+            // The client is gone (a ClientGone, or a stall cut off), or
+            // the answer went out already: there is no one to tell.
+            if (res.writableEnded || !res.socket || res.socket.destroyed) return;
+            if (!check && !req.complete) res.set('Connection', 'close');
+            sendError(res, asFilesError(err), log);
+        }
+    });
+
+    return router;
 }
 
 module.exports = {
     createUploads,
+    createUploadRouter,
     sanitizeUploadName,
     withSuffix,
     uploadMaxBytes,
