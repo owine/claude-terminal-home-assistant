@@ -41,6 +41,7 @@ test('forces revalidation of scripts', () => {
     assert.strictEqual(cacheControlFor('/opt/wrapper/public/login-link.js'), 'no-cache');
     assert.strictEqual(cacheControlFor('/opt/wrapper/public/files-sidebar-ui.js'), 'no-cache');
     assert.strictEqual(cacheControlFor('/opt/wrapper/public/upload-client.js'), 'no-cache');
+    assert.strictEqual(cacheControlFor('/opt/wrapper/public/viewport-fit.js'), 'no-cache');
 });
 
 // A stale service worker is the worst case: it outlives reloads and keeps

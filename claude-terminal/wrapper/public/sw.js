@@ -13,6 +13,7 @@ const SHELL_ASSETS = [
     './files-sidebar.js',
     './upload-client.js',
     './files-sidebar-ui.js',
+    './viewport-fit.js',
     OFFLINE_URL,
     './manifest.json',
     './icon-192.png',
