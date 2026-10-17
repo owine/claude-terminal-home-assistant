@@ -16,8 +16,10 @@
  *   both the requested and the resolved path, so `..`, absolute paths and
  *   symlinks all land on the same check.
  *
- * Nothing here writes to disk. The module has no listener and no side effects
- * at require time, so tests import it directly (same reason as http-guards.js).
+ * Nothing here writes to disk: uploads are files-upload.js, which asks this
+ * module where a path lands (locate) and which names are partial files. The
+ * module has no listener and no side effects at require time, so tests import
+ * it directly (same reason as http-guards.js).
  */
 
 const fsp = require('node:fs/promises');
@@ -161,10 +163,13 @@ async function procFdPath(fd) {
 }
 
 // An error the routes turn into a status code and a message for the UI.
+// `details` are extra fields for the JSON body beside `error`, for answers
+// the UI acts on rather than only shows (an upload's name collision).
 class FilesError extends Error {
-    constructor(status, message) {
+    constructor(status, message, details = null) {
         super(message);
         this.status = status;
+        this.details = details;
     }
 }
 const notAllowed = () => new FilesError(404, 'Not found or not allowed');
@@ -299,13 +304,14 @@ function createFilesApi({
     }
 
     /**
-     * Resolve a requested path (absolute, or relative to the root) to
-     * { real, relative, kind }, or throw a 404. Both the requested path and
-     * its realpath must stay inside the root and must not be hidden, so a
-     * symlink named innocently cannot reach .git, a secret-shaped file or
-     * /data.
+     * Where a requested path (absolute, or relative to the root) lands,
+     * without looking at what is there: { asked, relative, kind, root }, the
+     * path mapped under the root's realpath, and its tier by that name. Throws
+     * 400 for an unusable path and 404 for one outside the root or never
+     * shown. resolve() goes on to follow it; uploads (files-upload.js) lstat
+     * it instead, since a destination must not be a symlink at all.
      */
-    async function resolve(requested) {
+    async function locate(requested) {
         if (requested === undefined || requested === '') requested = '.';
         if (typeof requested !== 'string' || requested.includes('\0') || requested.length > MAX_PATH_LENGTH) {
             throw new FilesError(400, 'Invalid path');
@@ -321,8 +327,21 @@ function createFilesApi({
         // Refused before touching the filesystem, so a path outside the root
         // (/data, /etc) cannot even be probed for existence.
         if (!inside(rootReal, asked)) throw notAllowed();
-        const askedKind = classifyRelative(path.relative(rootReal, asked));
-        if (askedKind === 'hidden') throw notAllowed();
+        const relative = path.relative(rootReal, asked);
+        const kind = classifyRelative(relative);
+        if (kind === 'hidden') throw notAllowed();
+        return { asked, relative, kind, root: rootReal };
+    }
+
+    /**
+     * Resolve a requested path (absolute, or relative to the root) to
+     * { real, relative, kind }, or throw a 404. Both the requested path and
+     * its realpath must stay inside the root and must not be hidden, so a
+     * symlink named innocently cannot reach .git, a secret-shaped file or
+     * /data.
+     */
+    async function resolve(requested) {
+        const { asked, kind: askedKind, root: rootReal } = await locate(requested);
 
         let real;
         try {
@@ -367,6 +386,9 @@ function createFilesApi({
                 size: isDir ? null : stat.size,
                 mtime: stat.mtimeMs,
                 ...(kind === 'sensitive' ? { sensitive: true } : {}),
+                // The UI offers "Upload here" on real folders only: an
+                // upload into a symlinked one is refused (409).
+                ...(dirent.isSymbolicLink() ? { symlink: true } : {}),
             };
         } catch {
             return null;   // vanished, dangling link, permission
@@ -588,7 +610,7 @@ function createFilesApi({
         };
     }
 
-    return { root, resolve, list, preview, recent, openFile, openRequested };
+    return { root, locate, resolve, list, preview, recent, openFile, openRequested };
 }
 
 /**
@@ -613,7 +635,7 @@ function sendError(res, err, log = console.error) {
         return;
     }
     if (err instanceof FilesError) {
-        res.status(err.status).json({ error: err.message });
+        res.status(err.status).json({ ...err.details, error: err.message });
     } else {
         log(`Files API error: ${err && err.message}`);
         res.status(500).json({ error: 'Internal error' });
@@ -677,6 +699,8 @@ module.exports = {
     FilesError,
     allowsProtected,
     sendError,
+    inside,
+    PARTIAL_FILE,
     MAX_ENTRIES,
     MAX_PREVIEW_BYTES,
     MAX_RECENT_DEPTH,

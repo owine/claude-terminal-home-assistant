@@ -760,3 +760,58 @@ test('openFile limit: without /proc a symlinked parent folder is NOT caught', as
     }
 });
 
+// --- for uploads (files-upload.js) ---
+
+test('locate maps a path under the root without following it', async () => {
+    const at = await api.locate('packages');
+    assert.deepStrictEqual(at, { asked: path.join(root, 'packages'), relative: 'packages', kind: 'ok', root });
+    // a symlink is located by its own name: where it points is not looked at
+    assert.strictEqual((await api.locate('data-link')).asked, path.join(root, 'data-link'));
+    assert.strictEqual((await api.locate('not-there-yet')).relative, 'not-there-yet');
+    assert.strictEqual((await api.locate('.storage')).kind, 'sensitive');
+    assert.strictEqual((await api.locate('')).relative, '');
+    await refused(api.locate('.git'), 404);
+    await refused(api.locate('../data'), 404);
+    await refused(api.locate(['a', 'b']), 400);
+    await refused(api.locate('a\0b'), 400);
+});
+
+test('locate accepts the root as configured when it is a symlink', async () => {
+    const linked = path.join(base, 'config-link');
+    fs.symlinkSync(root, linked);
+    try {
+        const viaLink = createFilesApi({ root: linked });
+        const at = await viaLink.locate(path.join(linked, 'packages'));
+        assert.strictEqual(at.asked, path.join(root, 'packages'));
+        assert.strictEqual(at.root, root);
+    } finally {
+        fs.unlinkSync(linked);
+    }
+});
+
+test('a listing marks symlinked entries, and only those', async () => {
+    fs.symlinkSync(path.join(root, 'packages'), path.join(root, 'packages-link'));
+    try {
+        const entries = (await api.list('')).entries;
+        const byName = (n) => entries.find((e) => e.name === n);
+        assert.strictEqual(byName('packages-link').symlink, true);
+        assert.strictEqual(byName('packages-link').type, 'dir');
+        assert.strictEqual(byName('autos-link.yaml').symlink, true);
+        assert.strictEqual(byName('packages').symlink, undefined);
+        assert.strictEqual(byName('configuration.yaml').symlink, undefined);
+    } finally {
+        fs.unlinkSync(path.join(root, 'packages-link'));
+    }
+});
+
+test('sendError adds a FilesError\'s details to the JSON body, under its own error', () => {
+    let status;
+    let body;
+    const res = { headersSent: false, status(s) { status = s; return this; }, json(b) { body = b; } };
+    sendError(res, new FilesError(409, 'a.yaml already exists', { reason: 'exists', replaceable: true, error: 'ignored' }));
+    assert.strictEqual(status, 409);
+    assert.deepStrictEqual(body, { reason: 'exists', replaceable: true, error: 'a.yaml already exists' });
+    sendError(res, new FilesError(404, 'gone'));
+    assert.deepStrictEqual(body, { error: 'gone' });
+});
+
