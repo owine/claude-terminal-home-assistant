@@ -20,6 +20,7 @@ const {
     classifyRelative,
     looksBinary,
     procFdPath,
+    sameInode,
     sendError,
     FilesError,
 } = require('../files-api.js');
@@ -288,6 +289,13 @@ test('procFdPath names the open file on Linux, and is null elsewhere', async () 
     }
 });
 
+test('sameInode needs the device and the inode both to match', () => {
+    assert.strictEqual(sameInode({ dev: 1, ino: 5 }, { dev: 1, ino: 5 }), true);
+    // an inode number is only unique on its own device
+    assert.strictEqual(sameInode({ dev: 1, ino: 5 }, { dev: 2, ino: 5 }), false);
+    assert.strictEqual(sameInode({ dev: 1, ino: 5 }, { dev: 1, ino: 6 }), false);
+});
+
 // The kernel marks an unlinked file by appending " (deleted)" to the path it
 // reports, but a live file may carry that suffix in its real name. Only an
 // unlinked file loses the suffix; a live one keeps its name, and is judged
@@ -336,8 +344,33 @@ test('procFdPath strips " (deleted)" only from a file that is really gone',
                 fs.unlinkSync(at('e.key'));
                 fs.writeFileSync(at('e.key (deleted)'), 'impostor');
             }), at('e.key'));
+            // ...and with a symlink at the suffixed name pointing at the
+            // file's surviving name: a link is not the file, however it
+            // resolves, so the name is looked at, never followed.
+            fs.writeFileSync(at('f.key'), 'x');
+            assert.strictEqual(await opened('f.key', () => {
+                fs.linkSync(at('f.key'), at('f-other'));
+                fs.unlinkSync(at('f.key'));
+                fs.symlinkSync(at('f-other'), at('f.key (deleted)'));
+            }), at('f.key'));
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+test('procFdPath: the same inode number on another device is another file',
+    { skip: !hasProcFd && 'needs /proc/self/fd (Linux)' }, async () => {
+        const file = write('del-dev/g (deleted)', 'live');
+        const handle = await fs.promises.open(file, 'r');
+        try {
+            const own = await handle.stat();
+            const elsewhere = async () => ({ ...own, dev: own.dev + 1 });
+            assert.strictEqual(await procFdPath(handle.fd, { lstat: elsewhere }), file.slice(0, -' (deleted)'.length));
+            // positive control: the same device and inode is this file
+            assert.strictEqual(await procFdPath(handle.fd, { lstat: async () => own }), file);
+        } finally {
+            await handle.close();
+            fs.rmSync(path.join(root, 'del-dev'), { recursive: true, force: true });
         }
     });
 

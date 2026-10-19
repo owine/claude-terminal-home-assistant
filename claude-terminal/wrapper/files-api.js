@@ -162,27 +162,34 @@ const DELETED_SUFFIX = ' (deleted)';
 const fstat = (fd) => new Promise((resolve, reject) => {
     fs.fstat(fd, (err, st) => (err ? reject(err) : resolve(st)));
 });
-async function procFdPath(fd) {
+// `lstat` is a test seam: a file on another device with the same inode
+// number cannot be made on demand.
+async function procFdPath(fd, { lstat = fsp.lstat } = {}) {
     let target;
     try {
         target = await fsp.readlink(`/proc/self/fd/${fd}`);
     } catch {
         return null;
     }
-    if (target.endsWith(DELETED_SUFFIX) && !(await namesOpenFile(target, fd))) {
+    if (target.endsWith(DELETED_SUFFIX) && !(await namesOpenFile(target, fd, lstat))) {
         target = target.slice(0, -DELETED_SUFFIX.length);
     }
     return path.isAbsolute(target) ? target : null;
 }
 
-// Whether `target` is, right now, the file open on `fd`. Any failure is
-// "no", which strips the suffix: the old reading, and the stricter one for a
-// secret-shaped name hiding behind it.
-async function namesOpenFile(target, fd) {
+// One file, told by its device and inode: an inode number is only unique on
+// its own device.
+const sameInode = (a, b) => a.dev === b.dev && a.ino === b.ino;
+
+// Whether `target` is, right now, the file open on `fd`. The name itself,
+// by lstat: a symlink there is not the file, wherever it points. Any failure
+// is "no", which strips the suffix: the old reading, and the stricter one
+// for a secret-shaped name hiding behind it.
+async function namesOpenFile(target, fd, lstat) {
     try {
-        const [open, named] = await Promise.all([fstat(fd), fsp.lstat(target)]);
+        const [open, named] = await Promise.all([fstat(fd), lstat(target)]);
         // No nlink test needed: no name resolves to an unlinked inode.
-        return open.dev === named.dev && open.ino === named.ino;
+        return sameInode(open, named);
     } catch {
         return false;
     }
@@ -754,6 +761,7 @@ module.exports = {
     walkEntryType,
     looksBinary,
     procFdPath,
+    sameInode,
     textDirent,
     BYTE_NAMES,
     FilesError,
