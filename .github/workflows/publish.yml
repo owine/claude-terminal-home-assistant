@@ -72,6 +72,11 @@ jobs:
           arch: ${{ matrix.arch }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           context: ./claude-terminal
+          # Rebuild the apk layer (and everything after it) on every release,
+          # so transitive Alpine packages get their security fixes. See
+          # APK_REFRESH in the Dockerfile.
+          build-args: |
+            APK_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cosign: "true"
           image: ${{ matrix.image }}
           image-tags: |

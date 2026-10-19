@@ -11,7 +11,19 @@ LABEL \
 
 # Upgrade base packages for security patches, then install dependencies in one layer
 # Node.js and npm kept for wrapper service dependency
-RUN apk upgrade --no-cache \
+#
+# APK_REFRESH makes a release rebuild this layer. The publish build reuses
+# cached layers (GitHub Actions cache and the registry's :latest), and the pins
+# below name direct packages only: with no pin changed, the cached layer is
+# reused and transitive packages never pick up Alpine's security fixes. 2.11.0
+# shipped libexpat 2.8.5 (CVE-2026-77214) that way while 2.9.0 was in the repo.
+# publish.yml passes a value unique to the run, so every release reinstalls
+# from the current index; test builds pass nothing and keep their cache.
+# Docker already treats a changed ARG as a cache miss at the next RUN; the
+# echo names it there too, and logs which refresh a build used.
+ARG APK_REFRESH=""
+RUN echo "apk refresh: ${APK_REFRESH:-none}" \
+    && apk upgrade --no-cache \
     && apk add --no-cache \
     bash=5.3.9-r1 \
     curl=8.22.0-r0 \
