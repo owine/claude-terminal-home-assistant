@@ -60,11 +60,12 @@
      * { skipped } when the user cancelled a collision. The name goes to the
      * server as it is; the server cleans it.
      *
-     * No `dest` is the inbox, which numbers a taken name and so never asks.
-     * askCollision(text, replaceable) answers a chosen folder's taken name
-     * with 'replace', 'keep-both' or null; without it a taken name is a
-     * refusal. onCheck() runs before the question; onSend() runs before the
-     * body and returns the progress callback.
+     * The inbox numbers a taken name (up to a cap), so a caller that only
+     * uploads there can leave askCollision out; without it a taken name is
+     * a refusal. askCollision(text, replaceable) answers a chosen folder's
+     * taken name with 'replace', 'keep-both' or null. onCheck() runs before
+     * the question; onSend() runs before the body and returns the progress
+     * callback.
      */
     async function uploadOne(file, { dest, askCollision, onCheck = () => {}, onSend = () => undefined, fetchImpl, XHRImpl } = {}) {
         const name = file.name;

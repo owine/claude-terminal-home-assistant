@@ -31,7 +31,9 @@ function fakeFetch(...answers) {
 }
 
 // XMLHttpRequest: each send() takes the next reply, { status, data or text,
-// progress: [fractions] }, or 'error' / 'abort'. Records every request.
+// progress: [fractions or raw progress events] }, or 'error' / 'abort'.
+// Records every request. A send with no reply left throws, as an unexpected
+// fetch does, so a request that should not happen fails the test at once.
 function fakeXHR(...replies) {
     const sent = [];
     class XHRImpl {
@@ -42,11 +44,14 @@ function fakeXHR(...replies) {
             this.body = body;
             sent.push(this);
             const r = replies.shift();
+            if (!r) throw new Error('unexpected upload: ' + this.url);
             queueMicrotask(() => {
                 if (r === 'error') return this.onerror();
                 if (r === 'abort') return this.onabort();
                 for (const f of r.progress || []) {
-                    this.upload.onprogress?.({ lengthComputable: true, loaded: f * 100, total: 100 });
+                    this.upload.onprogress?.(typeof f === 'number'
+                        ? { lengthComputable: true, loaded: f * 100, total: 100 }
+                        : f);
                 }
                 this.status = r.status;
                 this.responseText = r.text !== undefined ? r.text : JSON.stringify(r.data ?? {});
@@ -81,7 +86,18 @@ test('ask without an answer is status 0, with the reason', async () => {
 // --- send: the upload itself ---
 
 test('send posts the bytes as they are, reports progress, and returns the JSON', async () => {
-    const { XHRImpl, sent } = fakeXHR({ status: 200, data: { path: '/config/uploads/a.txt' }, progress: [0.25, 1] });
+    // An event with no length to go by, or a total of 0, is no progress to
+    // show (it would be NaN or a guess), so it is left out.
+    const { XHRImpl, sent } = fakeXHR({
+        status: 200,
+        data: { path: '/config/uploads/a.txt' },
+        progress: [
+            0.25,
+            { lengthComputable: false, loaded: 50, total: 100 },
+            { lengthComputable: true, loaded: 0, total: 0 },
+            1,
+        ],
+    });
     const seen = [];
     const f = file('a.txt');
     const got = await client.send('api/files/upload?name=a.txt', f, (x) => seen.push(x), { XHRImpl });
@@ -162,6 +178,16 @@ test('uploadOne: with nothing to ask, a taken name is a refusal', async () => {
     const { XHRImpl, sent } = fakeXHR();
     const got = await client.uploadOne(file('x.txt'), { fetchImpl, XHRImpl });
     assert.deepStrictEqual(got, { problem: 'x.txt already exists in /config/uploads.', status: 409 });
+    assert.strictEqual(sent.length, 0);
+});
+
+test('uploadOne: a 409 that is not a taken name is a refusal, even with someone to ask', async () => {
+    const { fetchImpl } = fakeFetch({ status: 409, data: { reason: 'not-plain-folder', error: '/config/f is not a plain folder (it is a symlink or a file), so nothing is uploaded into it.' } });
+    const { XHRImpl, sent } = fakeXHR();
+    let asked = 0;
+    const got = await client.uploadOne(file('x.txt'), { dest: '/config/f', askCollision: async () => { asked++; return 'replace'; }, fetchImpl, XHRImpl });
+    assert.strictEqual(asked, 0);
+    assert.strictEqual(got.status, 409);
     assert.strictEqual(sent.length, 0);
 });
 
