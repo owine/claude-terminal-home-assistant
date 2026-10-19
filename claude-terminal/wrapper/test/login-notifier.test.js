@@ -481,6 +481,55 @@ test('a login link brings polling back to 3 s while its notification is up', asy
     n.stop();
 });
 
+// At boot the wrapper starts well before tmux does (packages, Docker CLI
+// and ha-mcp come in between). Backing off through those failed captures
+// left a fresh install's first login waiting up to 30 s for its link.
+test('until the pane has been captured once, failed captures keep polling at 3 s', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.screen = null; // no tmux session yet
+    await n.start();
+    for (let i = 0; i < 5; i++) await t.fire();
+    assert.deepStrictEqual(t.delays, [3000, 3000, 3000, 3000, 3000, 3000]);
+    w.screen = 'root@ha:/config# ';
+    await t.fire();
+    assert.strictEqual(t.delays.at(-1), 6000, 'backs off once the pane is up and idle');
+    n.stop();
+});
+
+// Later on, a session that has gone away (the shell exited) is no reason to
+// poll fast forever.
+test('once the pane has been seen, failed captures back off like idle ones', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.screen = '';
+    await n.start();
+    await t.fire();
+    w.screen = null;
+    await t.fire();
+    await t.fire();
+    assert.deepStrictEqual(t.delays, [3000, 6000, 12000, 24000]);
+    n.stop();
+});
+
+test('a restart waits for the pane at 3 s again', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.screen = '';
+    await n.start();
+    await t.fire();             // pane seen
+    n.stop();
+    w.screen = null;
+    await n.start();
+    await t.fire();
+    await t.fire();
+    assert.deepStrictEqual(t.delays.slice(-3), [3000, 3000, 3000]);
+    n.stop();
+});
+
 test('a restart begins at the base interval again', async () => {
     const w = world();
     const t = fakeTimers();

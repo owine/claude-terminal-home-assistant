@@ -118,6 +118,13 @@ function createLoginNotifier({
     let timer = null;
     let delay = pollMs;   // gap before the next poll; see MAX_POLL_MS
     let watching = false; // set by tick(): a link to post or a notification up
+    // Whether a capture has succeeded since start(). Until one has, a failed
+    // capture is the boot case - the wrapper starts minutes before tmux can -
+    // and the loop holds its pace rather than backing off, so the first
+    // login screen is seen promptly. After that, a failed capture (the
+    // session gone) backs off like an idle one.
+    let paneSeen = false;
+    let waitingForPane = false; // set by tick()
     let generation = 0;   // bumped by start() and stop(); a stale loop exits
     // Last failure per service, so a Supervisor that keeps failing (HA Core
     // restarting, a 401) logs once per change instead of every poll.
@@ -186,6 +193,7 @@ function createLoginNotifier({
 
     async function tick() {
         let unposted = false;
+        waitingForPane = false;
         try {
             if (await isLoggedIn({ readFile, homeDir, now })) {
                 for (const u of abandoned) posted.add(u);
@@ -198,8 +206,10 @@ function createLoginNotifier({
             try {
                 url = await findLoginUrl({ execFile });
             } catch {
+                waitingForPane = !paneSeen;
                 return; // no tmux session yet, or tmux busy - try next tick
             }
+            paneSeen = true;
 
             if (url && !alreadyPosted(url)) {
                 unposted = true; // retried every poll until the create succeeds
@@ -243,7 +253,8 @@ function createLoginNotifier({
             if (gen !== generation) return;
             await tick();
             if (gen !== generation) return;
-            delay = watching ? pollMs : Math.min(delay * 2, Math.max(maxPollMs, pollMs));
+            if (watching) delay = pollMs;
+            else if (!waitingForPane) delay = Math.min(delay * 2, Math.max(maxPollMs, pollMs));
             schedule(gen);
         }, delay);
         timer.unref?.();
@@ -259,6 +270,7 @@ function createLoginNotifier({
             const gen = ++generation;
             timers.clearTimeout(timer);
             delay = pollMs;
+            paneSeen = false;
             await dismiss();
             if (gen === generation) schedule(gen);
         },
