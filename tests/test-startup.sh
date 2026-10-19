@@ -42,9 +42,19 @@ main 2>/dev/null
 position() { grep -nx "$1" "$order_file" | cut -d: -f1; }
 
 # A step main() calls that is not in the list above runs for real. Catch one
-# added later: every function main() names must have been recorded.
-# (declare -f prints one bare call per line, ending in `;`.)
-main_steps=$(declare -f main | grep -E '^ +[a-z_]+;?$' | tr -d ' ;')
+# added later: every function main() names must have been recorded. Its body
+# is tokenised rather than matched line by line, so a call with arguments, a
+# redirect, in an && / || chain or inside an if still counts; the words kept
+# are those naming a function, apart from bashio's own.
+# (A function, not inline: bash 3.2 cannot parse a case inside $(...).)
+function_words() {
+    local word
+    while IFS= read -r word; do
+        case "$word" in ''|bashio::*) continue ;; esac
+        if declare -F "$word" >/dev/null 2>&1; then printf '%s\n' "$word"; fi
+    done
+}
+main_steps=$(declare -f main | tail -n +3 | tr -s ' \t;|&()' '\n' | function_words)
 assert_status "main's steps are found (else the next check checks nothing)" 0 \
     test "$(printf '%s\n' "$main_steps" | grep -c .)" -ge 10
 for called in $main_steps; do
