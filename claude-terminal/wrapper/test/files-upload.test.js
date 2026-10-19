@@ -217,6 +217,16 @@ test('a destination must be inside the root, never .git, protected or deps', asy
     assert.strictEqual((await uploads.plan({ name: 'a.txt', dest: 'nested/claude-config' })).relative, path.join('nested', 'claude-config'));
 });
 
+test('deps spelt with the long s (U+017F), which folds to s, is refused like deps', async () => {
+    write('dep\u017f/lib/x.py', 'x');
+    try {
+        await refused(uploads.plan({ name: 'a.txt', dest: 'dep\u017f' }), 403);
+        await refused(uploads.plan({ name: 'a.txt', dest: 'dep\u017f/lib' }), 403);
+    } finally {
+        fs.rmSync(path.join(root, 'dep\u017f'), { recursive: true, force: true });
+    }
+});
+
 test('a symlinked folder, or one below it, is not a plain folder (409); one out of the root is 404', async () => {
     await refused(uploads.plan({ name: 'a.txt', dest: 'bp-link' }), 409, 'not-plain-folder');
     await refused(uploads.plan({ name: 'a.txt', dest: 'bp-link/automation' }), 409, 'not-plain-folder');

@@ -119,7 +119,7 @@ const SENSITIVE_FILE = new RegExp([
     '^\\.claude\\.json$',
     '^id_(rsa|dsa|ecdsa|ed25519)(_sk)?$',
     '\\.(pem|key|p12|pfx)$',
-].join('|'), 'i');
+].join('|'), 'iu');   // u: see fold()
 
 // Recent changes leaves out what HA (or a package manager) rewrites by itself,
 // so the list shows what a person or Claude edited. Build and dependency trees
@@ -132,9 +132,17 @@ const RECENT_SKIP_DIRS = new Set([
 ]);
 // Skipped only under the named parent: `build` is an ordinary name elsewhere.
 const RECENT_SKIP_NESTED = [['.esphome', 'build']];
-const RECENT_SKIP_FILE = /\.(db|db-shm|db-wal|sqlite|sqlite3)$|\.log(\.\d+|\.fault|\.old)?$/i;
+const RECENT_SKIP_FILE = /\.(db|db-shm|db-wal|sqlite|sqlite3)$|\.log(\.\d+|\.fault|\.old)?$/iu;   // u: see fold()
 
-const lower = (name) => name.toLowerCase();
+// Names are matched without regard to case as Unicode folds case, so a name
+// that folds to a protected one is protected too. Outside ASCII exactly two
+// characters fold to ASCII letters: the Kelvin sign U+212A to k
+// (`server.<U+212A>ey`) and the long s U+017F to s (`.<U+017F>sh`). A
+// regex needs both `i` and `u` for that: /i alone matches neither. For the
+// name sets, toLowerCase() already turns the Kelvin sign into k, and this
+// turns the long s into s as well. HIDDEN_NAME and PARTIAL_FILE stay /i:
+// they hold no k or s, so `u` would change nothing they match.
+const fold = (name) => name.toLowerCase().replace(/\u017f/g, 's');
 
 function isHiddenName(name) {
     return HIDDEN_NAME.test(name);
@@ -150,10 +158,10 @@ function classifyRelative(relative) {
     if (relative === '') return 'ok';
     const segments = relative.split(path.sep);
     if (segments.some(isHiddenName)) return 'hidden';
-    if (SENSITIVE_ROOT_DIRS.has(lower(segments[0]))) return 'sensitive';
-    if (segments.slice(0, -1).some((s) => SENSITIVE_DIRS.has(lower(s)))) return 'sensitive';
+    if (SENSITIVE_ROOT_DIRS.has(fold(segments[0]))) return 'sensitive';
+    if (segments.slice(0, -1).some((s) => SENSITIVE_DIRS.has(fold(s)))) return 'sensitive';
     const last = segments[segments.length - 1];
-    if (SENSITIVE_DIRS.has(lower(last)) || SENSITIVE_FILE.test(last)) return 'sensitive';
+    if (SENSITIVE_DIRS.has(fold(last)) || SENSITIVE_FILE.test(last)) return 'sensitive';
     return 'ok';
 }
 
@@ -656,8 +664,8 @@ function createFilesApi({
                     const relative = path.relative(rootReal, full);
                     const type = walkEntryType(relative, dirent);
                     if (type === 'dir') {
-                        const name = lower(dirent.name);
-                        const parent = lower(path.basename(dir));
+                        const name = fold(dirent.name);
+                        const parent = fold(path.basename(dir));
                         const skip = RECENT_SKIP_DIRS.has(name)
                             || RECENT_SKIP_NESTED.some(([p, n]) => p === parent && n === name);
                         if (!skip) subdirs.push(full);

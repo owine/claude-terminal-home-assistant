@@ -307,7 +307,9 @@ function createUploads({
         if (at.kind === 'sensitive') {
             throw new FilesError(403, `${shown} may hold secrets, so nothing is uploaded into it.`);
         }
-        if (at.relative.split(path.sep)[0].toLowerCase() === 'deps') {
+        // /iu, so deps spelt with the long s (U+017F) is deps too, as
+        // files-api folds names (its fold())
+        if (/^deps$/iu.test(at.relative.split(path.sep)[0])) {
             throw new FilesError(403, `${shown} holds the Python packages Home Assistant installs, so nothing is uploaded into it.`);
         }
         let st = await lstatOrNull(at.asked);

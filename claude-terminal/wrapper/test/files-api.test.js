@@ -99,6 +99,57 @@ test('ordinary config files are neither', () => {
     }
 });
 
+// Outside ASCII, two characters fold to ASCII letters (Unicode simple case
+// folding, which a /iu regex uses): the Kelvin sign U+212A to k and the long
+// s U+017F to s. A /i regex without u, or toLowerCase() for the long s,
+// leaves them as they are.
+const KELVIN = '\u212a';
+const LONG_S = '\u017f';
+
+test('sensitive: the Kelvin sign and the long s count as the k and s they fold to', () => {
+    for (const p of [`certs/server.${KELVIN}ey`, `server.${KELVIN}EY`,
+        `id_r${LONG_S}a`, `id_ed25519_${LONG_S}k`, `${LONG_S}ervice_account.json`, `.git-credential${LONG_S}`,
+        `.claude.j${LONG_S}on`, `sub/.${LONG_S}${LONG_S}h/id_x`, `.${LONG_S}sh`, `a/.${LONG_S}torage/x`, `.${LONG_S}torage`]) {
+        assert.strictEqual(classifyRelative(p), 'sensitive', JSON.stringify(p));
+    }
+    // negative controls: letters that only look like k or s are not them
+    for (const p of ['server.\u03baey', 'server.\u039aey', 'id_r\u0455a', '.\u0455sh/x']) {
+        assert.strictEqual(classifyRelative(p), 'ok', JSON.stringify(p));
+    }
+});
+
+test('a server.Key spelt with the Kelvin sign is listed as protected, and refused for preview', async () => {
+    const dir = path.join(root, 'kelvin');
+    try {
+        write(`kelvin/server.${KELVIN}ey`, 'KEY\n');
+        const entry = (await api.list('kelvin')).entries.find((e) => e.name.normalize('NFC') === 'server.Key');
+        assert.ok(entry, 'listed');
+        assert.strictEqual(entry.sensitive, true);
+        await refused(api.preview(path.join('kelvin', entry.name)), 403);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('recent changes leaves out noise and secrets spelt with the long s or the Kelvin sign', async () => {
+    const recentRoot = path.join(base, 'recent-fold');
+    const NOW = Date.UTC(2026, 0, 10, 12);
+    const touch = (rel) => {
+        const full = write(rel, 'x', recentRoot);
+        const t = new Date(NOW - 0.1 * 3600 * 1000);
+        fs.utimesSync(full, t, t);
+    };
+    touch('kept.yaml');
+    touch(`home-assistant_v2.db-${LONG_S}hm`);
+    touch(`zigbee.${LONG_S}qlite`);
+    touch(`backup${LONG_S}/x.tar`);
+    touch(`esphome/.pioenv${LONG_S}/x`);
+    touch(`certs/server.${KELVIN}ey`);
+    touch(`.${LONG_S}torage/core.config_entries`);
+    const recentApi = createFilesApi({ root: recentRoot, now: () => NOW });
+    assert.deepStrictEqual((await recentApi.recent(1)).entries.map((e) => e.relative), ['kept.yaml']);
+});
+
 // --- confinement ---
 
 test('lists the root by default', async () => {
