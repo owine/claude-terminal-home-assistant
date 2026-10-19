@@ -92,10 +92,13 @@ function createLoginNotifier({
     log = console,
     pollMs = POLL_MS,
 } = {}) {
-    // Every URL already posted. Never cleared: after the access token expires
-    // the used link may still be on screen, and posting it again would send
-    // the user to a login whose code nobody is waiting for. A new login always
-    // prints a new URL (fresh state/PKCE challenge), so it is still posted.
+    // URLs already posted. One whose login completed is kept for good: after
+    // the access token expires the used link may still be on screen, and
+    // posting it again would send the user to a login whose code nobody is
+    // waiting for. A new login always prints a new URL (fresh state/PKCE
+    // challenge), so it is still posted. One dismissed because it left the
+    // capture is forgotten (see dismissShown), since the login may still be
+    // waiting - the capture only sees the session's active window.
     const posted = new Set();
     let shownUrl = null;  // URL of the notification currently up, if any
     let missing = 0;      // consecutive captures without shownUrl on screen
@@ -139,12 +142,28 @@ function createLoginNotifier({
         return callService('dismiss', { notification_id: NOTIFICATION_ID });
     }
 
-    async function dismissShown(reason) {
+    async function dismissShown(reason, { forget = false } = {}) {
+        const url = shownUrl;
         if (await dismiss()) {
+            if (forget) posted.delete(url);
             shownUrl = null;
             missing = 0;
             log.log(`Login notifier: ${reason}, notification dismissed`);
         }
+    }
+
+    // A capture that lands mid-resize rebuilds the URL from rows at the wrong
+    // width and stops short: a strict prefix of the real URL that still
+    // passes isAuthUrl. It is the same login screen, seen badly - never a
+    // link to post over the good one.
+    function isTruncationOf(url, full) {
+        return full.length > url.length && full.startsWith(url);
+    }
+
+    function alreadyPosted(url) {
+        if (posted.has(url)) return true;
+        for (const p of posted) if (isTruncationOf(url, p)) return true;
+        return false;
     }
 
     async function tick() {
@@ -161,7 +180,7 @@ function createLoginNotifier({
                 return; // no tmux session yet, or tmux busy - try next tick
             }
 
-            if (url && !posted.has(url)) {
+            if (url && !alreadyPosted(url)) {
                 if (await callService('create', notificationBody(url))) {
                     posted.add(url);
                     shownUrl = url;
@@ -177,10 +196,16 @@ function createLoginNotifier({
             // exiting) writes nothing. Both take the login screen away, so a
             // link that has left the pane for two polls in a row is done
             // with. Two, so one odd capture mid-redraw does not count; a
-            // failed capture returned above and does not count either.
+            // failed capture returned above and does not count either, and
+            // a truncated one still shows the login screen.
+            //
+            // Gone from the capture is not proof the login is over, though:
+            // the user may only have switched tmux windows. So the link is
+            // forgotten as well, and posted again if it comes back.
             if (shownUrl) {
-                missing = url === shownUrl ? 0 : missing + 1;
-                if (missing >= 2) await dismissShown('login screen gone');
+                const onScreen = url === shownUrl || (url && isTruncationOf(url, shownUrl));
+                missing = onScreen ? 0 : missing + 1;
+                if (missing >= 2) await dismissShown('login screen gone', { forget: true });
             }
         } catch (err) {
             log.log(`Login notifier: ${err.message}`);

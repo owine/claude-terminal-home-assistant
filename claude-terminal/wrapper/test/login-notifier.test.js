@@ -214,10 +214,87 @@ test('aborted login (claude exited to a shell): dismissed after two polls', asyn
     await n.tick();
     await n.tick();
     assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
-    // The used link is not eligible again even if it reappears on screen
+});
+
+// The capture sees the active window of the session only. Switching to
+// another tmux window for a few seconds takes the URL off the capture while
+// the login still waits for its code. It was dismissed for good: a URL once
+// posted was never posted again.
+test('a login screen that leaves the capture and comes back is posted again', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = 'root@ha:/config# '; // another window
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+    w.loginScreen(URL_A);
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss', 'create']);
+    assert.ok(w.calls[2].body.message.includes(URL_A));
+});
+
+test('a link dismissed because the login completed is still never re-posted', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.loggedIn();
+    await n.tick();
+    w.screen = '';
+    await n.tick();
+    w.loggedIn(NOW - 1);
     w.loginScreen(URL_A);
     await n.tick();
     assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
+// --- truncated captures ---
+//
+// capture-pane and the pane-width query are two tmux calls. One that lands
+// mid-resize rebuilds the URL from rows at the wrong width and stops short:
+// a prefix of the real URL that still looks like an auth URL. Posted, it
+// replaced the good link with a broken one, and the good one - already
+// posted - was never put back.
+
+const TRUNCATED_A = URL_A.slice(0, 50);
+
+test('a truncated capture of the posted URL does not replace it', async () => {
+    assert.ok(require('../public/login-link.js').isAuthUrl(TRUNCATED_A), 'fixture still looks like an auth URL');
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.loginScreen(TRUNCATED_A);
+    await n.tick();
+    w.loginScreen(URL_A);
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+});
+
+test('a truncated capture still counts as the login screen being up', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.loginScreen(TRUNCATED_A);
+    for (let i = 0; i < 4; i++) await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+});
+
+test('a truncated URL seen first is replaced by the full one', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(TRUNCATED_A);
+    await n.tick();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.loginScreen(TRUNCATED_A);
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'create']);
+    assert.ok(w.calls[1].body.message.includes(`\`${URL_A}\``));
 });
 
 test('a single blank capture between good ones does not dismiss', async () => {
