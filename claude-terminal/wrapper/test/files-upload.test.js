@@ -432,10 +432,11 @@ const q = (params) => new URLSearchParams(params).toString();
 const post = (url, params, body = '') => fetch(`${url}/upload?${q(params)}`, { method: 'POST', body });
 
 // Sends the headers and `first` bytes of a body, and returns the socket.
-function rawUpload(url, params, { length, first = '', headers = '' } = {}) {
+// allowHalfOpen: a client that goes on sending after the server's FIN.
+function rawUpload(url, params, { length, first = '', headers = '', allowHalfOpen = false } = {}) {
     const { port } = new URL(url);
     return new Promise((resolve) => {
-        const sock = net.connect(Number(port), '127.0.0.1', () => {
+        const sock = net.connect({ port: Number(port), host: '127.0.0.1', allowHalfOpen }, () => {
             const size = length === undefined ? '' : `Content-Length: ${length}\r\n`;
             sock.write(`POST /api/files/upload?${q(params)} HTTP/1.1\r\nHost: x\r\n${size}${headers}\r\n${first}`);
             resolve(sock);
@@ -650,8 +651,13 @@ test('upload: a cross-site or same-site request is refused before anything else,
 // connection had Node read and discard the whole body, 50 MiB of it, before
 // anything else could use it. Each now closes it once the answer is out, as
 // the route's own early refusals do. Counted at the server's socket.
-test('upload: a refusal before the body is read closes the connection rather than reading the rest', async () => {
-    const total = 50 * 1024 * 1024;
+//
+// Two ways to send: the answer read before the body goes, and the body
+// streamed straight after the headers, as a browser sends it. Closed at
+// once, the second lost its answer about half the time on macOS: the server
+// hung up with the client's bytes unread, and the reset that sends threw
+// away the 403 the client had not read yet. The guards linger first.
+async function refusedUploads(fn) {
     const app = express();
     app.use(createOriginGuard({ log: () => {} }));
     app.use('/api/files', createUploadRouter({
@@ -664,42 +670,77 @@ test('upload: a refusal before the body is read closes the connection rather tha
     await once(server, 'listening');
     const read = [];
     server.on('connection', (s) => s.on('close', () => read.push(s.bytesRead)));
-    const url = `http://127.0.0.1:${server.address().port}/api/files`;
     try {
-        for (const [what, headers, status] of [
-            ['origin', 'Origin: http://evil.example\r\n', 403],
-            ['cross-site', 'Sec-Fetch-Site: cross-site\r\n', 403],
-            ['rate limit', '', 429],
-        ]) {
-            read.length = 0;
-            const sock = await rawUpload(url, { name: 'big.bin', dest: 'blueprints' }, { length: total, headers });
-            let text = '';
-            sock.on('data', (d) => { text += d; });
-            const closed = new Promise((resolve) => sock.on('close', resolve));
-            // The answer first: a hang-up while the client is still sending
-            // can reset the socket before the client has read it.
-            assert.ok(await until(() => text.includes('\r\n\r\n')), `the ${what} answer`);
-            // Then keep sending, as a browser would, until the server hangs up.
-            const chunk = Buffer.alloc(64 * 1024);
-            let sent = 0;
-            const pump = () => {
-                while (sent < total && !sock.destroyed) {
-                    sent += chunk.length;
-                    if (!sock.write(chunk)) return sock.once('drain', pump);
-                }
-            };
-            pump();
-            await within(closed, `the ${what} socket closed`, 20000);
-            assert.ok(await until(() => read.length === 1), `the server's ${what} socket closed`);
-            assert.ok(read[0] < total / 2, `${what}: the server read ${read[0]} of ${total} bytes`);
-            assert.match(text, new RegExp(`^HTTP/1\\.1 ${status} `), what);
-            assert.match(text, /Connection: close/i, what);
-        }
+        await fn(`http://127.0.0.1:${server.address().port}/api/files`, read);
     } finally {
         server.closeAllConnections();
         await new Promise((r) => server.close(r));
     }
     assert.deepStrictEqual(partsUnder(), []);
+}
+const REFUSALS = [
+    ['origin', 'Origin: http://evil.example\r\n', 403],
+    ['cross-site', 'Sec-Fetch-Site: cross-site\r\n', 403],
+    ['rate limit', '', 429],
+];
+const REFUSED_BODY = 50 * 1024 * 1024;
+
+// Sends the refused upload's body, as a client that keeps sending until the
+// server hangs up; returns what the client read and once the socket closed.
+async function sendRefused(url, headers, { answerFirst, allowHalfOpen = false }) {
+    const sock = await rawUpload(url, { name: 'big.bin', dest: 'blueprints' }, { length: REFUSED_BODY, headers, allowHalfOpen });
+    let text = '';
+    sock.on('data', (d) => { text += d; });
+    const closed = new Promise((resolve) => sock.on('close', resolve));
+    if (answerFirst) assert.ok(await until(() => text.includes('\r\n\r\n')), 'the answer');
+    const chunk = Buffer.alloc(64 * 1024);
+    let sent = 0;
+    const pump = () => {
+        while (sent < REFUSED_BODY && !sock.destroyed) {
+            sent += chunk.length;
+            if (!sock.write(chunk)) return sock.once('drain', pump);
+        }
+    };
+    pump();
+    await within(closed, 'the refused socket closed', 20000);
+    return text;
+}
+
+test('upload: a refusal before the body is read closes the connection rather than reading the rest', async () => {
+    await refusedUploads(async (url, read) => {
+        for (const [what, headers, status] of REFUSALS) {
+            read.length = 0;
+            const text = await sendRefused(url, headers, { answerFirst: true });
+            assert.ok(await until(() => read.length === 1), `the server's ${what} socket closed`);
+            assert.ok(read[0] < REFUSED_BODY / 2, `${what}: the server read ${read[0]} of ${REFUSED_BODY} bytes`);
+            assert.match(text, new RegExp(`^HTTP/1\\.1 ${status} `), what);
+            assert.match(text, /Connection: close/i, what);
+        }
+    });
+});
+
+test('upload: a refusal reaches a client streaming its body straight after the headers', async () => {
+    // Each refused socket lingers 2 s (LINGER_MS) before it goes, so the
+    // tries are few: the lost answer was a race, lost about half the time,
+    // so the origin refusal three times and the others once.
+    await refusedUploads(async (url, read) => {
+        for (const [what, headers, status] of REFUSALS) {
+            for (let i = 0; i < (what === 'origin' ? 3 : 1); i++) {
+                read.length = 0;
+                const text = await sendRefused(url, headers, { answerFirst: false });
+                assert.match(text, new RegExp(`^HTTP/1\\.1 ${status} `), `${what}, try ${i + 1}: ${JSON.stringify(text)}`);
+                assert.ok(await until(() => read.length === 1), `the server's ${what} socket closed`);
+                assert.ok(read[0] < REFUSED_BODY / 2, `${what}: the server read ${read[0]} of ${REFUSED_BODY} bytes`);
+            }
+        }
+        // A client that goes on sending after the server's FIN: the linger
+        // leaves its bytes unread rather than reading them all for 2 s.
+        read.length = 0;
+        const text = await sendRefused(url, REFUSALS[0][1], { answerFirst: false, allowHalfOpen: true });
+        assert.match(text, /^HTTP\/1\.1 403 /, JSON.stringify(text));
+        assert.ok(await until(() => read.length === 1), 'the server\'s socket closed');
+        assert.ok(read[0] < REFUSED_BODY / 2, `the server read ${read[0]} of ${REFUSED_BODY} bytes`);
+    });
 });
 
 test('upload: its own limiter for uploads; check=1 counts against the other one', async () => {

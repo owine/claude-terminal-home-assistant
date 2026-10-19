@@ -10,12 +10,11 @@
 
 /**
  * Answer a refusal. A request that declares a body (a Content-Length over 0,
- * or any Transfer-Encoding) and is refused before anything reads it also gets
- * `Connection: close`: kept alive, the connection would have Node read and
- * discard the whole body, 50 MiB of a refused upload, before the socket could
- * carry another request. Closed, the socket goes once the answer is out, as
- * with files-upload.js's own early refusals. A request with no body keeps its
- * connection.
+ * or any Transfer-Encoding) and is refused before anything reads it is
+ * answered with `Connection: close` (closeAfterAnswer): kept alive, the
+ * connection would have Node read and discard the whole body, 50 MiB of a
+ * refused upload, before the socket could carry another request. A request
+ * with no body keeps its connection.
  */
 function declaresBody(req) {
     const length = req.get('content-length');
@@ -23,8 +22,45 @@ function declaresBody(req) {
 }
 
 function refuse(req, res, status, body) {
-    if (declaresBody(req)) res.set('Connection', 'close');
+    if (declaresBody(req)) closeAfterAnswer(req, res);
     return res.status(status).json(body);
+}
+
+/**
+ * Close a connection once its answer is out, without reading the body still
+ * on its way - and without losing the answer. Closed at once, with the
+ * client's bytes unread, the socket sends a reset, and a client still sending
+ * its body (a browser does, straight after the headers) can lose the answer
+ * it has not read yet: the reset throws it away. So the socket lingers
+ * first: the answer and a FIN go out, the body is left unread, and only
+ * LINGER_MS later is the socket destroyed, by when the client has read its
+ * answer and, if it is well behaved, stopped sending.
+ *
+ * Unread, not discarded: `req.read(0)` marks the request as one its handler
+ * reads, so Node does not dump the body once the answer is out, and the
+ * request's buffer, once full, stops reading from the socket. The linger
+ * replaces the socket's destroySoon, which Node calls once the answer of a
+ * `Connection: close` response is out; a Node that stopped calling it would
+ * close at once, as before. Never throws.
+ */
+const LINGER_MS = 2000;
+
+function closeAfterAnswer(req, res) {
+    res.set('Connection', 'close');
+    try {
+        if (typeof req.read === 'function') req.read(0);
+        const socket = req.socket;
+        if (socket && typeof socket.destroySoon === 'function') {
+            socket.destroySoon = function lingerThenDestroy() {
+                if (this.writable) this.end();
+                const timer = setTimeout(() => this.destroy(), LINGER_MS);
+                timer.unref();
+                this.once('close', () => clearTimeout(timer));
+            };
+        }
+    } catch {
+        // Closing at once is what is left: the answer still goes.
+    }
 }
 
 /**
