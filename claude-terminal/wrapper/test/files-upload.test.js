@@ -29,6 +29,7 @@ const {
     uploadMaxBytes,
     uploadRequestTimeoutMs,
 } = require('../files-upload.js');
+const { makeBadName, needsBadNames } = require('./bad-name.js');
 
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'files-upload-')));
 const root = path.join(base, 'config');
@@ -105,6 +106,49 @@ test('a long name is cut to 200 bytes, keeping its extension and whole character
     assert.strictEqual(sanitizeUploadName('a'.repeat(300)).length, 200);
     // an "extension" too long to be one is cut like the rest
     assert.strictEqual(Buffer.byteLength(sanitizeUploadName('a.' + 'b'.repeat(300))), 200);
+});
+
+// e-acute precomposed (NFC: Linux tools, typing) and as e + a combining acute
+// (NFD: some macOS paths) are one name to a reader, two to the file system.
+const CAFE_NFC = 'caf\u00e9';
+const CAFE_NFD = 'cafe\u0301';
+
+test('a name is stored in NFC, normalised after the cleaning', () => {
+    assert.strictEqual(sanitizeUploadName(`${CAFE_NFD}.txt`), `${CAFE_NFC}.txt`);
+    assert.strictEqual(sanitizeUploadName(`${CAFE_NFC}.txt`), `${CAFE_NFC}.txt`);
+    assert.strictEqual(sanitizeUploadName(`a/b/${CAFE_NFD}.txt`), `${CAFE_NFC}.txt`);
+    // a mark taken out joins e and its accent: normalised after, not before
+    assert.strictEqual(sanitizeUploadName('cafe\u200e\u0301.txt'), `${CAFE_NFC}.txt`);
+    // Hangul jamo compose; the Kelvin sign is the letter K
+    assert.strictEqual(sanitizeUploadName('\u1100\u1161.txt'), '\uac00.txt');
+    assert.strictEqual(sanitizeUploadName('\u212a.txt'), 'K.txt');
+});
+
+test('the 200-byte cut measures the name in NFC, whichever way NFC moves its length', () => {
+    // e + U+0301 is 3 bytes, U+00E9 2: 202 bytes as sent, 136 in NFC, so not cut
+    const shorter = sanitizeUploadName('e\u0301'.repeat(66) + '.txt');
+    assert.strictEqual(shorter, '\u00e9'.repeat(66) + '.txt');
+    // U+0958 is 3 bytes, and NFC decomposes it to 6 (a composition
+    // exclusion): 184 bytes as sent, 364 in NFC, so cut to 200
+    const longer = sanitizeUploadName('\u0958'.repeat(60) + '.txt');
+    assert.ok(Buffer.byteLength(longer) <= 200, String(Buffer.byteLength(longer)));
+    assert.ok(Buffer.byteLength(longer) > 190, String(Buffer.byteLength(longer)));
+    assert.ok(longer.endsWith('.txt'), longer.slice(-6));
+    assert.strictEqual(longer, longer.normalize('NFC'));
+});
+
+test('NFC brings back nothing the cleaning took out, for any character', () => {
+    // eslint-disable-next-line no-control-regex
+    const unwanted = /[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff\\/]/;
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+        if (cp >= 0xd800 && cp <= 0xdfff) continue;
+        const ch = String.fromCodePoint(cp);
+        const inner = sanitizeUploadName(`a${ch}b.txt`);
+        const first = sanitizeUploadName(`${ch}x`);
+        const hex = `U+${cp.toString(16)}`;
+        if (inner !== inner.normalize('NFC') || unwanted.test(inner)) assert.fail(`${hex}: ${JSON.stringify(inner)}`);
+        if (first !== first.normalize('NFC') || /^[.\s]|\s$/.test(first)) assert.fail(`${hex}: ${JSON.stringify(first)}`);
+    }
 });
 
 test('secret-shaped names are allowed: certificates belong in /config', () => {
@@ -813,6 +857,283 @@ test('upload: an upload limiter without peek is refused when the router is made'
         uploads, uploadLimiter: (req, res, next) => next(), checkLimiter: createRateLimiter({ max: 1 }),
     }), /peek/);
 });
+
+// --- look-alike names (canonically equivalent) ---
+//
+// Uploads are named in NFC, but a folder can already hold a name in another
+// form (an NFD name copied in over Samba from a Mac, say). Such a name is
+// taken as far as an upload is concerned. macOS file systems treat the forms
+// of a name as one name, so a test that puts more than one form on disk
+// skips there: Linux, where the add-on runs, keeps them apart.
+
+function formsKeptApart(dir) {
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, CAFE_NFC), 'nfc');
+        fs.writeFileSync(path.join(dir, CAFE_NFD), 'nfd');
+        return fs.readdirSync(dir).length === 2;
+    } catch {
+        return false;
+    }
+}
+const nfdNames = {
+    skip: !formsKeptApart(path.join(base, 'nfd-probe')) && 'the file system treats the NFC and NFD forms of a name as one',
+};
+const badNames = needsBadNames(path.join(base, 'bad-name-probe'));
+
+// The folder `rel` under the root, made empty with `files` in it.
+function lookFolder(rel, files = {}) {
+    const dir = path.join(root, rel);
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), content);
+    return dir;
+}
+const sorted = (dir) => fs.readdirSync(dir).sort();
+
+test('look-alike: a name sent in NFD next to the same name in NFC is the collision, not a second file', async () => {
+    const dir = lookFolder('look-sent', { [`${CAFE_NFC}.txt`]: 'old' });
+    try {
+        await withServer({}, async (url) => {
+            const taken = { reason: 'exists', replaceable: true, error: `${CAFE_NFC}.txt already exists in ${dir}.` };
+            let res = await post(url, { name: `${CAFE_NFD}.txt`, dest: 'look-sent', check: '1', size: '3' });
+            assert.strictEqual(res.status, 409);
+            assert.deepStrictEqual(await res.json(), taken);
+            res = await post(url, { name: `${CAFE_NFD}.txt`, dest: 'look-sent' }, 'new');
+            assert.strictEqual(res.status, 409);
+            assert.deepStrictEqual(await res.json(), taken);
+            res = await post(url, { name: `${CAFE_NFD}.txt`, dest: 'look-sent', onConflict: 'keep-both' }, 'new');
+            assert.strictEqual((await res.json()).name, `${CAFE_NFC} (1).txt`);
+        });
+        assert.deepStrictEqual(sorted(dir), [`${CAFE_NFC} (1).txt`, `${CAFE_NFC}.txt`]);
+        assert.strictEqual(fs.readFileSync(path.join(dir, `${CAFE_NFC}.txt`), 'utf8'), 'old');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('look-alike: an NFD name in the folder is a 409 that names it, from check=1 and the upload alike',
+    nfdNames, async () => {
+        const dir = lookFolder('look-there', { [`${CAFE_NFD}.txt`]: 'from samba' });
+        fs.mkdirSync(path.join(dir, CAFE_NFD));
+        try {
+            await withServer({}, async (url) => {
+                const taken = { reason: 'exists', replaceable: true, error: `${CAFE_NFD}.txt already exists in ${dir}.` };
+                for (const name of [`${CAFE_NFC}.txt`, `${CAFE_NFD}.txt`]) {
+                    let res = await post(url, { name, dest: 'look-there', check: '1', size: '3' });
+                    assert.strictEqual(res.status, 409, `check=1 ${JSON.stringify(name)}`);
+                    assert.deepStrictEqual(await res.json(), taken);
+                    res = await post(url, { name, dest: 'look-there' }, 'new');
+                    assert.strictEqual(res.status, 409, JSON.stringify(name));
+                    assert.deepStrictEqual(await res.json(), taken);
+                }
+                // a look-alike folder: taken, and never replaced
+                const folder = {
+                    reason: 'exists',
+                    replaceable: false,
+                    error: `${CAFE_NFD} already exists in ${dir} and is not a regular file, so it cannot be replaced.`,
+                };
+                for (const params of [{ check: '1', size: '3' }, {}, { onConflict: 'replace' }]) {
+                    const res = await post(url, { name: CAFE_NFC, dest: 'look-there', ...params }, 'new');
+                    assert.strictEqual(res.status, 409, JSON.stringify(params));
+                    assert.deepStrictEqual(await res.json(), folder);
+                }
+            });
+            assert.deepStrictEqual(sorted(dir), [CAFE_NFD, `${CAFE_NFD}.txt`]);
+            assert.strictEqual(fs.readFileSync(path.join(dir, `${CAFE_NFD}.txt`), 'utf8'), 'from samba');
+            assert.deepStrictEqual(partsUnder(), []);
+            assert.deepStrictEqual(recorded(), []);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+test('look-alike: Replace overwrites the entry that is there, under its own name', nfdNames, async () => {
+    const dir = lookFolder('look-replace', { [`${CAFE_NFD}.txt`]: 'old' });
+    fs.chmodSync(path.join(dir, `${CAFE_NFD}.txt`), 0o600);
+    try {
+        await withServer({}, async (url) => {
+            let res = await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-replace', onConflict: 'replace', check: '1', size: '3' });
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual((await res.json()).exists, true);
+            res = await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-replace', onConflict: 'replace' }, 'new');
+            assert.strictEqual(res.status, 200);
+            const body = await res.json();
+            assert.strictEqual(body.name, `${CAFE_NFD}.txt`);
+            assert.strictEqual(body.path, path.join(dir, `${CAFE_NFD}.txt`));
+            assert.strictEqual(body.replaced, true);
+        });
+        assert.deepStrictEqual(sorted(dir), [`${CAFE_NFD}.txt`]);
+        assert.strictEqual(fs.readFileSync(path.join(dir, `${CAFE_NFD}.txt`), 'utf8'), 'new');
+        assert.strictEqual(fs.statSync(path.join(dir, `${CAFE_NFD}.txt`)).mode & 0o777, 0o600);
+        assert.deepStrictEqual(partsUnder(), []);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('look-alike: a Replace whose check fails after its rename names the look-alike it overwrote', nfdNames, async () => {
+    const dir = lookFolder('look-replaced');
+    const old = `${CAFE_NFD}.txt`;
+    // another file put at the part's name just before the rename (the check
+    // after it finds the wrong file), or that check failing outright
+    const swapping = createUploads({
+        api, record,
+        fsOps: { rename: async (a, b) => { fs.unlinkSync(a); fs.writeFileSync(a, 'not the upload'); return fs.promises.rename(a, b); } },
+    });
+    let placed = null;
+    const failingAfter = createUploads({
+        api, record,
+        fsOps: {
+            rename: async (a, b) => { await fs.promises.rename(a, b); placed = b; },
+            lstat: async (p, opts) => {
+                if (p === placed) { placed = null; throw Object.assign(new Error('EIO: lstat failed'), { code: 'EIO' }); }
+                return fs.promises.lstat(p, opts);
+            },
+        },
+    });
+    try {
+        for (const racing of [swapping, failingAfter]) {
+            fs.writeFileSync(path.join(dir, old), 'old');
+            await withServer({ uploads: racing }, async (url) => {
+                const res = await post(url, { dest: 'look-replaced', name: `${CAFE_NFC}.txt`, onConflict: 'replace' }, 'content');
+                assert.strictEqual(res.status, 409);
+                const body = await res.json();
+                assert.strictEqual(body.replaced, true);
+                assert.ok(body.error.startsWith(`${old} in ${dir} was overwritten`), body.error);
+                assert.ok(body.error.endsWith(`The previous ${old} is gone.`), body.error);
+            });
+            assert.deepStrictEqual(sorted(dir), [old]);
+        }
+        assert.deepStrictEqual(recorded(), []);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('look-alike: Keep both and the inbox number past look-alikes too', nfdNames, async () => {
+    const files = { [`${CAFE_NFD}.txt`]: 'one', [`${CAFE_NFD} (1).txt`]: 'two' };
+    const dir = lookFolder('look-both', files);
+    const inbox = lookFolder('uploads', files);
+    try {
+        await withServer({}, async (url) => {
+            let res = await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-both', onConflict: 'keep-both' }, 'three');
+            assert.strictEqual((await res.json()).name, `${CAFE_NFC} (2).txt`);
+            res = await post(url, { name: `${CAFE_NFC}.txt`, check: '1', size: '5' });
+            assert.strictEqual((await res.json()).exists, true);
+            res = await post(url, { name: `${CAFE_NFC}.txt` }, 'three');
+            assert.strictEqual((await res.json()).name, `${CAFE_NFC} (2).txt`);
+        });
+        for (const at of [dir, inbox]) {
+            assert.deepStrictEqual(sorted(at), [`${CAFE_NFD} (1).txt`, `${CAFE_NFD}.txt`, `${CAFE_NFC} (2).txt`].sort());
+            assert.strictEqual(fs.readFileSync(path.join(at, `${CAFE_NFD}.txt`), 'utf8'), 'one');
+        }
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(inbox, { recursive: true, force: true });
+    }
+});
+
+test('look-alike: one that appears while the body comes in is caught when the file is put in place',
+    nfdNames, async () => {
+        const dir = lookFolder('look-race');
+        const racing = createUploads({
+            api, record,
+            beforeCommit: async (part, planned) => fs.writeFileSync(path.join(planned.dir, planned.name.normalize('NFD')), 'got there first'),
+        });
+        const both = createUploads({
+            api, record,
+            beforeCommit: async (part, planned) => {
+                fs.writeFileSync(path.join(planned.dir, planned.name.normalize('NFD')), 'nfd');
+                fs.writeFileSync(path.join(planned.dir, planned.name), 'nfc');
+            },
+        });
+        try {
+            await withServer({ uploads: racing }, async (url) => {
+                let res = await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-race' }, 'mine');
+                assert.strictEqual(res.status, 409);
+                assert.deepStrictEqual(await res.json(), {
+                    reason: 'exists', replaceable: true, error: `${CAFE_NFD}.txt already exists in ${dir}.`,
+                });
+                assert.deepStrictEqual(sorted(dir), [`${CAFE_NFD}.txt`]);
+                // with the name itself there too, the 409 names that, as plan() would
+                await withServer({ uploads: both }, async (url2) => {
+                    const again = await post(url2, { name: `${CAFE_NFC}.ini`, dest: 'look-race' }, 'mine');
+                    assert.strictEqual(again.status, 409);
+                    assert.strictEqual((await again.json()).error, `${CAFE_NFC}.ini already exists in ${dir}.`);
+                });
+                // Keep both and the inbox number past it
+                res = await post(url, { name: `${CAFE_NFC}.md`, dest: 'look-race', onConflict: 'keep-both' }, 'mine');
+                assert.strictEqual((await res.json()).name, `${CAFE_NFC} (1).md`);
+                res = await post(url, { name: `${CAFE_NFC}.txt` }, 'mine');
+                assert.strictEqual((await res.json()).name, `${CAFE_NFC} (1).txt`);
+                // Replace overwrites it, under its own name
+                res = await post(url, { name: `${CAFE_NFC}.cfg`, dest: 'look-race', onConflict: 'replace' }, 'mine');
+                const body = await res.json();
+                assert.strictEqual(body.name, `${CAFE_NFD}.cfg`);
+                assert.strictEqual(body.replaced, true);
+            });
+            assert.strictEqual(fs.readFileSync(path.join(dir, `${CAFE_NFD}.txt`), 'utf8'), 'got there first');
+            assert.strictEqual(fs.readFileSync(path.join(dir, `${CAFE_NFD}.cfg`), 'utf8'), 'mine');
+            assert.strictEqual(fs.readFileSync(path.join(dir, `${CAFE_NFC}.ini`), 'utf8'), 'nfc');
+            assert.strictEqual(fs.existsSync(path.join(dir, `${CAFE_NFC}.cfg`)), false);
+            assert.deepStrictEqual(partsUnder(), []);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+            fs.rmSync(path.join(root, 'uploads'), { recursive: true, force: true });
+        }
+    });
+
+test('look-alike: a folder over the scan bound is checked for the exact name only, at the bound and not before',
+    nfdNames, async () => {
+        const bounded = createUploads({ api, record, lookAlikeScanLimit: 3 });
+        const dir = lookFolder('look-big', { [`${CAFE_NFD}.txt`]: 'nfd', 'a.txt': 'a', 'b.txt': 'b' });
+        try {
+            await withServer({ uploads: bounded }, async (url) => {
+                // three names, the bound: all read, the look-alike found
+                let res = await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-big', check: '1', size: '3' });
+                assert.strictEqual(res.status, 409);
+                res = await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-big' }, 'new');
+                assert.strictEqual(res.status, 409);
+                await res.arrayBuffer();
+                // the upload's own part, a fourth name by then, is not counted
+                res = await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-big', onConflict: 'keep-both' }, 'kept');
+                assert.strictEqual((await res.json()).name, `${CAFE_NFC} (1).txt`);
+                // four: not read at all, so only the exact name counts
+                res = await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-big', check: '1', size: '3' });
+                assert.strictEqual(res.status, 200);
+                res = await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-big' }, 'new');
+                assert.strictEqual(res.status, 200);
+                assert.strictEqual((await res.json()).name, `${CAFE_NFC}.txt`);
+            });
+            assert.deepStrictEqual(sorted(dir), ['a.txt', 'b.txt', `${CAFE_NFD}.txt`, `${CAFE_NFC} (1).txt`, `${CAFE_NFC}.txt`].sort());
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+test('look-alike: a name that is not UTF-8 is like no name, and the scan goes on past it',
+    { skip: nfdNames.skip || badNames.skip }, async () => {
+        const dir = lookFolder('look-bytes');
+        // cafe + U+0301, then the byte 0xff: decoded with U+FFFD for that
+        // byte, it would be a look-alike of `caf<U+00E9><U+FFFD>.txt`, a
+        // name the file system does not hold
+        assert.ok(makeBadName(dir, Buffer.concat([Buffer.from(CAFE_NFD), Buffer.from([0xff]), Buffer.from('.txt')])));
+        fs.writeFileSync(path.join(dir, `${CAFE_NFD}.md`), 'nfd');
+        try {
+            await withServer({}, async (url) => {
+                let res = await post(url, { name: `${CAFE_NFC}\ufffd.txt`, dest: 'look-bytes' }, 'new');
+                assert.strictEqual(res.status, 200);
+                assert.strictEqual((await res.json()).name, `${CAFE_NFC}\ufffd.txt`);
+                res = await post(url, { name: `${CAFE_NFC}.md`, dest: 'look-bytes' }, 'new');
+                assert.strictEqual(res.status, 409);
+                assert.strictEqual((await res.json()).error, `${CAFE_NFD}.md already exists in ${dir}.`);
+            });
+            assert.strictEqual(fs.readdirSync(dir).length, 3);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
 
 // --- check=1 ---
 

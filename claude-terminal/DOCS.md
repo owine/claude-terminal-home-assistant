@@ -626,7 +626,13 @@ change it; at most 1024 MB); a bigger one is refused before any of it is
 sent, and the message names the limit. Names are cleaned: folders in the
 name, control characters, invisible text-direction marks (which can make a
 name read backwards) and leading dots are taken out (`.env` arrives as
-`env`), and a very long name is shortened. New files can be read by everyone
+`env`), and a very long name is shortened. Names are stored in Unicode's
+composed form (NFC), so an accented letter typed on one device and the same
+letter in a name from a Mac are one name. A file already in the folder whose
+name only looks the same (the same letters stored another way, copied in over
+Samba, say) counts as taken: the question names that file, and Replace
+overwrites it under its own name (in a folder of over 10,000 entries, only the
+exact name is checked). New files can be read by everyone
 and run by no one (`0644`). Certificates and keys can be uploaded like any
 other file. `secrets.yaml` is an ordinary name; replacing one goes through the
 same question. An upload has 30 minutes to arrive, or longer if you raise
