@@ -149,9 +149,11 @@ const sizeText = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
 /**
  * Uploads over a files-api instance (for locate() and its root). `record` is
  * upload-parts.js's createPartRecord. The rest are test seams: `fsOps` the
- * link and rename that put a finished part in place, `openPart` its open,
- * `partName` its name, `onPlanned` a hook between the checks and the first
- * byte, and `beforeCommit` one between the last byte and the rename.
+ * link and rename that put a finished part in place, `openPart` its open
+ * (a FileHandle, or anything with its stat, chmod, write, datasync, truncate
+ * and close), `partName` its name, `onPlanned` a hook between the checks and
+ * the part's open, and `beforeCommit` one between the last byte and the
+ * rename.
  */
 function createUploads({
     api,
@@ -160,6 +162,8 @@ function createUploads({
     idleMs = IDLE_MS,
     now = Date.now,
     partName = () => `.ctp-upload-${crypto.randomBytes(8).toString('hex')}.part`,
+    // O_EXCL: never a file that was there, and (with O_CREAT) never through
+    // a link at the part's name. O_NOFOLLOW says the latter again.
     openPart = (p) => fsp.open(p, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
         | (fs.constants.O_NOFOLLOW || 0), 0o644),
     fsOps = { link: fsp.link, rename: fsp.rename },
@@ -174,6 +178,9 @@ function createUploads({
     const notPlainFolder = (display) => new FilesError(409,
         `${display} is not a plain folder (it is a symlink or a file), so nothing is uploaded into it.`,
         { reason: 'not-plain-folder' });
+    const partChanged = (display) => new FilesError(409,
+        `The upload's temporary file in ${display} was moved or replaced during the upload, so nothing was saved.`,
+        { reason: 'changed' });
     const exists = (name, display, st) => (st && !st.isFile()
         ? new FilesError(409, `${name} already exists in ${display} and is not a regular file, so it cannot be replaced.`,
             { reason: 'exists', replaceable: false })
@@ -310,7 +317,24 @@ function createUploads({
         if (await fsp.realpath(planned.dir) !== planned.dir) throw notPlainFolder(planned.display);
     }
 
-    async function commit(part, planned) {
+    // Whether `part` still names the file this upload created (`id`: its
+    // device and inode, from the open descriptor). Everything done to the
+    // part by its path - the link or rename that puts it in place, the
+    // unlink after - asks this first. O_NOFOLLOW guards only the last
+    // component of a path: a folder swapped for a link just before the open
+    // puts the part outside the folder that was checked, and a part swapped
+    // for a link later would make the path act on the link's target.
+    async function samePart(part, id) {
+        const st = await lstatOrNull(part);
+        return Boolean(st && st.dev === id.dev && st.ino === id.ino);
+    }
+    async function mustBeOurs(part, id, planned) {
+        if (!(await samePart(part, id))) throw partChanged(planned.display);
+    }
+
+    // `handle` is the part's open descriptor, still open: Replace sets the
+    // mode through it, never through the path.
+    async function commit(part, planned, handle, id) {
         await recheck(planned);
         const target = path.join(planned.dir, planned.name);
         if (planned.onConflict === 'replace') {
@@ -319,10 +343,12 @@ function createUploads({
             // The old file's permissions: a 0600 key stays private, an
             // executable script stays executable. Never setuid, setgid or
             // sticky: an upload must not inherit those.
-            if (old) await fsp.chmod(part, old.mode & 0o777);
+            if (old) await handle.chmod(old.mode & 0o777);
+            await mustBeOurs(part, id, planned);
             await fsOps.rename(part, target);   // swaps the whole file in at once
             return { path: target, name: planned.name, replaced: Boolean(old) };
         }
+        await mustBeOurs(part, id, planned);
         const suffix = planned.inbox || planned.onConflict === 'keep-both';
         for (let n = 0; n <= (suffix ? MAX_SUFFIX : 0); n++) {
             const name = n === 0 ? planned.name : withSuffix(planned.name, n);
@@ -338,30 +364,46 @@ function createUploads({
      * Stream the request into a part beside the destination, then put it in
      * place: { path, name, size, dir, replaced, inbox }. On every other way
      * out - the client gone or stalled, over the cap, a failed write or
-     * rename, the folder gone - the part is deleted and dropped from the
-     * record, and nothing is left at the destination.
+     * rename, the folder gone, moved or swapped - the part is emptied and
+     * deleted and dropped from the record, and nothing is left at the
+     * destination.
      */
     async function receive(req, planned, { log = console.error } = {}) {
         if (onPlanned) await onPlanned(planned);
         const part = path.join(planned.dir, partName());
         await record.add(part);
         let handle = null;
+        // The part this upload created (O_EXCL: never a file that was
+        // there before), by device and inode. Null until then, and only
+        // that file is ever emptied or deleted.
+        let id = null;
+        let placed = null;
         try {
             handle = await openPart(part);
+            const opened = await handle.stat();
+            id = { dev: opened.dev, ino: opened.ino };
+            // Made in the folder plan() checked, and still there? Before
+            // the first byte, so none is ever written anywhere else.
+            await recheck(planned);
+            await mustBeOurs(part, id, planned);
             await handle.chmod(0o644);   // 0644 whatever the umask
             const size = await writeBody(req, handle, planned.name, log);
             await handle.datasync();     // on disk before it replaces anything
-            await handle.close();
-            handle = null;
             if (beforeCommit) await beforeCommit(part, planned);
-            const placed = await commit(part, planned);
+            placed = await commit(part, planned, handle, id);
             return { ...placed, size, dir: planned.display, inbox: planned.inbox };
         } finally {
-            if (handle) await handle.close().catch(() => {});
+            if (handle) {
+                // Not put in place: emptied through the descriptor, which
+                // reaches the file wherever it is now. A folder moved
+                // mid-upload takes the part along, out of the unlink's reach.
+                if (!placed) await handle.truncate(0).catch(() => {});
+                await handle.close().catch(() => {});
+            }
             // After a link() the part is a second name for the file; after a
-            // rename it is gone already (ENOENT); after a failure it is the
-            // unfinished file. Removed in every case.
-            await fsp.unlink(part).catch(() => {});
+            // rename it is gone already; after a failure it is the emptied
+            // file. Removed by its path only while that path still names it.
+            if (id && await samePart(part, id).catch(() => false)) await fsp.unlink(part).catch(() => {});
             await record.remove(part).catch((err) => log(`Upload parts: record not updated: ${err.message}`));
         }
     }
