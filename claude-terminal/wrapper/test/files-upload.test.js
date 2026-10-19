@@ -17,7 +17,7 @@ const path = require('node:path');
 const net = require('node:net');
 const { once } = require('node:events');
 const express = require('express');
-const { createFilesApi, INBOX_MARKER } = require('../files-api.js');
+const { createFilesApi, classifyRelative, INBOX_MARKER } = require('../files-api.js');
 const { createDownloads } = require('../files-download.js');
 const { createRateLimiter, createOriginGuard } = require('../http-guards.js');
 const { createPartRecord } = require('../upload-parts.js');
@@ -1107,6 +1107,125 @@ test('look-alike: a folder over the scan bound is checked for the exact name onl
                 assert.strictEqual((await res.json()).name, `${CAFE_NFC}.txt`);
             });
             assert.deepStrictEqual(sorted(dir), ['a.txt', 'b.txt', `${CAFE_NFD}.txt`, `${CAFE_NFC} (1).txt`, `${CAFE_NFC}.txt`].sort());
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+test('look-alike: the folder is read only when a look-alike could matter, as plan() does', async () => {
+    const dir = lookFolder('look-lazy', { 'there.txt': 'old' });
+    const reads = [];
+    const counting = createUploads({
+        api, record,
+        fsOps: { opendir: (p, opts) => { if (p === dir) reads.push(p); return fs.promises.opendir(p, opts); } },
+    });
+    const count = async (url, params) => {
+        reads.length = 0;
+        const res = await post(url, { dest: 'look-lazy', ...params }, 'new');
+        assert.strictEqual(res.status, 200, JSON.stringify(params));
+        await res.arrayBuffer();
+        return reads.length;
+    };
+    try {
+        await withServer({ uploads: counting }, async (url) => {
+            // the name is there: Replace overwrites it, no look-alike asked for
+            assert.strictEqual(await count(url, { name: 'there.txt', onConflict: 'replace' }), 0);
+            // positive controls: a free name is checked by plan() and commit()
+            assert.strictEqual(await count(url, { name: 'free.txt', onConflict: 'replace' }), 2);
+            assert.strictEqual(await count(url, { name: 'new.txt' }), 2);
+            assert.strictEqual(await count(url, { name: 'there.txt', onConflict: 'keep-both' }), 1);
+        });
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('look-alike: one whose own name the sidebar hides is refused as that name would be', nfdNames, async () => {
+    const dir = lookFolder('look-hidden');
+    const hiddenOne = `${CAFE_NFD}.txt`;
+    // No look-alike of a name that is shown can end in .git (NFC keeps
+    // /\.git$/i as it is), so the classifier is a stand-in that hides one.
+    const classify = (relative) => (path.basename(relative) === hiddenOne ? 'hidden' : classifyRelative(relative));
+    const hiding = createUploads({ api, record, classify });
+    const appearing = createUploads({
+        api, record, classify,
+        beforeCommit: async (part, planned) => fs.writeFileSync(path.join(planned.dir, hiddenOne), 'appeared'),
+    });
+    const refusedHidden = async (res, what) => {
+        assert.strictEqual(res.status, 400, what);
+        const { error } = await res.json();
+        assert.ok(error.startsWith(`${hiddenOne} ends in .git`), `${what}: ${error}`);
+    };
+    const modes = [{}, { onConflict: 'keep-both' }, { onConflict: 'replace' }];
+    try {
+        fs.writeFileSync(path.join(dir, hiddenOne), 'hidden');
+        await withServer({ uploads: hiding }, async (url) => {
+            for (const mode of modes) {
+                await refusedHidden(await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-hidden', ...mode, check: '1', size: '3' }), `check ${JSON.stringify(mode)}`);
+                await refusedHidden(await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-hidden', ...mode }, 'new'), JSON.stringify(mode));
+            }
+        });
+        assert.deepStrictEqual(sorted(dir), [hiddenOne]);
+        assert.strictEqual(fs.readFileSync(path.join(dir, hiddenOne), 'utf8'), 'hidden');
+        // and when it appears while the body comes in
+        await withServer({ uploads: appearing }, async (url) => {
+            for (const mode of modes) {
+                fs.rmSync(path.join(dir, hiddenOne), { force: true });
+                await refusedHidden(await post(url, { name: `${CAFE_NFC}.txt`, dest: 'look-hidden', ...mode }, 'new'), `commit ${JSON.stringify(mode)}`);
+                assert.deepStrictEqual(sorted(dir), [hiddenOne]);
+                assert.strictEqual(fs.readFileSync(path.join(dir, hiddenOne), 'utf8'), 'appeared');
+            }
+        });
+        assert.deepStrictEqual(partsUnder(), []);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+// U+1EAD (a with dot below and circumflex) in NFC; four other forms of it,
+// listed here in sorted order (by UTF-16 code unit).
+const DOT_HAT = ['a\u0302\u0323', 'a\u0323\u0302', '\u00e2\u0323', '\u1ea1\u0302'];
+
+test('look-alike: of several, a regular file is named and replaced before a folder or link, in sorted order',
+    nfdNames, async () => {
+        const nfc = '\u1ead.txt';
+        const [first, second, third, fourth] = DOT_HAT.map((s) => `${s}.txt`);
+        assert.deepStrictEqual([first, second, third, fourth], [first, second, third, fourth].slice().sort());
+        for (const n of [first, second, third, fourth]) assert.strictEqual(n.normalize('NFC'), nfc);
+        const dir = lookFolder('look-several');
+        // made in reverse, so the order they are read in is not sorted order
+        fs.writeFileSync(path.join(dir, fourth), 'fourth');
+        fs.writeFileSync(path.join(dir, third), 'third');
+        fs.symlinkSync('third', path.join(dir, second));
+        fs.mkdirSync(path.join(dir, first));
+        try {
+            await withServer({}, async (url) => {
+                const taken = { reason: 'exists', replaceable: true, error: `${third} already exists in ${dir}.` };
+                let res = await post(url, { name: nfc, dest: 'look-several', check: '1', size: '3' });
+                assert.deepStrictEqual(await res.json(), taken);
+                res = await post(url, { name: nfc, dest: 'look-several' }, 'new');
+                assert.deepStrictEqual(await res.json(), taken);
+                res = await post(url, { name: nfc, dest: 'look-several', onConflict: 'replace' }, 'new');
+                assert.strictEqual(res.status, 200);
+                assert.strictEqual((await res.json()).name, third);
+            });
+            assert.strictEqual(fs.readFileSync(path.join(dir, third), 'utf8'), 'new');
+            assert.strictEqual(fs.readFileSync(path.join(dir, fourth), 'utf8'), 'fourth');
+            // with no regular file among them, the first in sorted order
+            fs.unlinkSync(path.join(dir, third));
+            fs.unlinkSync(path.join(dir, fourth));
+            fs.mkdirSync(path.join(dir, fourth));
+            await withServer({}, async (url) => {
+                const res = await post(url, { name: nfc, dest: 'look-several', onConflict: 'replace' }, 'new');
+                assert.strictEqual(res.status, 409);
+                assert.deepStrictEqual(await res.json(), {
+                    reason: 'exists',
+                    replaceable: false,
+                    error: `${first} already exists in ${dir} and is not a regular file, so it cannot be replaced.`,
+                });
+            });
+            assert.deepStrictEqual(sorted(dir), [first, second, fourth].sort());
+            assert.deepStrictEqual(partsUnder(), []);
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
         }

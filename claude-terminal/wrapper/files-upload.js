@@ -209,7 +209,9 @@ const sizeText = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
  * { bigint: true } - chmod, write, datasync, truncate and close),
  * `partName` its name, `onPlanned` a hook between the checks and
  * the part's open, and `beforeCommit` one between the last byte and the
- * rename. `lookAlikeScanLimit` is MAX_LOOKALIKE_SCAN.
+ * rename. `lookAlikeScanLimit` is MAX_LOOKALIKE_SCAN, `classify` files-api's
+ * classifyRelative, and fsOps' `opendir` the read of a folder's names for
+ * look-alikes.
  */
 function createUploads({
     api,
@@ -226,11 +228,14 @@ function createUploads({
     onPlanned = null,
     beforeCommit = null,
     lookAlikeScanLimit = MAX_LOOKALIKE_SCAN,
+    classify = classifyRelative,
 } = {}) {
     if (typeof record?.file !== 'string' || record.file === '') {
         throw new TypeError('record must have its file (a createPartRecord record): a failure to write it is said by that path');
     }
-    const fsOps = { link: fsp.link, rename: fsp.rename, realpath: fsp.realpath, lstat: fsp.lstat, ...ops };
+    const fsOps = {
+        link: fsp.link, rename: fsp.rename, realpath: fsp.realpath, lstat: fsp.lstat, opendir: fsp.opendir, ...ops,
+    };
     const maxMb = Math.round(maxBytes / MB);
     const limitText = `the ${maxMb} MB upload limit (the add-on's upload_max_mb option)`;
     // A size that rounds to the limit or under ("1.0 MB, over the 1 MB
@@ -273,6 +278,8 @@ function createUploads({
             { reason: 'exists', replaceable: false })
         : new FilesError(409, `${name} already exists in ${display}.`, { reason: 'exists', replaceable: true }));
     const display = (relative) => path.join(path.resolve(api.root), relative);
+    const hiddenName = (name) => new FilesError(400,
+        `${name} ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.`);
 
     // Mark a folder this wrapper just made as its inbox, so run.sh sweeps
     // it. Only on a mkdir that succeeded: EEXIST means someone made it
@@ -354,7 +361,7 @@ function createUploads({
         let read = 0;
         let handle;
         try {
-            handle = await fsp.opendir(dir, { encoding: 'buffer' });
+            handle = await fsOps.opendir(dir, { encoding: 'buffer' });
         } catch (err) {
             if (err.code !== 'ENOENT' && err.code !== 'ENOTDIR') {
                 log(`Upload: look-alike names not checked in ${JSON.stringify(dir)}: ${err.message}`);
@@ -385,13 +392,34 @@ function createUploads({
     // The look-alike of `name` (in NFC) that is in `dir` now, from the map
     // lookAlikes() made: { name, st } with its lstat, or null. The lstat is
     // the word on whether it is there and what it is, so a name gone since
-    // the map was made is no look-alike.
-    async function lookAlikeOf(dir, name, found) {
-        for (const other of found.get(name) || []) {
-            const st = await lstatOrNull(path.join(dir, other));
-            if (st) return { name: other, st };
+    // the map was made is no look-alike. Of several (the forms of a name
+    // with two accents, say), a regular file before a folder, symlink or
+    // anything else, and the first in sorted order (by UTF-16 code unit)
+    // among equals, never the order the folder was read in: so a 409 names,
+    // and Replace overwrites, the first regular file that looks like the
+    // name, and only when there is none does the 409 name another entry
+    // (not replaceable).
+    //
+    // `relative` is the folder's, from the root: a look-alike whose own
+    // name the sidebar hides is refused as that name would be (hiddenName),
+    // so no answer names it and nothing is put at it. In defence only: the
+    // hidden names are those ending in .git (files-api's HIDDEN_NAME,
+    // /\.git$/i), and NFC keeps that ending as it is (a sweep of 5.5
+    // million strings found none that NFC takes into or out of it), so a
+    // look-alike of a name that is shown ends in .git only if that name
+    // does too, which plan() refuses first.
+    async function lookAlikeOf(dir, relative, name, found) {
+        let other = null;
+        for (const candidate of [...(found.get(name) || [])].sort()) {
+            const st = await lstatOrNull(path.join(dir, candidate));
+            if (st && st.isFile()) {
+                other = { name: candidate, st };
+                break;
+            }
+            if (st && !other) other = { name: candidate, st };
         }
-        return null;
+        if (other && classify(path.join(relative, other.name)) === 'hidden') throw hiddenName(other.name);
+        return other;
     }
 
     /**
@@ -414,14 +442,12 @@ function createUploads({
         }
         const folder = await destination(inbox ? INBOX : dest, { inbox, create, log });
         const safe = sanitizeUploadName(name, { now });
-        if (classifyRelative(path.join(folder.relative, safe)) === 'hidden') {
-            throw new FilesError(400, `${safe} ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.`);
-        }
+        if (classify(path.join(folder.relative, safe)) === 'hidden') throw hiddenName(safe);
         // The name, or else a look-alike of it: what a 409 names, and what
         // Replace would overwrite. commit() asks again once the body is in.
         const exact = await lstatOrNull(path.join(folder.dir, safe));
         const taken = exact ? { name: safe, st: exact }
-            : await lookAlikeOf(folder.dir, safe, await lookAlikes(folder.dir, log));
+            : await lookAlikeOf(folder.dir, folder.relative, safe, await lookAlikes(folder.dir, log));
         if (taken && !inbox && onConflict === undefined) throw exists(taken.name, folder.display, taken.st);
         if (taken && onConflict === 'replace' && !taken.st.isFile()) throw exists(taken.name, folder.display, taken.st);
         return { ...folder, inbox, name: safe, onConflict, exists: Boolean(taken) };
@@ -585,15 +611,17 @@ function createUploads({
     // the name itself when it is there, else its look-alike, under that
     // look-alike's own name. Nothing makes "no look-alike" hold until the
     // link or rename the way link() makes "no file at the name" hold, so a
-    // look-alike made in the moment between the two is not caught.
+    // look-alike made in the moment between the two is not caught. The
+    // folder is read for them only when they could matter, as in plan():
+    // not for a Replace whose name is there.
     async function commit(part, planned, handle, id, log, progress) {
         await recheck(planned);
-        const alikes = await lookAlikes(planned.dir, log, part);
+        const alikeOf = async (name, alikes) => lookAlikeOf(planned.dir, planned.relative, name, alikes);
         if (planned.onConflict === 'replace') {
             let name = planned.name;
             let old = await lstatOrNull(path.join(planned.dir, name));
             if (!old) {
-                const alike = await lookAlikeOf(planned.dir, name, alikes);
+                const alike = await alikeOf(name, await lookAlikes(planned.dir, log, part));
                 if (alike) ({ name, st: old } = alike);
             }
             const target = path.join(planned.dir, name);
@@ -609,6 +637,7 @@ function createUploads({
             await mustHavePlaced(target, id, { ...planned, name }, log, { part, how: 'replace', overwrote: Boolean(old) });
             return { path: target, name, replaced: Boolean(old) };
         }
+        const alikes = await lookAlikes(planned.dir, log, part);
         await mustBeOurs(part, id, planned);
         const suffix = planned.inbox || planned.onConflict === 'keep-both';
         for (let n = 0; n <= (suffix ? MAX_SUFFIX : 0); n++) {
@@ -616,7 +645,7 @@ function createUploads({
             // with nothing on either side.
             const name = n === 0 ? planned.name : withSuffix(planned.name, n);
             const candidate = path.join(planned.dir, name);
-            const alike = await lookAlikeOf(planned.dir, name, alikes);
+            const alike = await alikeOf(name, alikes);
             if (alike && suffix) continue;
             if (alike) {
                 // the name itself, when it is there too, as plan() says
