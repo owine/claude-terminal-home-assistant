@@ -18,6 +18,8 @@ const {
     uploadUrl,
     uploadTarget,
     uploadErrorText,
+    displayName,
+    uploadSummary,
 } = require('../public/files-sidebar.js');
 
 test('plain paths are typed as-is', () => {
@@ -145,4 +147,37 @@ test('uploadErrorText: the server\'s message, else one for the status', () => {
     assert.match(uploadErrorText(413, {}, 'big.bin'), /upload_max_mb/);
     assert.match(uploadErrorText(0, {}, 'a.txt'), /Could not reach the add-on to upload a\.txt/);
     assert.strictEqual(uploadErrorText(502, null, 'a.txt'), 'a.txt: upload failed (HTTP 502).');
+    // A message that already names the file is not prefixed with it again.
+    assert.strictEqual(uploadErrorText(400, { error: 'x.git ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.' }, 'x.git'),
+        'x.git ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.');
+    // Names from the device are shown without the marks that reorder text.
+    assert.strictEqual(uploadErrorText(502, null, 'photo\u202Egpj.exe'), 'photogpj.exe: upload failed (HTTP 502).');
+});
+
+test('displayName: strips control characters and the bidi marks the server strips', () => {
+    assert.strictEqual(displayName('photo\u202Egpj.exe'), 'photogpj.exe');
+    assert.strictEqual(displayName('a\u200eb\u200fc\u202ad\u202be\u202cf\u202dg\u2066h\u2067i\u2068j\u2069k\ufeffl'), 'abcdefghijkl');
+    assert.strictEqual(displayName('tab\there\nnew\u0085line\u007f'), 'tabherenewline');
+    assert.strictEqual(displayName('café ünï 日本.txt'), 'café ünï 日本.txt');
+});
+
+test('uploadSummary: one line per kind of outcome, in order, and its kind', () => {
+    const r = (name, extra = {}) => ({ name, dir: '/config/uploads', path: '/config/uploads/' + name, ...extra });
+    assert.deepStrictEqual(uploadSummary({ results: [r('a.txt')] }),
+        { lines: ['Uploaded a.txt to /config/uploads.'], kind: '' });
+    assert.deepStrictEqual(uploadSummary({ results: [r('a.txt', { replaced: true, dir: '/config/x' })] }).lines,
+        ['Replaced a.txt in /config/x.']);
+    assert.deepStrictEqual(uploadSummary({ results: [r('a'), r('b')], skipped: ['c', 'd\u202E'] }),
+        { lines: ['Uploaded 2 files to /config/uploads.', 'Not uploaded: c, d.'], kind: '' });
+    // A drop of folders and files: the folders are named, not silently dropped.
+    assert.deepStrictEqual(uploadSummary({ results: [r('a')], folders: ['photos', 'docs'] }).lines,
+        ['Uploaded a to /config/uploads.', 'Folders are not uploaded: photos, docs. Drop the files inside them instead.']);
+    // A 429 stops the batch: one line for everything it left, not one per file.
+    assert.deepStrictEqual(uploadSummary({ results: [r('a')], busy: ['b', 'c', 'd'] }),
+        { lines: ['Uploaded a to /config/uploads.', '⏳ 3 not uploaded: too many uploads, try again in a minute.'], kind: 'busy' });
+    assert.deepStrictEqual(uploadSummary({ busy: ['only.txt'] }).lines,
+        ['⏳ only.txt not uploaded: too many uploads, try again in a minute.']);
+    assert.deepStrictEqual(uploadSummary({ problems: ['x: nope.'], busy: ['b'] }),
+        { lines: ['⚠️ x: nope.', '⏳ b not uploaded: too many uploads, try again in a minute.'], kind: 'error' });
+    assert.deepStrictEqual(uploadSummary({}), { lines: [], kind: '' });
 });

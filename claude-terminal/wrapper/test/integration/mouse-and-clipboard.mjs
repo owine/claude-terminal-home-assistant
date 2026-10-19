@@ -1491,6 +1491,21 @@ async function checkUploads(browser, url) {
             await waitFor(async () => (await notice()).text === `Uploaded 2 files to ${INBOX_DIR}.`
                 && read(`${INBOX_DIR}/m1.txt`) === '1' && read(`${INBOX_DIR}/m2.txt`) === '2'), true);
         await closePreview();
+        // Too many uploads (429, faked): the batch stops at the first one,
+        // and one line covers every file it left, instead of a refusal per
+        // file each spending another request.
+        let busyChecks = 0;
+        const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
+        await context.route(isAsk, (route) => {
+            busyChecks++;
+            return route.fulfill({ status: 429, contentType: 'application/json',
+                body: JSON.stringify({ error: 'Too many uploads. Try again in a minute.' }) });
+        });
+        await pick(uploadButton, [local('b1.txt', '1'), local('b2.txt', '2'), local('b3.txt', '3')]);
+        check('a batch stops at the first 429, under one line for all it left',
+            await waitFor(async () => (await notice()).text === '⏳ 3 not uploaded: too many uploads, try again in a minute.'), true);
+        check('and asks nothing more after it', busyChecks, 1);
+        await context.unroute(isAsk);
         // (UPLOAD_PART is the download checks' stand-in, not a real one.)
         check('no upload part is left anywhere',
             dexec(['find', '/config', '-maxdepth', '3', '-name', '.ctp-upload-*.part', '!', '-name', UPLOAD_PART]).trim(), '');

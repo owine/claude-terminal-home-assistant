@@ -606,25 +606,28 @@
             });
         }
 
-        // One file: { result } once it is in /config, { problem } when it
-        // was refused or failed, { skipped } when the user cancelled.
+        // One file: { result } once it is in /config, { problem, status }
+        // when it was refused or failed, { skipped } when the user cancelled.
+        // The name goes to the server as it is (which cleans it); the notice
+        // shows it without invisible marks.
         async function uploadOne(file, dest, counter) {
             const name = file.name;
-            showProgress('Checking ' + name + counter + '…');
+            const shown = helpers.displayName(name);
+            showProgress('Checking ' + shown + counter + '…');
             const asked = await askUpload(helpers.uploadUrl({ name, dest, check: true, size: file.size }));
             let onConflict;
             if (asked.status === 409 && asked.data.reason === 'exists') {
-                onConflict = await askCollision(asked.data.error || name + ' already exists.', asked.data.replaceable === true);
+                onConflict = await askCollision(asked.data.error || shown + ' already exists.', asked.data.replaceable === true);
                 if (!onConflict) return { skipped: name };
             } else if (asked.status !== 200) {
-                return { problem: helpers.uploadErrorText(asked.status, asked.data, name) };
+                return { problem: helpers.uploadErrorText(asked.status, asked.data, name), status: asked.status };
             }
-            const line = 'Uploading ' + name + counter + '…';
+            const line = 'Uploading ' + shown + counter + '…';
             const gen = showProgress(line, 0);
             const sent = await sendFile(helpers.uploadUrl({ name, dest, onConflict }), file,
                 (fraction) => showNoticeIf(gen, line, '', fraction));
             if (sent.status !== 200 || typeof sent.data.path !== 'string') {
-                return { problem: helpers.uploadErrorText(sent.status, sent.data, name) };
+                return { problem: helpers.uploadErrorText(sent.status, sent.data, name), status: sent.status };
             }
             return { result: sent.data };
         }
@@ -680,14 +683,9 @@
         // typing in the terminal it would take their keys, and a drop on
         // it would once have gone to the terminal. A protected file is
         // revealed but not opened unless Show protected files is on.
-        async function finishBatch(results, problems, skipped) {
-            const lines = [];
-            const last = results[results.length - 1];
-            if (results.length > 1) lines.push('Uploaded ' + results.length + ' files to ' + last.dir + '.');
-            else if (last) lines.push((last.replaced ? 'Replaced ' : 'Uploaded ') + last.name + (last.replaced ? ' in ' : ' to ') + last.dir + '.');
-            if (skipped.length) lines.push('Not uploaded: ' + skipped.join(', ') + '.');
-            lines.push(...problems.map((p) => '⚠️ ' + p));
-            const kind = problems.length ? 'error' : '';
+        async function finishBatch(outcome) {
+            const { lines, kind } = helpers.uploadSummary(outcome);
+            const last = outcome.results[outcome.results.length - 1];
             if (!last) {
                 showNotice(lines.join('\n'), kind);
                 return;
@@ -699,12 +697,13 @@
                 row.scrollIntoView({ block: 'nearest' });
             }
             if (entry && entry.sensitive && !showProtected.checked) {
-                lines.splice(1, 0, last.name + ' is protected: turn on Show protected files to open it.');
+                lines.splice(1, 0, helpers.displayName(last.name) + ' is protected: turn on Show protected files to open it.');
                 showNotice(lines.join('\n'), kind);
                 return;
             }
             showNotice(lines.join('\n'), kind);
-            if (entry && !problems.length && stillInSidebar()) openPreview(entry.path, entry.sensitive);
+            const refused = outcome.problems.length || outcome.busy.length;
+            if (entry && !refused && stillInSidebar()) openPreview(entry.path, entry.sensitive);
         }
 
         // The notice's dismiss button goes while a batch runs: dismissing
@@ -715,10 +714,12 @@
             noticeClose.hidden = on;
         }
 
-        async function runBatch(files, dest) {
+        // `folders`: what a drop left out, named in the batch's line.
+        async function runBatch(files, dest, folders) {
             const results = [];
             const problems = [];
             const skipped = [];
+            let busy = [];
             let started = 0;
             setUploading(true);
             try {
@@ -728,6 +729,12 @@
                         started++;
                         const counter = files.length > 1 ? ' (' + (i + 1) + ' of ' + files.length + ')' : '';
                         const done = await uploadOne(files[i], dest, counter);
+                        // Too many uploads: the rest would only be refused
+                        // too, each spending another request. Stop here.
+                        if (done.status === 429) {
+                            busy = files.slice(i).map((f) => f.name);
+                            break;
+                        }
                         if (done.result) results.push(done.result);
                         else if (done.problem) problems.push(done.problem);
                         else skipped.push(done.skipped);
@@ -735,7 +742,7 @@
                 } finally {
                     filesWaiting -= files.length - started;   // what a failure left unstarted
                 }
-                await finishBatch(results, problems, skipped);
+                await finishBatch({ results, problems, skipped, folders, busy });
             } finally {
                 setUploading(false);
             }
@@ -743,11 +750,11 @@
 
         // Batches queue behind each other, so their prompts come one at a
         // time and in order. No dest is the inbox.
-        function uploadFiles(files, dest) {
+        function uploadFiles(files, dest, folders = []) {
             const batch = Array.from(files);
             if (!batch.length) return uploadChain;
             filesWaiting += batch.length;
-            uploadChain = uploadChain.then(() => runBatch(batch, dest)).catch((err) => {
+            uploadChain = uploadChain.then(() => runBatch(batch, dest, folders)).catch((err) => {
                 console.error('[wrapper] upload failed:', err);
                 showNotice('⚠️ Upload failed: ' + err.message, 'error');
             });
@@ -1006,17 +1013,27 @@
             const wrap = dropWrapOf(e);
             endDropHover();
             // Read now: a drop's data is gone once its event is over. A
-            // dropped folder arrives as a File too; it is left out.
+            // dropped folder arrives as a File too; it is left out, and
+            // named in the batch's line.
             const items = Array.from(e.dataTransfer.items || []).filter((i) => i.kind === 'file');
-            const files = items.length
-                ? items.filter((i) => !i.webkitGetAsEntry?.()?.isDirectory).map((i) => i.getAsFile()).filter(Boolean)
-                : Array.from(e.dataTransfer.files || []);
+            const folders = [];
+            const files = [];
+            if (items.length) {
+                for (const item of items) {
+                    const asEntry = item.webkitGetAsEntry?.();
+                    const file = asEntry?.isDirectory ? null : item.getAsFile();
+                    if (asEntry?.isDirectory) folders.push(asEntry.name);
+                    else if (file) files.push(file);
+                }
+            } else {
+                files.push(...Array.from(e.dataTransfer.files || []));
+            }
             if (!files.length) {
                 showNotice('⚠️ Folders cannot be uploaded. Drop the files inside them instead.', 'error');
                 return;
             }
             if (!wrap) {
-                uploadFiles(files, undefined);
+                uploadFiles(files, undefined, folders);
                 return;
             }
             const entry = dropFolders.get(wrap);
@@ -1026,7 +1043,7 @@
                     : entry.name + ' is a link to a folder. Drop the files onto the folder itself.'), 'error');
                 return;
             }
-            uploadFiles(files, entry.path);
+            uploadFiles(files, entry.path, folders);
         });
 
         // Files dragged over the open preview. It covers the whole page, so
