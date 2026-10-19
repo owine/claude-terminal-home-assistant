@@ -2008,6 +2008,67 @@ async function checkWaitingQuestion(browser, url) {
         await page.keyboard.press('Escape');
         check('Escape then closes the preview, leaving the question, and the dot goes',
             await waitFor(async () => !(await previewOpen()) && (await promptShown()) && (await waiting()) === NONE), true);
+        // The focus 🗂️ would have given the question, held back while the
+        // preview covered it, is given once the preview is gone.
+        check('and the focus 🗂️ owed the question goes to Keep both', await focusedId(), 'files-prompt-keep');
+        await cancel();
+
+        // A held Escape on the preview, a question under it. The first
+        // press closes the preview and puts focus on Keep both; the key's
+        // repeats then land on the question, and must not cancel it.
+        gate = await holdAsk();
+        await askAbout();
+        check('fixture: the check is held', await waitFor(() => gate.held === 1), true);
+        await openPreview();
+        await gate.release();
+        check('fixture: the question waits under the preview',
+            await waitFor(async () => (await waiting()) === UNDER_PREVIEW), true);
+        await wrapper.evaluate(`window.ctpEscRepeats = 0;
+            document.addEventListener('keydown', (e) => { if (e.repeat && e.key === 'Escape') window.ctpEscRepeats++; }, true);`);
+        await wrapper.locator('#files-close-btn').focus();
+        await page.keyboard.down('Escape');
+        await page.keyboard.down('Escape');
+        await page.keyboard.down('Escape');
+        await page.keyboard.up('Escape');
+        check('fixture: the held Escape repeated', await wrapper.evaluate('window.ctpEscRepeats'), (n) => n >= 2);
+        check('a held Escape closes the preview, and its repeats leave the question it uncovers, focus on Keep both',
+            await waitFor(async () => !(await previewOpen()) && (await promptShown())
+                && (await focusedId()) === 'files-prompt-keep'), true);
+        await cancel();
+
+        // A preview answer that comes after the preview was closed, and
+        // closes it again (it says the file is protected, with Show
+        // protected files off; faked here). Closing a closed preview must
+        // not move focus: a question waiting in view must not pull it from
+        // wherever the user went meanwhile.
+        const isLatePreview = (u) => u.pathname.endsWith('/api/files/preview')
+            && (u.searchParams.get('path') || '').endsWith('/' + SIDEBAR_FILE);
+        const late = { held: 0 };
+        const lateGate = new Promise((r) => { late.open = r; });
+        await context.route(isLatePreview, async (route) => {
+            late.held++;
+            await lateGate;
+            await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+                size: 5, mtime: Date.now(), content: 'late\n', binary: false, truncated: false, sensitive: true }) })
+                .catch(() => {});
+        });
+        try {
+            await askAbout();
+            check('fixture: a question waits, in view', await waitFor(async () => (await promptShown()) && !(await previewOpen())), true);
+            await list.locator('.files-row', { hasText: SIDEBAR_FILE }).click();
+            check('fixture: the preview\'s answer is held', await waitFor(() => late.held === 1), true);
+            await wrapper.locator('#files-close-btn').click();
+            await wrapper.locator('#files-refresh').focus();
+            check('fixture: the preview is closed, and focus is on Refresh',
+                { open: await previewOpen(), focus: await focusedId() }, (v) => !v.open && v.focus === 'files-refresh');
+            late.open();
+            check('fixture: the late answer closed the preview again (it blanks a protected one)',
+                await waitFor(() => wrapper.evaluate('document.getElementById("files-preview-title").textContent === ""')), true);
+            check('closing a closed preview leaves focus where it is', await focusedId(), 'files-refresh');
+        } finally {
+            late.open();
+            await context.unroute(isLatePreview);
+        }
         await cancel();
         check('nothing was uploaded',
             { old: dexec(['cat', `${SIDEBAR_DIR}/${NAME}`]),
@@ -2192,6 +2253,17 @@ async function checkBadListing(browser, url) {
                 return !!v && v.rows === 0 && v.notes.length === 1 && /unexpected answer/.test(v.notes[0]);
             }), true);
         await context.unroute(isList(SIDEBAR_DIR));
+
+        // A folder whose only names could not be read (faked: the server's
+        // unreadableNames count) says so, and not also "(empty)".
+        await context.route(isList(SIDEBAR_DIR), (route) => route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ path: SIDEBAR_DIR, root: '/config', entries: [], truncated: false, unreadableNames: 2 }) }));
+        await folder.click();
+        await folder.click();
+        check('a folder whose names could not be read says so, and not "(empty)"',
+            await waitFor(async () => JSON.stringify((await inFolder())?.notes)
+                === JSON.stringify(['2 names here could not be read (not valid UTF-8) and are not shown'])), true);
+        await context.unroute(isList(SIDEBAR_DIR));
         await context.route(isRecent, notAListing);
         await wrapper.locator('.files-tab[data-tab="recent"]').click();
         const listNotes = () => wrapper.evaluate(`JSON.stringify([...document.querySelectorAll('#files-list > .files-note')]
@@ -2201,6 +2273,13 @@ async function checkBadListing(browser, url) {
                 const notes = await listNotes();
                 return notes.length === 1 && /unexpected answer/.test(notes[0]);
             }), true);
+        await context.unroute(isRecent);
+        await context.route(isRecent, (route) => route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ hours: 24, root: '/config', entries: [], truncated: false, incomplete: false, unreadableNames: 1 }) }));
+        await wrapper.locator('#files-refresh').click();
+        check('nor does Recent changes say "Nothing changed" when names could not be read',
+            await waitFor(async () => JSON.stringify(await listNotes())
+                === JSON.stringify(['1 name could not be read (not valid UTF-8)'])), true);
         await context.unroute(isRecent);
         await wrapper.locator('.files-tab[data-tab="files"]').click();
         await waitFor(async () => (await folder.count()) === 1);

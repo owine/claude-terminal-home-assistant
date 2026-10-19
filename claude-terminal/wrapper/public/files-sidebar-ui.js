@@ -204,8 +204,10 @@
             }
             if (depth === 0 && data.root) rootPath = data.root;
             const entries = data.entries.filter((e) => showHidden.checked || !e.name.startsWith('.'));
+            // Names the server could not read are not "(empty)".
+            const unreadable = helpers.unreadableNote(data.unreadableNames, 'folder');
             container.replaceChildren();
-            if (!entries.length) container.append(note('(empty)', depth));
+            if (!entries.length && !unreadable) container.append(note('(empty)', depth));
             for (const entry of entries) {
                 const meta = entry.type === 'file' ? helpers.formatSize(entry.size) : '';
                 const row = makeRow(entry, depth, entry.name, meta);
@@ -264,7 +266,6 @@
                 }
             }
             if (data.truncated) container.append(note('… more entries not shown', depth));
-            const unreadable = helpers.unreadableNote(data.unreadableNames, 'folder');
             if (unreadable) container.append(note(unreadable, depth));
             return true;
         }
@@ -285,15 +286,17 @@
                 return;
             }
             if (data.root) rootPath = data.root;
+            // Its count covers names of any age, so one could have changed
+            // in the period: not "Nothing changed" then.
+            const unreadable = helpers.unreadableNote(data.unreadableNames, 'recent');
             list.replaceChildren();
-            if (!data.entries.length) list.append(note('Nothing changed in this period'));
+            if (!data.entries.length && !unreadable) list.append(note('Nothing changed in this period'));
             for (const entry of data.entries) {
                 const row = makeRow(entry, 0, helpers.relativeTo(rootPath, entry.path), helpers.formatAgo(entry.mtime));
                 row.addEventListener('click', () => { select(row); openPreview(entry.path, entry.sensitive); });
                 list.append(row);
             }
             if (data.truncated || data.incomplete) list.append(note('… showing the newest found; the search stopped early'));
-            const unreadable = helpers.unreadableNote(data.unreadableNames, 'recent');
             if (unreadable) list.append(note(unreadable));
         }
 
@@ -886,16 +889,23 @@
         // open: focus goes to its Keep both when it would have gone there
         // had the preview not been in the way (askCollision's rule), so from
         // the preview itself, the sidebar, or nowhere; never from the
-        // terminal or the header. `focusQuestion` false leaves focus alone:
-        // Insert path, which hands it to the terminal.
+        // terminal or the header. Or when setOpen owed it that focus and it
+        // is still where setOpen left it. `focusQuestion` false leaves focus
+        // alone: Insert path, which hands it to the terminal. A preview that
+        // was not open (a late answer closing it again) moves nothing: focus
+        // has gone wherever the user took it since.
         function closePreview({ focusQuestion = true } = {}) {
+            const wasOpen = previewOpen();
             const hadFocus = preview.contains(document.activeElement);
+            const owedFrom = questionFocusOwedFrom;
+            questionFocusOwedFrom = null;
             preview.classList.remove('active');
             if (previewSensitive) blankPreview();
             syncQuestionBadge();
-            if (!focusQuestion || !answerPrompt || sidebar.classList.contains('collapsed')) return;
+            if (!wasOpen || !focusQuestion || !answerPrompt || sidebar.classList.contains('collapsed')) return;
             const active = document.activeElement;
-            if (hadFocus || !active || active === document.body || sidebar.contains(active)) {
+            if (hadFocus || !active || active === document.body || sidebar.contains(active)
+                || (owedFrom && active === owedFrom)) {
                 promptKeep.focus({ preventScroll: true });
             }
         }
@@ -912,8 +922,15 @@
             previewBody.textContent = '';
         }
 
+        // Set when the sidebar opened on a question under the preview: the
+        // element focus stayed on, for closePreview to give the question
+        // the focus it was owed. Cleared when the preview closes or the
+        // sidebar does.
+        let questionFocusOwedFrom = null;
+
         function setOpen(open, { persist = true } = {}) {
             if (!open) closeMenu();
+            questionFocusOwedFrom = null;
             sidebar.classList.toggle('collapsed', !open);
             filesBtn.setAttribute('aria-expanded', String(open));
             if (persist) save(STORE.open, open ? '1' : '0');
@@ -923,8 +940,11 @@
             // for. Not with the preview over it (reached from the keyboard
             // behind it): focus behind the preview would let Escape answer
             // the question instead of closing the preview. Closing it gives
-            // the question focus then (closePreview).
-            if (open && answerPrompt && !previewOpen()) promptKeep.focus({ preventScroll: true });
+            // the question focus then (closePreview, questionFocusOwedFrom).
+            if (open && answerPrompt) {
+                if (previewOpen()) questionFocusOwedFrom = document.activeElement;
+                else promptKeep.focus({ preventScroll: true });
+            }
         }
 
         function switchTab(tab) {
@@ -1077,9 +1097,10 @@
         prompt.addEventListener('keydown', (e) => {
             // A held key's repeats. Enter on the Files button (or the
             // rail's) opening the sidebar on a question puts focus on Keep
-            // both, where the key's next repeat would answer it: one press,
-            // one action.
-            if (isRepeatedActivation(e)) {
+            // both, where the key's next repeat would answer it; so does
+            // Escape closing the preview over a question, where its next
+            // repeat would cancel it unseen. One press, one action.
+            if (isRepeatedActivation(e) || (e.repeat && e.key === 'Escape')) {
                 e.preventDefault();
                 return;
             }
@@ -1182,7 +1203,7 @@
             if (previewSensitive && !showProtected.checked) return;
             startDownload(helpers.downloadUrl(previewPath, { protectedOn: showProtected.checked }));
         });
-        document.getElementById('files-close-btn').addEventListener('click', closePreview);
+        document.getElementById('files-close-btn').addEventListener('click', () => closePreview());
         preview.addEventListener('click', (e) => { if (e.target === preview) closePreview(); });
         preview.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePreview(); });
         document.addEventListener('keydown', (e) => {

@@ -253,7 +253,7 @@ test('unreadableNote: what each view says about names it could not read, nothing
     assert.strictEqual(unreadableNote(1, 'recent'), '1 name could not be read (not valid UTF-8)');
     assert.strictEqual(unreadableNote(2, 'recent'), '2 names could not be read (not valid UTF-8)');
     for (const kind of ['zip', 'folder', 'recent']) {
-        for (const n of [0, undefined, null, '2', NaN, Infinity, -1, true, {}]) {
+        for (const n of [0, undefined, null, '2', NaN, Infinity, -1, 1.5, true, {}]) {
             assert.strictEqual(unreadableNote(n, kind), '', kind + ' ' + String(n));
         }
     }

@@ -232,7 +232,7 @@
      * they changed).
      */
     function unreadableNote(n, kind) {
-        if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return '';
+        if (!Number.isInteger(n) || n <= 0) return '';
         const names = n + (n === 1 ? ' name' : ' names');
         const verb = n === 1 ? 'is' : 'are';
         if (kind === 'zip') return names + ' could not be read (not valid UTF-8) and ' + verb + ' left out.';
