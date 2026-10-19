@@ -1131,8 +1131,9 @@ async function checkUploads(browser, url) {
     const LOCKED = '.ssh';
     const LINK = 'ctp-up-link';
     const COLLIDE = 'collide.yaml';
-    dexec(['sh', '-c', 'rm -rf "$1"; mkdir -p "$2/$3" "$2/ctp-up-link-target"; ln -sfn "$2/ctp-up-link-target" "$2/$4"; '
-        + 'printf "old: 1\\n" > "$2/$5"; chmod 600 "$2/$5"', 'sh', INBOX_DIR, SIDEBAR_DIR, LOCKED, LINK, COLLIDE]);
+    const TAKEN = 'taken.txt';   // a folder: its name is taken by something Replace cannot replace
+    dexec(['sh', '-c', 'rm -rf "$1"; mkdir -p "$2/$3" "$2/ctp-up-link-target" "$2/$6"; ln -sfn "$2/ctp-up-link-target" "$2/$4"; '
+        + 'printf "old: 1\\n" > "$2/$5"; chmod 600 "$2/$5"', 'sh', INBOX_DIR, SIDEBAR_DIR, LOCKED, LINK, COLLIDE, TAKEN]);
     const exists = (p) => dexec(['sh', '-c', '[ -e "$1" ] && echo yes || echo no', 'sh', p]).trim() === 'yes';
     const read = (p) => (exists(p) ? dexec(['cat', p]) : null);
     const mode = (p) => dexec(['stat', '-c', '%a', p]).trim();
@@ -1184,7 +1185,31 @@ async function checkUploads(browser, url) {
         }).locator('.files-menu-btn');
         const uploadHere = wrapper.locator('#files-menu .files-menu-item', { hasText: 'Upload here' });
         const promptShown = () => wrapper.evaluate('!document.getElementById("files-prompt").hidden');
+        const promptState = () => wrapper.evaluate(`JSON.stringify({
+            text: document.getElementById('files-prompt-text').textContent,
+            replace: !document.getElementById('files-prompt-replace').hidden,
+            focus: document.activeElement && document.activeElement.id,
+        })`).then(JSON.parse);
+        const asking = (text) => `${text} Answer in the Files sidebar.`;
         const uploadButton = () => wrapper.locator('#files-upload-btn').click();
+        // Drops are synthetic, with a real DataTransfer: dragenter and dragover,
+        // then the overlay is read, then the drop. A target is a selector,
+        // or { folder } for that folder's row.
+        const dropOn = (target, name, body) => wrapper.evaluate(`(() => {
+            const t = ${JSON.stringify(target)};
+            const n = ${JSON.stringify(name)};
+            const el = typeof t === 'string' ? document.querySelector(t)
+                : [...document.querySelectorAll('#files-list .files-row-wrap')]
+                    .find((w) => w.querySelector('.files-name')?.textContent === t.folder);
+            const dt = new DataTransfer();
+            dt.items.add(new File([${JSON.stringify(body)}], n, { type: n.endsWith('.png') ? 'image/png' : 'text/plain' }));
+            const fire = (type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+            fire('dragenter');
+            fire('dragover');
+            const overlay = document.getElementById('drop-zone').classList.contains('active');
+            fire('drop');
+            return JSON.stringify({ overlay });
+        })()`).then(JSON.parse);
 
         // The Upload button: the inbox, made on first use. Revealed and
         // previewed, never typed into the terminal.
@@ -1217,13 +1242,13 @@ async function checkUploads(browser, url) {
         check('a folder\'s ⋯ menu offers Upload here', await uploadHere.count(), 1);
         await pick(() => uploadHere.click(), local(COLLIDE, 'new: 2\n'));
         check('a taken name asks: Replace, Keep both or Cancel', await waitFor(promptShown), true);
-        check('the prompt names the file and folder, and puts focus on Replace',
-            await wrapper.evaluate(`JSON.stringify({
-                text: document.getElementById('files-prompt-text').textContent,
-                replace: !document.getElementById('files-prompt-replace').hidden,
-                focus: document.activeElement && document.activeElement.id,
-            })`).then(JSON.parse),
-            (v) => v.text === `${COLLIDE} already exists in ${SIDEBAR_DIR}.` && v.replace && v.focus === 'files-prompt-replace');
+        // Focus on Keep both, the answer that loses nothing: a key pressed
+        // without reading the question must never replace a file.
+        check('the prompt names the file and folder, and puts focus on Keep both',
+            await promptState(),
+            (v) => v.text === `${COLLIDE} already exists in ${SIDEBAR_DIR}.` && v.replace && v.focus === 'files-prompt-keep');
+        check('while it waits, the notice asks for an answer instead of still saying Checking',
+            (await notice()).text, asking(`${COLLIDE} already exists in ${SIDEBAR_DIR}.`));
         await wrapper.locator('#files-prompt-cancel').click();
         check('Cancel uploads nothing, and says so',
             await waitFor(async () => (await notice()).text === `Not uploaded: ${COLLIDE}.`), true);
@@ -1233,6 +1258,26 @@ async function checkUploads(browser, url) {
         await waitFor(promptShown);
         await page.keyboard.press('Escape');
         check('Escape answers Cancel', await waitFor(async () => !(await promptShown())), true);
+
+        // Two taken names in one pick: one question at a time, the notice
+        // counting the files behind it. TAKEN is a folder, which Replace
+        // cannot replace.
+        await menuButton(fixtureName).click();
+        await pick(() => uploadHere.click(), [local(COLLIDE, 'new: 2\n'), local(TAKEN, 'never\n')]);
+        check('while a question waits, the notice counts the files behind it',
+            await waitFor(async () => (await notice()).text
+                === `${asking(`${COLLIDE} already exists in ${SIDEBAR_DIR}.`)} 1 more waiting.`), true);
+        await wrapper.locator('#files-prompt-cancel').click();
+        check('a name taken by a folder offers only Keep both and Cancel, with focus on Keep both',
+            await waitFor(async () => {
+                const v = await promptState();
+                return v.text.startsWith(`${TAKEN} already exists in ${SIDEBAR_DIR} and is not a regular file`)
+                    && !v.replace && v.focus === 'files-prompt-keep';
+            }), true);
+        await wrapper.locator('#files-prompt-cancel').click();
+        check('both are left out, under one line',
+            await waitFor(async () => (await notice()).text === `Not uploaded: ${COLLIDE}, ${TAKEN}.`), true);
+        check('and the folder is untouched', dexec(['sh', '-c', '[ -d "$1" ] && ls -A "$1" | wc -l', 'sh', `${SIDEBAR_DIR}/${TAKEN}`]).trim(), '0');
         await menuButton(fixtureName).click();
         await pick(() => uploadHere.click(), local(COLLIDE, 'kept: 3\n'));
         await waitFor(promptShown);
@@ -1257,24 +1302,44 @@ async function checkUploads(browser, url) {
         await waitFor(async () => (await previewText(wrapper)) === 'replaced: 4\n');
         await closePreview();
 
-        // Drops. Synthetic, with a real DataTransfer: dragenter and dragover,
-        // then the overlay is read, then the drop. A target is a selector,
-        // or { folder } for that folder's row.
-        const dropOn = (target, name, body) => wrapper.evaluate(`(() => {
-            const t = ${JSON.stringify(target)};
-            const n = ${JSON.stringify(name)};
-            const el = typeof t === 'string' ? document.querySelector(t)
-                : [...document.querySelectorAll('#files-list .files-row-wrap')]
-                    .find((w) => w.querySelector('.files-name')?.textContent === t.folder);
-            const dt = new DataTransfer();
-            dt.items.add(new File([${JSON.stringify(body)}], n, { type: n.endsWith('.png') ? 'image/png' : 'text/plain' }));
-            const fire = (type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
-            fire('dragenter');
-            fire('dragover');
-            const overlay = document.getElementById('drop-zone').classList.contains('active');
-            fire('drop');
-            return JSON.stringify({ overlay });
-        })()`).then(JSON.parse);
+        // A question that comes while the user is typing in the terminal
+        // (a drop, or a batch that reached a taken name minutes later) must
+        // not take focus: their next Enter would answer it unseen. It waits
+        // in the sidebar, and the notice says so.
+        await wrapper.evaluate(`${TERM}.focus()`);
+        check('fixture: focus is in the terminal',
+            await wrapper.evaluate('document.activeElement && document.activeElement.id'), 'terminal-frame');
+        sendKeys('C-u');   // an empty command line, so the Enter below runs nothing
+        await dropOn({ folder: fixtureName }, COLLIDE, 'dropped: 5\n');
+        check('a taken name dropped while typing in the terminal still asks', await waitFor(promptShown), true);
+        check('but focus stays in the terminal, and the notice asks for an answer',
+            { focus: (await promptState()).focus, text: (await notice()).text },
+            (v) => v.focus === 'terminal-frame' && v.text === asking(`${COLLIDE} already exists in ${SIDEBAR_DIR}.`));
+        const paneBefore = tmux('#{history_size} #{cursor_y}');
+        await page.keyboard.press('Enter');
+        check('fixture: the Enter reached the terminal',
+            await waitFor(() => tmux('#{history_size} #{cursor_y}') !== paneBefore), true);
+        check('and did not answer the question',
+            { shown: await promptShown(), content: read(`${SIDEBAR_DIR}/${COLLIDE}`) },
+            (v) => v.shown && v.content === 'replaced: 4\n');
+        if (await promptShown()) await wrapper.locator('#files-prompt-cancel').click();
+        await waitFor(async () => (await notice()).text === `Not uploaded: ${COLLIDE}.`);
+        await closePreview();   // only there if a key did answer, but then in the way
+        // Nor with the preview open, even with focus on the page itself:
+        // Escape there closes the preview, and must not answer instead.
+        await list.locator('.files-row', { hasText: SIDEBAR_FILE }).click();
+        await waitFor(async () => (await previewText(wrapper)) === 'sidebar: ok\n');
+        await wrapper.evaluate('document.activeElement && document.activeElement.blur()');
+        await dropOn({ folder: fixtureName }, COLLIDE, 'dropped: 6\n');
+        await waitFor(promptShown);
+        check('with the preview open, a question takes no focus', (await promptState()).focus, (v) => v !== 'files-prompt-keep');
+        await page.keyboard.press('Escape');
+        check('and Escape closes the preview, leaving the question',
+            await waitFor(async () => !(await previewState(wrapper)).active && await promptShown()), true);
+        if (await promptShown()) await wrapper.locator('#files-prompt-cancel').click();
+        check('the file is still the replaced one', read(`${SIDEBAR_DIR}/${COLLIDE}`), 'replaced: 4\n');
+
+        // Drops (synthetic, see dropOn above).
         // Positive control: an image dropped on the terminal goes to the
         // terminal's image upload, which is what a sidebar drop must not do.
         await dropOn('#terminal-container', 'control.png', 'png');

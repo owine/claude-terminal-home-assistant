@@ -524,6 +524,9 @@
 
         let pickDest;   // where the next pick goes; undefined is the inbox
         let uploadChain = Promise.resolve();
+        // Files picked or dropped and not yet started, in the running batch
+        // and in those queued behind it: a waiting question counts them.
+        let filesWaiting = 0;
 
         // The same input for the Upload button and every Upload here, so
         // pickDest says which it was. Emptied first: holding its last
@@ -570,10 +573,22 @@
         // is taken. Never confirm(), which would block the page and the
         // terminal with it. Resolves to 'replace', 'keep-both' or null
         // (Cancel, Escape). Replace is offered only for a regular file.
+        //
+        // It can come minutes after the pick, mid-batch, or from a drop
+        // made while typing in the terminal. So it takes focus only from
+        // the sidebar itself (or from nowhere), and then puts it on Keep
+        // both, which loses nothing: focus pulled out of the terminal would
+        // let the next Enter answer a question nobody saw, and with the
+        // preview open Escape would answer it instead of closing the
+        // preview. Otherwise the notice, a live region, asks for the answer.
         let answerPrompt = null;
         function askCollision(text, replaceable) {
             return new Promise((resolve) => {
                 const returnTo = document.activeElement;
+                const takeFocus = !preview.classList.contains('active')
+                    && (!returnTo || returnTo === document.body || sidebar.contains(returnTo));
+                showProgress(text + ' Answer in the Files sidebar.'
+                    + (filesWaiting ? ' ' + filesWaiting + ' more waiting.' : ''));
                 promptText.textContent = text;
                 promptReplace.hidden = !replaceable;
                 prompt.hidden = false;
@@ -585,7 +600,7 @@
                     if (hadFocus && returnTo && returnTo.isConnected) returnTo.focus({ preventScroll: true });
                     resolve(choice);
                 };
-                (replaceable ? promptReplace : promptKeep).focus({ preventScroll: true });
+                if (takeFocus) promptKeep.focus({ preventScroll: true });
             });
         }
 
@@ -682,12 +697,19 @@
             const results = [];
             const problems = [];
             const skipped = [];
-            for (let i = 0; i < files.length; i++) {
-                const counter = files.length > 1 ? ' (' + (i + 1) + ' of ' + files.length + ')' : '';
-                const done = await uploadOne(files[i], dest, counter);
-                if (done.result) results.push(done.result);
-                else if (done.problem) problems.push(done.problem);
-                else skipped.push(done.skipped);
+            let started = 0;
+            try {
+                for (let i = 0; i < files.length; i++) {
+                    filesWaiting--;
+                    started++;
+                    const counter = files.length > 1 ? ' (' + (i + 1) + ' of ' + files.length + ')' : '';
+                    const done = await uploadOne(files[i], dest, counter);
+                    if (done.result) results.push(done.result);
+                    else if (done.problem) problems.push(done.problem);
+                    else skipped.push(done.skipped);
+                }
+            } finally {
+                filesWaiting -= files.length - started;   // what a failure left unstarted
             }
             await finishBatch(results, problems, skipped);
         }
@@ -697,6 +719,7 @@
         function uploadFiles(files, dest) {
             const batch = Array.from(files);
             if (!batch.length) return uploadChain;
+            filesWaiting += batch.length;
             uploadChain = uploadChain.then(() => runBatch(batch, dest)).catch((err) => {
                 console.error('[wrapper] upload failed:', err);
                 showNotice('⚠️ Upload failed: ' + err.message, 'error');
