@@ -77,8 +77,25 @@ test('a bogus small height is ignored', () => {
     assert.strictEqual(visibleHeight({ ownHeight: 0, outer: null }), null);
     assert.strictEqual(visibleHeight({ ownHeight: MIN_HEIGHT - 1, outer: null }), null);
     assert.strictEqual(visibleHeight({ ownHeight: MIN_HEIGHT, outer: null }), MIN_HEIGHT);
-    // A clamp that leaves almost nothing above the keyboard is ignored too.
-    assert.strictEqual(visibleHeight({ ownHeight: 788, outer: outer({ vvHeight: 150 }) }), null);
+    // ...even with a keyboard up: a bogus own height is not rescued by the clamp.
+    assert.strictEqual(visibleHeight({ ownHeight: MIN_HEIGHT - 1, outer: outer({ vvHeight: 508 }) }), null);
+});
+
+test('a clamp that leaves almost nothing above the keyboard falls back to the own height', () => {
+    // The own height is real; only the clamp is too small to apply. Keeping
+    // whatever height the page had instead could leave it taller than the
+    // frame, so follow the frame's own viewport, as before the clamp existed.
+    assert.strictEqual(visibleHeight({ ownHeight: 788, outer: outer({ vvHeight: 150 }) }), 788);
+});
+
+test('rotating to landscape with the keyboard up fits the page to the frame', () => {
+    // Landscape iPhone: the top window is 390 tall, the keyboard leaves 170 of
+    // it, and the frame starts 56 down - a clamp of 114, under MIN_HEIGHT. The
+    // frame itself is now 334. Keeping the portrait height (452) would
+    // overflow it; the frame's own height is the best available.
+    assert.strictEqual(
+        visibleHeight({ ownHeight: 334, outer: outer({ vvHeight: 170, innerHeight: 390 }) }),
+        334);
 });
 
 test('a non-numeric height is ignored', () => {
@@ -102,8 +119,8 @@ function topWindow({ vvHeight = 844, vvOffsetTop = 0, innerHeight = 844 } = {}) 
     return win;
 }
 
-function childOf(parent, top) {
-    return { parent, frameElement: { getBoundingClientRect: () => ({ top }) } };
+function childOf(parent, top, clientTop) {
+    return { parent, frameElement: { getBoundingClientRect: () => ({ top }), clientTop } };
 }
 
 test('the top window has no outer viewport', () => {
@@ -123,6 +140,15 @@ test('nested frames sum their offsets up to the top window', () => {
     const top = topWindow();
     const middle = childOf(top, 56);
     assert.strictEqual(outerViewport(childOf(middle, 20)).frameTop, 76);
+});
+
+test('a bordered frame counts its border in the offset', () => {
+    // getBoundingClientRect().top is the frame's border edge; its document
+    // starts clientTop (the top border) further down.
+    const top = topWindow();
+    assert.strictEqual(outerViewport(childOf(top, 56, 3)).frameTop, 59);
+    const middle = childOf(top, 56, 2);
+    assert.strictEqual(outerViewport(childOf(middle, 20, 1)).frameTop, 79);
 });
 
 test('a cross-origin parent gives no outer viewport', () => {
@@ -221,6 +247,8 @@ test('the returned teardown removes the listeners too, once', () => {
     const teardown = watchOuterViewport(win, { viewport }, () => {});
     teardown();
     assert.deepStrictEqual(viewport.removed.sort(), ['resize', 'scroll']);
+    assert.strictEqual(viewport.count('resize'), 0);
+    assert.strictEqual(viewport.count('scroll'), 0);
     assert.strictEqual(win.count('pagehide'), 0);
     teardown();
     win.fire('pagehide', { persisted: false });

@@ -2109,23 +2109,50 @@
             // frame's own viewport alone, as before it existed.
             const fit = window.ViewportFit;
 
-            function updateHeight() {
+            // Called with no argument (every event) it reads fresh numbers,
+            // since outerViewport is a snapshot; only the first call passes
+            // the one read below.
+            let lastPx = null;
+            function updateHeight(outer = fit && fit.outerViewport(window)) {
                 const height = fit
-                    ? fit.visibleHeight({ ownHeight: vv.height, outer: fit.outerViewport(window) })
+                    ? fit.visibleHeight({ ownHeight: vv.height, outer })
                     : vv.height;
                 // null: a bogus height, which would collapse the terminal.
                 if (height === null) return;
-                document.documentElement.style.setProperty('--app-height', height + 'px');
+                // A pan fires scroll events by the dozen with nothing to change;
+                // each write would restyle the page and refit the terminal.
+                const px = Math.round(height);
+                if (px === lastPx) return;
+                lastPx = px;
+                document.documentElement.style.setProperty('--app-height', px + 'px');
             }
 
-            vv.addEventListener('resize', updateHeight);
+            // At most one update per frame: the keyboard animation and a pan
+            // fire resize/scroll faster than the page can lay out.
+            let pending = false;
+            function scheduleUpdate() {
+                if (pending) return;
+                pending = true;
+                requestAnimationFrame(() => {
+                    pending = false;
+                    updateHeight();
+                });
+            }
+
+            vv.addEventListener('resize', scheduleUpdate);
             // The top window's viewport, when it is reachable: the keyboard
             // resizes it, and a pan or pinch-zoom scrolls it. It outlives
             // this frame (HA drops the ingress iframe on leaving the panel),
             // so the watcher takes its listeners off again on pagehide.
-            if (fit) fit.watchOuterViewport(window, fit.outerViewport(window), updateHeight);
-            // Set initial value
-            updateHeight();
+            const outer = fit ? fit.outerViewport(window) : null;
+            if (fit) fit.watchOuterViewport(window, outer, scheduleUpdate);
+            // A back-forward cache restore brings the page back as it was
+            // left; the viewport (rotation, keyboard) may have moved since.
+            window.addEventListener('pageshow', (event) => {
+                if (event.persisted) scheduleUpdate();
+            });
+            // Synchronous, so the first paint has the right height.
+            updateHeight(outer);
         })();
 
         // ========================================

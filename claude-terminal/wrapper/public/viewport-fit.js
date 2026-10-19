@@ -1,8 +1,9 @@
 'use strict';
 
-// How tall the page may be while the on-screen keyboard is up — pure logic,
-// no DOM writes. Shipped to the browser (attaches to window.ViewportFit) AND
-// required by the Node test harness (module.exports).
+// How tall the page may be while the on-screen keyboard is up — pure logic
+// plus listener lifetime; never writes styles. Shipped to the browser
+// (attaches to window.ViewportFit) AND required by the Node test harness
+// (module.exports).
 //
 // The keyboard shrinks the visual viewport but leaves 100vh alone, so
 // index.html sizes the layout from --app-height, set from visualViewport.
@@ -37,25 +38,31 @@
      * window: the keyboard, or a pinch-zoom. Otherwise this frame may be a
      * dashboard card scrolled partly off screen, and clamping would cut it to
      * whatever happened to be visible.
+     *
+     * null only when ownHeight itself is bogus. A clamp under MIN_HEIGHT
+     * (rotating to landscape with the keyboard up can leave ~100 px above
+     * it) falls back to ownHeight: "keep the current height" there would
+     * keep the portrait height, taller than the frame now is.
      */
     function visibleHeight({ ownHeight, outer } = {}) {
-        if (!usable(ownHeight)) return null;
-        let height = ownHeight;
+        if (!usable(ownHeight) || ownHeight < MIN_HEIGHT) return null;
         if (outer && usable(outer.vvHeight) && usable(outer.vvOffsetTop)
             && usable(outer.innerHeight) && usable(outer.frameTop)
             && outer.vvHeight < outer.innerHeight - SLACK) {
             const bottom = outer.vvOffsetTop + outer.vvHeight;
-            height = Math.min(height, bottom - outer.frameTop);
+            const clamped = Math.min(ownHeight, bottom - outer.frameTop);
+            if (clamped >= MIN_HEIGHT) return clamped;
         }
-        return height < MIN_HEIGHT ? null : height;
+        return ownHeight;
     }
 
     /**
      * The top window's visual viewport as seen from `win`, or null when `win`
      * is the top window or any parent is cross-origin. frameTop sums each
-     * frame's offset in its parent, so it is where `win` starts in the top
-     * window. `viewport` is the live VisualViewport, for event listeners;
-     * the numbers are a snapshot, so call again on each event.
+     * frame's offset in its parent (the top of its border box plus its top
+     * border width, where its document starts), so it is where `win` starts
+     * in the top window. `viewport` is the live VisualViewport, for event
+     * listeners; the numbers are a snapshot, so call again on each event.
      *
      * Every read is inside the try: across origins frameElement is null, and
      * touching the other window's properties throws a SecurityError.
@@ -68,7 +75,7 @@
             while (current.parent !== current) {
                 const frame = current.frameElement;
                 if (!frame) return null;
-                frameTop += frame.getBoundingClientRect().top;
+                frameTop += frame.getBoundingClientRect().top + (frame.clientTop || 0);
                 current = current.parent;
             }
             const viewport = current.visualViewport;
@@ -87,8 +94,12 @@
 
     /**
      * Call `handler` on the top window's viewport resizes and scrolls (the
-     * keyboard, a pan, a pinch-zoom) until `win` unloads. Returns a teardown;
-     * it and the pagehide that calls it remove the listeners once.
+     * keyboard, a pan, a pinch-zoom) until `win` unloads. Returns a teardown.
+     * It runs at most once, whether called directly or by pagehide.
+     *
+     * The top window's layout scroll is not watched: it moves the frame only
+     * when the frame is embedded in a scrolling dashboard, and the ingress
+     * panel does not scroll.
      *
      * The top viewport outlives this frame: HA drops the ingress iframe when
      * the user leaves the panel and makes a new one on return. Listeners left
