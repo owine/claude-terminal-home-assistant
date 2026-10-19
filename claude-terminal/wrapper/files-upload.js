@@ -63,6 +63,8 @@ const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDE
 // ENOTEMPTY, which POSIX allows for one with files in it). The folder
 // changed; not a fault.
 const PATH_CHANGED = new Set(['ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR', 'ENOTEMPTY']);
+// Of those, the ones that mean a folder is at the name now.
+const FOLDER_AT_NAME = new Set(['EISDIR', 'ENOTEMPTY']);
 // Failures that are the file system's, not a bug: answered as what they are
 // (the global answer would be "Internal error"), and still logged.
 const DISK_FULL_TEXT = 'The disk is full, so the file was not saved. Free some space and try again.';
@@ -153,9 +155,9 @@ function withSuffix(name, n) {
     return dot > 0 ? `${name.slice(0, dot)} (${n})${name.slice(dot)}` : `${name} (${n})`;
 }
 
-async function lstatOrNull(p, options) {
+async function lstatOrNull(p, options, lstat = fsp.lstat) {
     try {
-        return await fsp.lstat(p, options);
+        return await lstat(p, options);
     } catch (err) {
         if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
         throw err;
@@ -178,8 +180,9 @@ const sizeText = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
 /**
  * Uploads over a files-api instance (for locate() and its root). `record` is
  * upload-parts.js's createPartRecord. The rest are test seams: `fsOps` the
- * link and rename that put a finished part in place and the realpath of the
- * last check before them (each defaults on its own), `openPart` its open
+ * link and rename that put a finished part in place, the realpath of the
+ * last check before them and the lstat that tells the part's file apart
+ * (each defaults on its own), `openPart` its open
  * (a FileHandle, or anything with its stat - which must honour
  * { bigint: true } - chmod, write, datasync, truncate and close),
  * `partName` its name, `onPlanned` a hook between the checks and
@@ -201,7 +204,7 @@ function createUploads({
     onPlanned = null,
     beforeCommit = null,
 } = {}) {
-    const fsOps = { link: fsp.link, rename: fsp.rename, realpath: fsp.realpath, ...ops };
+    const fsOps = { link: fsp.link, rename: fsp.rename, realpath: fsp.realpath, lstat: fsp.lstat, ...ops };
     const maxMb = Math.round(maxBytes / MB);
     const limitText = `the ${maxMb} MB upload limit (the add-on's upload_max_mb option)`;
     // A size that rounds to the limit or under ("1.0 MB, over the 1 MB
@@ -220,12 +223,18 @@ function createUploads({
     const savedThenMoved = (name, display) => new FilesError(409,
         `${name} was saved in ${display}, but it was moved or replaced the moment it was put there, so it is not there now.`,
         { reason: 'changed' });
-    // A rename that put something at `name`, which is not this upload's file
-    // now. The part's name is gone after a rename, so whether the file put
-    // there was the upload cannot be told: neither "saved" nor "nothing was".
+    // Something was put at `name`, and what is there now (if anything) is
+    // not this upload's file, with no way to tell whether it was: after a
+    // rename the part's name is gone, and a folder moved the moment after
+    // takes both names out of reach. Neither "saved" nor "nothing was".
     const notTheUpload = (name, display) => new FilesError(409,
-        `${name} in ${display} is not the upload: it was moved or replaced as it was put in place. `
+        `${name} in ${display} is not the upload, or is not there: it was moved or replaced as it was put in place. `
         + 'It may have been saved first and then moved elsewhere.',
+        { reason: 'changed' });
+    // A Replace's rename, or the rename that stands in for a link, met a
+    // folder at the name: made there since its last look.
+    const becameFolder = (name, display) => new FilesError(409,
+        `${name} in ${display} became a folder during the upload, so nothing was saved.`,
         { reason: 'changed' });
     // A Replace whose rename went through: the old file is overwritten,
     // whatever is at its name now, so "nothing was saved" would be untrue.
@@ -350,9 +359,10 @@ function createUploads({
     // there; null when the name is taken. `progress.put` is set the moment
     // either goes through (see receive).
     async function placeNew(part, target, progress) {
+        progress.at = target;
         try {
             await fsOps.link(part, target);
-            Object.assign(progress, { put: true, at: target });
+            progress.put = true;
             return 'link';
         } catch (err) {
             if (err.code === 'EEXIST') return null;
@@ -360,7 +370,7 @@ function createUploads({
         }
         if (await lstatOrNull(target)) return null;
         await fsOps.rename(part, target);
-        Object.assign(progress, { put: true, at: target });
+        progress.put = true;
         return 'rename';
     }
 
@@ -392,7 +402,7 @@ function createUploads({
     // make the path act on the link's target. Compared as BigInts on both
     // sides: an inode number can be over 2^53, where a Number rounds it.
     async function samePart(part, id) {
-        const st = await lstatOrNull(part, { bigint: true });
+        const st = await lstatOrNull(part, { bigint: true }, fsOps.lstat);
         return Boolean(st && st.dev === id.dev && st.ino === id.ino);
     }
     async function mustBeOurs(part, id, planned) {
@@ -403,9 +413,9 @@ function createUploads({
     // to, since macOS's link() follows a link at its first path (Linux's
     // does not).
     async function sameFileAsPart(target, part) {
-        const t = await lstatOrNull(target, { bigint: true });
+        const t = await lstatOrNull(target, { bigint: true }, fsOps.lstat);
         const same = (st) => Boolean(t && st && st.dev === t.dev && st.ino === t.ino);
-        if (same(await lstatOrNull(part, { bigint: true }))) return true;
+        if (same(await lstatOrNull(part, { bigint: true }, fsOps.lstat))) return true;
         return same(await fsp.stat(part, { bigint: true }).catch(() => null));
     }
     // After the link or rename, `target` must hold the uploaded file. It
@@ -422,9 +432,14 @@ function createUploads({
     // What is said: a Replace that overwrote a file says the old one is
     // gone. After a link(), a part's name that still names this upload's
     // file (asked straight after the mismatch) says the link was right: the
-    // file was saved, then moved or replaced at once. One that does not
-    // says the link put another file there, so nothing was saved. After a
-    // rename the part's name is gone, so it cannot be told: neither.
+    // file was saved, then moved or replaced at once. A target that is the
+    // same file as the one at the part's name, which is not this upload's,
+    // says the link put another file there, so nothing was saved: the only
+    // case known to have saved nothing. Anything else says neither: after a
+    // rename the part's name is gone, and when the folder was moved or
+    // deleted the moment after, neither name finds anything (ENOENT,
+    // ENOTDIR read as nothing there), though the moved folder may hold the
+    // upload.
     async function mustHavePlaced(target, id, planned, log, { part, how, overwrote = false }) {
         if (await samePart(target, id)) return;
         const name = path.basename(target);
@@ -433,7 +448,9 @@ function createUploads({
             throw savedThenMoved(name, planned.display);
         }
         const what = `Upload not in place: ${target} is not the uploaded file (moved or replaced as it was put in place)`;
+        let anotherFile = false;
         if (how === 'link' && await sameFileAsPart(target, part)) {
+            anotherFile = true;
             try {
                 await fsp.unlink(target);
                 log(`${what}; it was a second name for the file at ${part}, made by this upload, so that name was removed`);
@@ -444,7 +461,7 @@ function createUploads({
             log(`${what}; left as it is`);
         }
         if (overwrote) throw replacedChanged(planned.name, planned.display);
-        throw how === 'link' ? partChanged(planned.display) : notTheUpload(name, planned.display);
+        throw anotherFile ? partChanged(planned.display) : notTheUpload(name, planned.display);
     }
 
     // `handle` is the part's open descriptor, still open: Replace sets the
@@ -460,8 +477,9 @@ function createUploads({
             // sticky: an upload must not inherit those.
             if (old) await handle.chmod(old.mode & 0o777);
             await mustBeOurs(part, id, planned);
+            progress.at = target;
             await fsOps.rename(part, target);   // swaps the whole file in at once
-            Object.assign(progress, { put: true, at: target, overwrote: Boolean(old) });
+            Object.assign(progress, { put: true, overwrote: Boolean(old) });
             await mustHavePlaced(target, id, planned, log, { part, how: 'replace', overwrote: Boolean(old) });
             return { path: target, name: planned.name, replaced: Boolean(old) };
         }
@@ -501,10 +519,10 @@ function createUploads({
         // that file is ever emptied or deleted.
         let id = null;
         // `put` is set the moment a link or rename puts the part at its
-        // name (`at`). From then on the file can be the user's upload
-        // somewhere, whatever any later check says: moved away the moment
-        // it landed, it is still their bytes, so never emptied.
-        // `overwrote`: that was a Replace's rename onto a file.
+        // name (`at`, the name being tried until then). From then on the
+        // file can be the user's upload somewhere, whatever any later check
+        // says: moved away the moment it landed, it is still their bytes, so
+        // never emptied. `overwrote`: that was a Replace's rename onto a file.
         const progress = { put: false, at: null, overwrote: false };
         try {
             handle = await openPart(part);
@@ -522,22 +540,27 @@ function createUploads({
             try {
                 placed = await commit(part, planned, handle, id, log, progress);
             } catch (err) {
-                // A link or rename that finds no part, or no folder, at
-                // the path, or a folder at the name (PATH_CHANGED): the
-                // folder was moved or swapped for a file or a link since its
-                // last check. Or the check of the name after a link or rename
-                // that went through met the same (an lstat's ELOOP): then
-                // "nothing was saved" would be untrue, so a Replace that
-                // overwrote a file says the old one is gone, and anything
-                // else says neither.
-                if (!PATH_CHANGED.has(err.code)) throw err;
-                if (!progress.put) {
-                    log(`Upload not saved: ${err.message}`);
-                    throw partChanged(planned.display);
+                if (err instanceof FilesError) throw err;
+                // The check of the name after a link or rename that went
+                // through failed: an lstat's ELOOP (the folder became a link
+                // loop), or EACCES, EIO. Not a refusal: FS_REFUSALS would say
+                // "the file was not saved", untrue now. A Replace that
+                // overwrote a file says the old one is gone; anything else
+                // says neither.
+                if (progress.put) {
+                    log(`Upload put at ${progress.at}, then its check failed: ${err.message}`);
+                    throw progress.overwrote ? replacedChanged(planned.name, planned.display)
+                        : notTheUpload(path.basename(progress.at), planned.display);
                 }
-                log(`Upload put at ${progress.at}, then its folder changed: ${err.message}`);
-                throw progress.overwrote ? replacedChanged(planned.name, planned.display)
-                    : notTheUpload(path.basename(progress.at), planned.display);
+                // A link or rename that finds no part, or no folder, at the
+                // path, or a folder at the name (PATH_CHANGED): the folder
+                // was moved or swapped for a file or a link since its last
+                // check, or a folder was made at the name.
+                if (!PATH_CHANGED.has(err.code)) throw err;
+                log(`Upload not saved: ${err.message}`);
+                throw FOLDER_AT_NAME.has(err.code) && progress.at
+                    ? becameFolder(path.basename(progress.at), planned.display)
+                    : partChanged(planned.display);
             }
             return { ...placed, size, dir: planned.display, inbox: planned.inbox };
         } finally {

@@ -1238,14 +1238,35 @@ test('race: Replace onto a name that becomes a folder between its last look and 
             await withServer({ uploads, log: (m) => logged.push(m) }, async (url) => {
                 const res = await post(url, { name: 't.txt', dest: 'race-isdir', onConflict: 'replace' }, 'new');
                 assert.strictEqual(res.status, 409, JSON.stringify(left));
-                const body = await res.json();
-                assert.strictEqual(body.reason, 'changed');
-                assert.match(body.error, /nothing was saved/);
+                // what happened, not that the temporary file moved
+                assert.deepStrictEqual(await res.json(), {
+                    reason: 'changed',
+                    error: `t.txt in ${f.dir} became a folder during the upload, so nothing was saved.`,
+                });
             });
             // what is at the name is left as it is, and no part anywhere
             assert.deepStrictEqual(typeof left === 'string' ? fs.readFileSync(target, 'utf8') : filesIn(target), left);
             assert.deepStrictEqual(partsUnder(f.dir), []);
         }
+        // Without hard links, placeNew's lstat then rename: a folder made at
+        // the name between the two is the same 409, naming that name.
+        const noLinks = createUploads({
+            api, record,
+            fsOps: {
+                link: async () => { throw Object.assign(new Error('not supported'), { code: 'EPERM' }); },
+                rename: async (a, b) => { fs.mkdirSync(b); return fs.promises.rename(a, b); },
+            },
+        });
+        await withServer({ uploads: noLinks, log: (m) => logged.push(m) }, async (url) => {
+            const res = await post(url, { name: 'n.txt', dest: 'race-isdir' }, 'new');
+            assert.strictEqual(res.status, 409);
+            assert.deepStrictEqual(await res.json(), {
+                reason: 'changed',
+                error: `n.txt in ${f.dir} became a folder during the upload, so nothing was saved.`,
+            });
+        });
+        assert.deepStrictEqual(filesIn(path.join(f.dir, 'n.txt')), {});
+        assert.deepStrictEqual(partsUnder(f.dir), []);
         assert.ok(logged.some((m) => /EISDIR/.test(m)), logged.join('\n'));
         assert.ok(logged.some((m) => /ENOTEMPTY/.test(m)), logged.join('\n'));
     } finally {
@@ -1355,7 +1376,7 @@ test('race: a part swapped in the moment before it is put in place is a logged 4
     const linkSays = (error) => assert.match(error, /nothing was saved/);
     const renameSays = (name) => (error) => {
         assert.doesNotMatch(error, /nothing was saved|was saved in|overwritten/);
-        assert.match(error, new RegExp(`^${name.replace('.', '\\.')} in .*race-place is not the upload`));
+        assert.match(error, new RegExp(`^${name.replace('.', '\\.')} in .*race-place is not the upload, or is not there`));
     };
     const cases = [
         [viaLink, { name: 'l.txt' }, { [PART]: 'not the upload', 'old.txt': 'old' }, 'l.txt', linkSays],
@@ -1477,7 +1498,7 @@ test('race: a file moved away the moment it is put in place keeps every byte', a
         }],
         [viaReplace, { name: 'old.txt', onConflict: 'replace' }, (error) => assert.match(error, /was overwritten/)],
         [noLinks, { name: 'n.txt' }, (error) => {
-            assert.match(error, /^n\.txt in .*race-taken is not the upload/);
+            assert.match(error, /^n\.txt in .*race-taken is not the upload, or is not there/);
             assert.doesNotMatch(error, /nothing was saved|was saved in/);
         }],
     ];
@@ -1525,7 +1546,8 @@ test('race: a Replace that put something else in place says the old file is gone
             body = await res.json();
             assert.strictEqual(body.reason, 'changed');
             assert.strictEqual(body.replaced, undefined);
-            assert.doesNotMatch(body.error, /overwritten/);
+            assert.doesNotMatch(body.error, /overwritten|nothing was saved/);
+            assert.match(body.error, /^free\.txt in .*race-replaced is not the upload, or is not there/);
         });
     } finally {
         f.cleanup();
@@ -1627,6 +1649,93 @@ test('race: a link loop met just after the file is put in place never says nothi
         f.cleanup();
     }
     assert.deepStrictEqual(partsUnder(), []);
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('race: a folder moved or swapped for a file just after the link never says nothing was saved', async () => {
+    // The link went through; the moment after, the folder is moved away (or
+    // a file put at its path). Every check then finds nothing at either name
+    // (ENOENT, ENOTDIR), but the moved folder holds the upload.
+    const f = raceFixture('race-afterlink');
+    const away = path.join(base, 'away-race-afterlink');
+    const moves = [
+        ['moved', () => fs.renameSync(f.dir, away)],
+        ['swapped for a file', () => { fs.renameSync(f.dir, away); fs.writeFileSync(f.dir, 'a file now'); }],
+    ];
+    try {
+        for (const [how, move] of moves) {
+            const uploads = createUploads({
+                api, record, fsOps: { link: async (a, b) => { await fs.promises.link(a, b); move(); } },
+            });
+            await withServer({ uploads }, async (url) => {
+                const res = await post(url, { dest: 'race-afterlink', name: 'n.txt' }, 'USER CONTENT');
+                assert.strictEqual(res.status, 409, how);
+                const body = await res.json();
+                assert.strictEqual(body.reason, 'changed');
+                assert.doesNotMatch(body.error, /nothing was saved/, how);
+                assert.match(body.error, /^n\.txt in .*race-afterlink is not the upload, or is not there/, how);
+            });
+            // Every byte, where the folder went. Its part is a second name
+            // for the file, out of the unlink's reach, never emptied.
+            const left = filesIn(away);
+            assert.strictEqual(left['n.txt'], 'USER CONTENT', how);
+            for (const n of Object.keys(left).filter((n) => /^\.ctp-upload-.*\.part$/.test(n))) {
+                assert.strictEqual(left[n], 'USER CONTENT', how);
+            }
+            fs.rmSync(f.dir, { recursive: true, force: true });
+            fs.rmSync(away, { recursive: true, force: true });
+            fs.mkdirSync(f.dir);
+        }
+    } finally {
+        fs.rmSync(away, { recursive: true, force: true });
+        f.cleanup();
+    }
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('race: any other failure of the check after the file is put in place is no "not saved" refusal', async () => {
+    // The lstat of the name after the link or rename fails some other way
+    // (EACCES, EIO). FS_REFUSALS words those as "the file was not saved",
+    // untrue once it was put in place: the answer says neither, or, for a
+    // Replace that overwrote a file, that the old one is gone.
+    const f = raceFixture('race-afterfail');
+    const failingAfter = (code, place) => {
+        let placed = null;
+        return createUploads({
+            api, record,
+            fsOps: {
+                [place]: async (a, b) => { await fs.promises[place](a, b); placed = b; },
+                lstat: async (p, opts) => {
+                    if (p === placed) { placed = null; throw Object.assign(new Error(`${code}: lstat failed`), { code }); }
+                    return fs.promises.lstat(p, opts);
+                },
+            },
+        });
+    };
+    const logged = [];
+    fs.writeFileSync(path.join(f.dir, 'old.txt'), 'old');
+    try {
+        await withServer({ uploads: failingAfter('EACCES', 'link'), log: (m) => logged.push(m) }, async (url) => {
+            const res = await post(url, { dest: 'race-afterfail', name: 'n.txt' }, 'USER CONTENT');
+            assert.strictEqual(res.status, 409);
+            const body = await res.json();
+            assert.strictEqual(body.reason, 'changed');
+            assert.doesNotMatch(body.error, /not saved|nothing was saved/);
+            assert.match(body.error, /^n\.txt in .*race-afterfail is not the upload, or is not there/);
+        });
+        await withServer({ uploads: failingAfter('EIO', 'rename'), log: (m) => logged.push(m) }, async (url) => {
+            const res = await post(url, { dest: 'race-afterfail', name: 'old.txt', onConflict: 'replace' }, 'USER CONTENT');
+            assert.strictEqual(res.status, 409);
+            const body = await res.json();
+            assert.strictEqual(body.replaced, true);
+            assert.match(body.error, /old\.txt in .*race-afterfail was overwritten/);
+        });
+        // both files are the upload, every byte, and no part is left
+        assert.deepStrictEqual(filesIn(f.dir), { 'n.txt': 'USER CONTENT', 'old.txt': 'USER CONTENT' });
+        assert.ok(logged.some((m) => /EACCES/.test(m)) && logged.some((m) => /EIO/.test(m)), logged.join('\n'));
+    } finally {
+        f.cleanup();
+    }
     assert.deepStrictEqual(recorded(), []);
 });
 

@@ -119,13 +119,14 @@ async function zipBudget(n) {
 // made for an upload that is then refused or cancelled and so took no share.
 // Must match filesUploadLimiter's max in server.js; if that changes, change this.
 const UPLOAD_LIMIT = 60;
+const UPLOAD_BUDGET = UPLOAD_LIMIT - 1;   // one upload's room kept free for preflights
 const uploadHits = [];
 const uploadStats = { peak: 0, waitedMs: 0 };
 async function uploadBudget(n) {
     const start = Date.now();
     for (;;) {
         while (uploadHits.length && uploadHits[0] <= Date.now() - ZIP_WINDOW_MS) uploadHits.shift();
-        if (uploadHits.length + n <= UPLOAD_LIMIT - 1) break;
+        if (uploadHits.length + n <= UPLOAD_BUDGET) break;
         await sleep(250);
     }
     for (let i = 0; i < n; i++) uploadHits.push(Date.now());
@@ -2153,7 +2154,7 @@ try {
 
 console.log(`\nzip budget: peak ${zipStats.peak}/${ZIP_LIMIT} limiter requests in any ${ZIP_WINDOW_MS / 1000} s, `
     + `waited ${(zipStats.waitedMs / 1000).toFixed(1)} s in all`);
-console.log(`upload budget: peak ${uploadStats.peak}/${UPLOAD_LIMIT} uploads in any ${ZIP_WINDOW_MS / 1000} s, `
+console.log(`upload budget: peak ${uploadStats.peak}/${UPLOAD_BUDGET} uploads (limit ${UPLOAD_LIMIT}, one kept free) in any ${ZIP_WINDOW_MS / 1000} s, `
     + `waited ${(uploadStats.waitedMs / 1000).toFixed(1)} s in all`);
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
