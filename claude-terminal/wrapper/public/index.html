@@ -1219,6 +1219,7 @@
     <script src="files-sidebar.js"></script>
     <script src="upload-client.js"></script>
     <script src="files-sidebar-ui.js"></script>
+    <script src="viewport-fit.js"></script>
     <script>
         let ttydPort = 7681;
 
@@ -2085,18 +2086,73 @@
         // 100vh still equals full screen height, hiding the terminal bottom.
         // Use the Visual Viewport API to set a CSS custom property (--app-height)
         // that tracks the actual visible height.
+        //
+        // Inside Home Assistant this page is the ingress iframe, and the
+        // keyboard shrinks only the TOP window's visual viewport; this frame's
+        // own stays full height. viewport-fit.js reads the top window's too
+        // (same-origin under ingress) and keeps to the part of this frame above
+        // the keyboard. The terminal then refits by itself: the shorter layout
+        // resizes the ttyd iframe, which runs ttyd's own resize listener.
+        //
+        // No window.scrollTo(0, 0) here, unlike upstream. Under ingress the pan
+        // iOS makes for a focused input happens in HA's top window, which a
+        // scroll of this one cannot reach (and this page has no business
+        // scrolling HA's). This document never outgrows its viewport (body is
+        // overflow: hidden at --app-height), so there is nothing of ours to
+        // scroll back - and snapping to 0,0 on every viewport event would fight
+        // a pinch-zoom pan on the direct port.
 
         (function() {
             const vv = window.visualViewport;
             if (!vv) return; // Not supported, 100vh fallback works fine
+            // viewport-fit.js can fail to load (404 mid-update): follow this
+            // frame's own viewport alone, as before it existed.
+            const fit = window.ViewportFit;
 
-            function updateHeight() {
-                document.documentElement.style.setProperty('--app-height', vv.height + 'px');
+            // Called with no argument (every event) it reads fresh numbers,
+            // since outerViewport is a snapshot; only the first call passes
+            // the one read below.
+            let lastPx = null;
+            function updateHeight(outer = fit && fit.outerViewport(window)) {
+                const height = fit
+                    ? fit.visibleHeight({ ownHeight: vv.height, outer })
+                    : vv.height;
+                // null: a bogus height, which would collapse the terminal.
+                if (height === null) return;
+                // A pan fires scroll events by the dozen with nothing to change;
+                // each write would restyle the page and refit the terminal.
+                const px = Math.round(height);
+                if (px === lastPx) return;
+                lastPx = px;
+                document.documentElement.style.setProperty('--app-height', px + 'px');
             }
 
-            vv.addEventListener('resize', updateHeight);
-            // Set initial value
-            updateHeight();
+            // At most one update per frame: the keyboard animation and a pan
+            // fire resize/scroll faster than the page can lay out.
+            let pending = false;
+            function scheduleUpdate() {
+                if (pending) return;
+                pending = true;
+                requestAnimationFrame(() => {
+                    pending = false;
+                    updateHeight();
+                });
+            }
+
+            vv.addEventListener('resize', scheduleUpdate);
+            // The top window's viewport, when it is reachable: the keyboard
+            // resizes it, and a pan or pinch-zoom scrolls it. It outlives
+            // this frame (HA drops the ingress iframe on leaving the panel),
+            // so the watcher takes its listeners off again on pagehide.
+            const outer = fit ? fit.outerViewport(window) : null;
+            if (fit) fit.watchOuterViewport(window, outer, scheduleUpdate);
+            // A back-forward cache restore brings the page back as it was
+            // left; the viewport (rotation, keyboard) may have moved since.
+            window.addEventListener('pageshow', (event) => {
+                if (event.persisted) scheduleUpdate();
+            });
+            // Synchronous, so the first paint has the right height.
+            updateHeight(outer);
         })();
 
         // ========================================

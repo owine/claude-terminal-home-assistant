@@ -1,0 +1,140 @@
+'use strict';
+
+// How tall the page may be while the on-screen keyboard is up — pure logic
+// plus listener lifetime; never writes styles. Shipped to the browser
+// (attaches to window.ViewportFit) AND required by the Node test harness
+// (module.exports).
+//
+// The keyboard shrinks the visual viewport but leaves 100vh alone, so
+// index.html sizes the layout from --app-height, set from visualViewport.
+// That alone works on the direct port and in the PWA, where this page is the
+// top window. Inside Home Assistant it is the ingress iframe, and iOS (and
+// Chromium by default) shrink only the TOP window's visual viewport: this
+// frame's own stays full height, and the prompt sat behind the keyboard until
+// a keystroke made the browser scroll. Ingress is same-origin, so the top
+// window's viewport is readable; follow it too.
+//
+// Ported from ESJavadex/claude-code-ha v2.3.6 (#50, by @nsleigh).
+(function (root) {
+    // Below this a height is bogus (iOS reports near-zero values mid-
+    // transition) and applying it would collapse the terminal entirely.
+    const MIN_HEIGHT = 120;
+
+    // Rounding can leave the top viewport a fraction of a pixel short of
+    // innerHeight with no keyboard up; that must not count as one.
+    const SLACK = 1;
+
+    const usable = (n) => typeof n === 'number' && Number.isFinite(n);
+
+    /**
+     * The height the page should take, or null to keep the current one.
+     *
+     * ownHeight: this page's own visualViewport.height.
+     * outer: null (this page is the top window, or a parent is cross-origin),
+     *   or the top window's { vvHeight, vvOffsetTop, innerHeight } plus
+     *   frameTop, where this frame starts in the top window's layout viewport.
+     *
+     * The clamp applies only while the top viewport is shorter than the top
+     * window: the keyboard, or a pinch-zoom. Otherwise this frame may be a
+     * dashboard card scrolled partly off screen, and clamping would cut it to
+     * whatever happened to be visible.
+     *
+     * null only when ownHeight itself is bogus. A clamp under MIN_HEIGHT
+     * (rotating to landscape with the keyboard up can leave ~100 px above
+     * it) falls back to ownHeight: "keep the current height" there would
+     * keep the portrait height, taller than the frame now is.
+     */
+    function visibleHeight({ ownHeight, outer } = {}) {
+        if (!usable(ownHeight) || ownHeight < MIN_HEIGHT) return null;
+        if (outer && usable(outer.vvHeight) && usable(outer.vvOffsetTop)
+            && usable(outer.innerHeight) && usable(outer.frameTop)
+            && outer.vvHeight < outer.innerHeight - SLACK) {
+            const bottom = outer.vvOffsetTop + outer.vvHeight;
+            const clamped = Math.min(ownHeight, bottom - outer.frameTop);
+            if (clamped >= MIN_HEIGHT) return clamped;
+        }
+        return ownHeight;
+    }
+
+    /**
+     * The top window's visual viewport as seen from `win`, or null when `win`
+     * is the top window or any parent is cross-origin. frameTop sums each
+     * frame's offset in its parent (the top of its border box plus its top
+     * border width, where its document starts), so it is where `win` starts
+     * in the top window. `viewport` is the live VisualViewport, for event
+     * listeners; the numbers are a snapshot, so call again on each event.
+     *
+     * Every read is inside the try: across origins frameElement is null, and
+     * touching the other window's properties throws a SecurityError.
+     */
+    function outerViewport(win) {
+        try {
+            if (!win) return null;
+            let current = win;
+            let frameTop = 0;
+            while (current.parent !== current) {
+                const frame = current.frameElement;
+                if (!frame) return null;
+                frameTop += frame.getBoundingClientRect().top + (frame.clientTop || 0);
+                current = current.parent;
+            }
+            const viewport = current.visualViewport;
+            if (current === win || !viewport) return null;
+            return {
+                viewport,
+                vvHeight: viewport.height,
+                vvOffsetTop: viewport.offsetTop,
+                innerHeight: current.innerHeight,
+                frameTop,
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Call `handler` on the top window's viewport resizes and scrolls (the
+     * keyboard, a pan, a pinch-zoom) until `win` unloads. Returns a teardown.
+     * It runs at most once, whether called directly or by pagehide.
+     *
+     * The top window's layout scroll is not watched: it moves the frame only
+     * when the frame is embedded in a scrolling dashboard, and the ingress
+     * panel does not scroll.
+     *
+     * The top viewport outlives this frame: HA drops the ingress iframe when
+     * the user leaves the panel and makes a new one on return. Listeners left
+     * behind would keep firing, and keep each dead document alive.
+     *
+     * A persisted pagehide (the tab entering the back-forward cache) keeps
+     * them: HA's window is frozen along with this one, so nothing leaks, and
+     * the page could come back without the fit.
+     *
+     * Never throws. `outer.viewport` belongs to another window, which may
+     * have turned cross-origin or be gone, so every call on it is guarded.
+     */
+    function watchOuterViewport(win, outer, handler) {
+        const viewport = outer && outer.viewport;
+        if (!viewport) return () => {};
+        let done = false;
+        const attempt = (fn) => { try { fn(); } catch { /* see above */ } };
+        function teardown() {
+            if (done) return;
+            done = true;
+            attempt(() => viewport.removeEventListener('resize', handler));
+            attempt(() => viewport.removeEventListener('scroll', handler));
+            attempt(() => win.removeEventListener('pagehide', onPageHide));
+        }
+        function onPageHide(event) {
+            if (event && event.persisted) return;
+            teardown();
+        }
+        attempt(() => viewport.addEventListener('resize', handler));
+        attempt(() => viewport.addEventListener('scroll', handler));
+        attempt(() => win.addEventListener('pagehide', onPageHide));
+        return teardown;
+    }
+
+    const api = { visibleHeight, outerViewport, watchOuterViewport, MIN_HEIGHT };
+    if (typeof module !== 'undefined' && module.exports) module.exports = api;
+    root.ViewportFit = api;
+})(typeof self !== 'undefined' ? self : this);

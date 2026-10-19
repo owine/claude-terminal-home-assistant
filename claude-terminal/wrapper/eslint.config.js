@@ -27,7 +27,7 @@ module.exports = [
         // Dual-target UMD modules: shipped to the browser AND required by the Node test harness.
         // The public/**/*.js block above already grants browser + serviceworker globals;
         // this adds the CommonJS globals they need for `module.exports`.
-        files: ['public/login-link.js', 'public/terminal-clipboard.js', 'public/files-sidebar.js'],
+        files: ['public/login-link.js', 'public/terminal-clipboard.js', 'public/files-sidebar.js', 'public/viewport-fit.js'],
         languageOptions: {
             globals: { module: 'writable', exports: 'writable', Buffer: 'readonly' },
         },
