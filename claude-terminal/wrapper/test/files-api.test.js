@@ -501,6 +501,61 @@ test('recent changes stops when its time budget runs out', async () => {
     assert.deepStrictEqual(res.entries, []);
 });
 
+// --- names that are not valid UTF-8 ---
+//
+// Linux allows any bytes in a name but '/' and NUL. Node decodes such a name
+// with U+FFFD in it, a path that names nothing: the entry dropped out of the
+// listing and of recent changes without a word. Now it is counted.
+
+// Makes `rel` (a Buffer of the name's bytes) under `dir`; false where the
+// file system refuses names that are not UTF-8 (macOS: EILSEQ).
+function makeBadName(dir, bytes, { folder = false } = {}) {
+    const full = Buffer.concat([Buffer.from(dir + path.sep), bytes]);
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        if (folder) {
+            fs.mkdirSync(full);
+            fs.writeFileSync(Buffer.concat([full, Buffer.from('/inner.txt')]), 'inner');
+        } else {
+            fs.writeFileSync(full, 'bad name');
+        }
+        return true;
+    } catch {
+        return false;
+    }
+}
+const canBadNames = makeBadName(path.join(base, 'probe'), Buffer.from([0x70, 0xff]));
+
+test('a name that is not valid UTF-8 is counted in a listing, not silently left out',
+    { skip: !canBadNames && 'the file system refuses names that are not UTF-8' }, async () => {
+        const dir = path.join(root, 'odd-names');
+        try {
+            write('odd-names/plain.txt', 'plain');
+            write('odd-names/ok�.txt', 'a real U+FFFD is valid UTF-8');
+            makeBadName(dir, Buffer.from([0x62, 0xff, 0x2e, 0x74, 0x78, 0x74]));   // b\xff.txt
+            makeBadName(dir, Buffer.from([0x64, 0xfe]), { folder: true });         // d\xfe/
+            const res = await api.list('odd-names');
+            assert.deepStrictEqual(res.entries.map((e) => e.name), ['ok�.txt', 'plain.txt']);
+            assert.strictEqual(res.unreadableNames, 2);
+            assert.strictEqual((await api.list('packages')).unreadableNames, 0);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+test('a name that is not valid UTF-8 is counted in recent changes, not silently left out',
+    { skip: !canBadNames && 'the file system refuses names that are not UTF-8' }, async () => {
+        const recentRoot = path.join(base, 'recent-odd');
+        write('plain.txt', 'plain', recentRoot);
+        write('sub/ok�.txt', 'valid', recentRoot);
+        makeBadName(recentRoot, Buffer.from([0x62, 0xff, 0x2e, 0x74, 0x78, 0x74]));
+        makeBadName(path.join(recentRoot, 'sub'), Buffer.from([0x64, 0xfe]), { folder: true });
+        const res = await createFilesApi({ root: recentRoot }).recent(24);
+        assert.deepStrictEqual(res.entries.map((e) => e.relative).sort(), ['plain.txt', path.join('sub', 'ok�.txt')]);
+        assert.strictEqual(res.unreadableNames, 2);
+        assert.strictEqual((await api.recent(24)).unreadableNames, 0);
+    });
+
 // --- ha core check ---
 
 // A stand-in for child_process.execFile that records each call and lets the

@@ -229,6 +229,49 @@ test('an upload-part folder is not zipped; another *.part folder is', async () =
     }
 });
 
+// Linux allows any bytes in a name but '/' and NUL; one that is not valid
+// UTF-8 cannot be named in a zip (yazl takes strings) nor in a request, so it
+// is left out - and counted, so the preflight can say so. False where the
+// file system refuses such names (macOS: EILSEQ).
+function makeBadName(dir, bytes, { folder = false } = {}) {
+    const full = Buffer.concat([Buffer.from(dir + path.sep), bytes]);
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        if (folder) {
+            fs.mkdirSync(full);
+            fs.writeFileSync(Buffer.concat([full, Buffer.from('/inner.txt')]), 'inner');
+        } else {
+            fs.writeFileSync(full, 'bad name');
+        }
+        return true;
+    } catch {
+        return false;
+    }
+}
+const canBadNames = makeBadName(path.join(root, '..', 'probe'), Buffer.from([0x70, 0xff]));
+
+test('a name that is not valid UTF-8 is left out of a zip and counted, in the plan and the check=1 answer',
+    { skip: !canBadNames && 'the file system refuses names that are not UTF-8' }, async () => {
+        const dir = path.join(root, 'odd');
+        try {
+            write('odd/plain.txt', 'plain');
+            write('odd/ok�.txt', 'valid');   // a real U+FFFD is valid UTF-8
+            makeBadName(dir, Buffer.from([0x62, 0xff, 0x2e, 0x74, 0x78, 0x74]));                   // b\xff.txt
+            makeBadName(dir, Buffer.from([0x64, 0xfe]), { folder: true });                         // d\xfe/ and all in it
+            makeBadName(path.join(dir, 'sub'), Buffer.from([0x63, 0xfd, 0x2e, 0x74, 0x78, 0x74]));  // sub/c\xfd.txt
+            const plan = await downloads.planZip('odd');
+            assert.deepStrictEqual(names(plan), ['odd/ok�.txt', 'odd/plain.txt']);
+            assert.strictEqual(plan.unreadableNames, 3);
+            assert.strictEqual((await downloads.planZip('blueprints')).unreadableNames, 0);
+            await withServer({}, async (url) => {
+                const res = await fetch(`${url}/download-zip?path=odd&check=1`);
+                assert.deepStrictEqual(await res.json(), { name: 'odd.zip', files: 2, bytes: plan.bytes, unreadableNames: 3 });
+            });
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
 test('a folder swapped for a symlink after it was listed is not entered', async () => {
     const swap = () => {
         fs.rmSync(path.join(root, 'swap'), { recursive: true, force: true });

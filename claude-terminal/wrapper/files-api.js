@@ -25,6 +25,7 @@
 const fsp = require('node:fs/promises');
 const fs = require('node:fs');
 const path = require('node:path');
+const { isUtf8 } = require('node:buffer');
 const childProcess = require('node:child_process');
 const express = require('express');
 
@@ -302,6 +303,23 @@ function walkEntryType(relative, dirent, { allowSensitive = false } = {}) {
 }
 
 /**
+ * Folders are read with their names as bytes (BYTE_NAMES), and each entry
+ * passed through textDirent(). Read as strings, a name that is not valid
+ * UTF-8 (Linux allows any bytes but '/' and NUL) comes back with U+FFFD in
+ * it: a path that names nothing, so the entry dropped out of a listing, a
+ * recent-changes walk or a zip without a word. Such a name cannot be shown
+ * or asked for either (every path here travels as a string), so it is still
+ * left out, but as null here, for the walk to count and report
+ * (`unreadableNames`). Any other entry comes back with its name as a string.
+ */
+const BYTE_NAMES = { encoding: 'buffer' };
+function textDirent(dirent) {
+    if (!isUtf8(dirent.name)) return null;
+    dirent.name = dirent.name.toString('utf8');
+    return dirent;
+}
+
+/**
  * The read-only file API, confined to `root` (default FILES_ROOT, else
  * /config). `now` is injectable for the recent-changes window.
  */
@@ -428,20 +446,22 @@ function createFilesApi({
         const { real, root: rootReal } = await resolve(requested);
         let dir;
         try {
-            dir = await fsp.opendir(real);
+            dir = await fsp.opendir(real, BYTE_NAMES);
         } catch (err) {
             if (err.code === 'ENOTDIR') throw new FilesError(400, 'Not a folder');
             throw new FilesError(400, `Cannot read folder (${err.code || 'error'})`);
         }
         const dirents = [];
         let truncated = false;
+        let unreadableNames = 0;
         try {
             for await (const dirent of dir) {
                 if (dirents.length >= maxEntries) {
                     truncated = true;
                     break;
                 }
-                dirents.push(dirent);
+                if (textDirent(dirent)) dirents.push(dirent);
+                else unreadableNames++;
             }
         } catch (err) {
             throw new FilesError(400, `Cannot read folder (${err.code || 'error'})`);
@@ -453,7 +473,7 @@ function createFilesApi({
         const entries = (await Promise.all(dirents.map((d) => describe(real, d, rootReal))))
             .filter(Boolean)
             .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1));
-        return { path: real, root: rootReal, entries, truncated };
+        return { path: real, root: rootReal, entries, truncated, unreadableNames };
     }
 
     /**
@@ -588,17 +608,22 @@ function createFilesApi({
         const found = [];
         let visits = 0;
         let incomplete = false;
+        let unreadableNames = 0;
 
         async function walk(dir, depth) {
             if (depth > MAX_RECENT_DEPTH) { incomplete = true; return; }
             let handle;
-            try { handle = await fsp.opendir(dir); } catch { return; }
+            try { handle = await fsp.opendir(dir, BYTE_NAMES); } catch { return; }
             const subdirs = [];
             try {
                 for await (const dirent of handle) {
                     if (++visits > MAX_RECENT_VISITS || Date.now() > deadline) {
                         incomplete = true;
                         break;
+                    }
+                    if (!textDirent(dirent)) {
+                        unreadableNames++;
+                        continue;
                     }
                     const full = path.join(dir, dirent.name);
                     const relative = path.relative(rootReal, full);
@@ -636,6 +661,7 @@ function createFilesApi({
             entries: found.slice(0, MAX_RECENT),
             truncated: found.length > MAX_RECENT,
             incomplete,
+            unreadableNames,
         };
     }
 
@@ -728,6 +754,8 @@ module.exports = {
     walkEntryType,
     looksBinary,
     procFdPath,
+    textDirent,
+    BYTE_NAMES,
     FilesError,
     allowsProtected,
     sendError,
