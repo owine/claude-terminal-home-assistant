@@ -987,9 +987,15 @@ start_wrapper_service() {
 
 # Run the wrapper once, prefixing its output into the add-on log. Under
 # pipefail the pipeline's status is node's, which is what supervise reports.
+#
+# Backslashes are doubled because bashio logs with printf '%b', which would
+# expand them: the wrapper JSON-quotes the names it logs so that one cannot
+# carry a newline or an ANSI sequence, and %b would turn `\n` and `\u001b`
+# back into the real thing - a forged log line from a file's name. Same as
+# log_init_output.
 run_wrapper() {
     node "$1" 2>&1 | while IFS= read -r line; do
-        bashio::log.info "[Wrapper] $line"
+        bashio::log.info "[Wrapper] ${line//\\/\\\\}"
     done
 }
 

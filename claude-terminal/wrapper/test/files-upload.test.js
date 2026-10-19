@@ -1995,6 +1995,69 @@ test('race: any other failure of the check after the file is put in place is no 
     assert.deepStrictEqual(recorded(), []);
 });
 
+// The add-on log is line-based, and run.sh relays the wrapper's output into
+// it a line at a time: a path logged as it is could start a line of its own.
+// The folder an upload goes to is any folder in /config, its name whatever
+// made it. Every line that names one quotes it, as JSON.
+test('race: the log lines of a race quote the paths they name', async () => {
+    const f = raceFixture('race-log\nINFO: [Wrapper] forged\u001b[31m');
+    const dest = path.basename(f.dir);
+    const swap = (part) => { fs.unlinkSync(part); fs.writeFileSync(part, 'not the upload'); };
+    const cases = [
+        // "Upload saved at <target>, then moved or replaced at once"
+        ['saved then moved', createUploads({
+            api, record,
+            fsOps: { link: async (a, b) => { await fs.promises.link(a, b); fs.unlinkSync(b); fs.writeFileSync(b, 'other'); } },
+        }), 'a.txt'],
+        // "<target> is not the uploaded file ...; it was a second name for the file at <part>"
+        ['second name', createUploads({
+            api, record, partName: () => PART,
+            fsOps: { link: async (a, b) => { swap(a); return fs.promises.link(a, b); } },
+        }), 'b.txt'],
+        // "<target> is not the uploaded file ...; left as it is"
+        ['left as it is', createUploads({
+            api, record, partName: () => PART,
+            fsOps: {
+                link: async () => { throw Object.assign(new Error('not supported'), { code: 'EPERM' }); },
+                rename: async (a, b) => { swap(a); return fs.promises.rename(a, b); },
+            },
+        }), 'c.txt'],
+        // "Upload put at <target>, then its check failed"
+        ['check failed', (() => {
+            let placed = null;
+            return createUploads({
+                api, record,
+                fsOps: {
+                    link: async (a, b) => { await fs.promises.link(a, b); placed = b; },
+                    lstat: async (p, opts) => {
+                        if (p === placed) { placed = null; throw Object.assign(new Error('EIO: lstat failed'), { code: 'EIO' }); }
+                        return fs.promises.lstat(p, opts);
+                    },
+                },
+            });
+        })(), 'd.txt'],
+    ];
+    try {
+        for (const [what, uploads, name] of cases) {
+            const logged = [];
+            await withServer({ uploads, log: (m) => logged.push(m) }, async (url) => {
+                const res = await post(url, { dest, name }, 'USER CONTENT');
+                assert.strictEqual(res.status, 409, what);
+                await res.arrayBuffer();
+            });
+            assert.ok(logged.length > 0, what);
+            for (const line of logged) {
+                assert.ok(!line.includes('\n') && !line.includes('\u001b'), `${what}: ${JSON.stringify(line)}`);
+            }
+            assert.ok(logged.some((m) => m.includes(JSON.stringify(path.join(f.dir, name)))), `${what}: ${logged.join('\n')}`);
+            for (const n of fs.readdirSync(f.dir)) fs.rmSync(path.join(f.dir, n));
+        }
+    } finally {
+        f.cleanup();
+    }
+    assert.deepStrictEqual(recorded(), []);
+});
+
 test('race: the part is told apart by its exact inode, never one rounded to a Number', async () => {
     // Inode numbers can be over 2^53, where two of them can round to the
     // same Number. Modelled here: the open part reports, exactly, an inode
