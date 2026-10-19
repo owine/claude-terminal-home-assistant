@@ -464,6 +464,86 @@ test('records the rejected origin so a refused terminal is diagnosable', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The refusal log cap, on every guard
+// ---------------------------------------------------------------------------
+//
+// The origin guard and the upgrade guard refuse what any page can send in a
+// loop too (a form POST, a `new WebSocket` per frame), and they logged every
+// refusal: the add-on log could be flooded from a site the user visited. The
+// origin guard runs first, so for a hostile upload POST the cross-site
+// guard's cap never came into play. Each guard caps its log the same way,
+// with one shared implementation. Each takes the guard, and returns how many
+// requests it refused of `n`.
+const capped = {
+    'origin guard': (options) => {
+        const guard = createOriginGuard(options);
+        return (n) => {
+            let refused = 0;
+            for (let i = 0; i < n; i++) {
+                const req = makeReq({ method: 'POST', headers: { Host: 'ha.local', Origin: 'http://evil.example' } });
+                if (!run(guard, req).allowed) refused++;
+            }
+            return refused;
+        };
+    },
+    'upgrade guard': (options) => {
+        const guard = createUpgradeGuard(options);
+        return (n) => {
+            let refused = 0;
+            for (let i = 0; i < n; i++) {
+                const { allowed, socket } = upgrade(guard, makeUpgradeReq({ Host: 'ha.local', Origin: 'http://evil.example' }));
+                if (!allowed && socket.closed) refused++;
+            }
+            return refused;
+        };
+    },
+    'cross-site guard': (options) => {
+        const guard = createCrossSiteGuard(options);
+        return (n) => {
+            let refused = 0;
+            for (let i = 0; i < n; i++) {
+                if (!run(guard, makeReq({ headers: { 'Sec-Fetch-Site': 'cross-site' } })).allowed) refused++;
+            }
+            return refused;
+        };
+    },
+};
+
+for (const [name, make] of Object.entries(capped)) {
+    test(`${name}: logs at most 5 refusals a minute, then the count, and refuses every one`, () => {
+        const clock = { t: 5000000 };
+        const lines = [];
+        const send = make({ log: (line) => lines.push(line), now: () => clock.t });
+        assert.strictEqual(send(20), 20);
+        assert.strictEqual(lines.length, 5, lines.join('\n'));
+        assert.match(lines[4], /; any more this minute are counted, not logged$/);
+        clock.t += 59999;
+        send(1);
+        assert.strictEqual(lines.length, 5, 'still inside the minute');
+        clock.t += 1;
+        send(1);
+        assert.strictEqual(lines.length, 6);
+        assert.match(lines[5], / \(16 earlier refusals not logged\)$/);
+    });
+
+    // Its minute is its own: a refusal another guard logged spends none of it.
+    test(`${name}: has a log budget of its own`, () => {
+        const lines = [];
+        const options = { log: (line) => lines.push(line), now: () => 0 };
+        make(options)(5);
+        make(options)(5);
+        assert.strictEqual(lines.length, 10);
+    });
+
+    // Never throws: the upgrade guard runs in the http server's 'upgrade'
+    // listener, where a throw is uncaught and restarts the wrapper.
+    test(`${name}: a log that throws still refuses, and throws nothing`, () => {
+        const send = make({ log: () => { throw new Error('log down'); }, now: () => 0 });
+        assert.strictEqual(send(7), 7);
+    });
+}
+
+// ---------------------------------------------------------------------------
 // createRateLimiter
 // ---------------------------------------------------------------------------
 

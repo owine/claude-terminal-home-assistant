@@ -145,21 +145,71 @@ function checkOrigin(header) {
 }
 
 /**
+ * A guard's log of what it refused, capped. Every guard refuses what a hostile
+ * page can send in a loop - an <img> or a form POST per frame, a WebSocket
+ * per frame - so each logged line could be one of thousands a minute. At most
+ * REFUSAL_LOG_MAX lines a minute per guard (each guard makes its own), the
+ * last of them saying so. Every request is still refused; the ones not logged
+ * are counted, and the count goes out with the next line logged once the
+ * minute is over (a burst that ends for good leaves its count unsaid). The
+ * minute runs on a monotonic clock, so a wall clock set back cannot silence
+ * the log; `now` is injectable for tests, as createRateLimiter's is.
+ *
+ * Never throws, not even when `log` does: the upgrade guard runs in the http
+ * server's 'upgrade' listener, where a throw is uncaught and restarts the
+ * wrapper with every session in it. A refusal is answered either way.
+ */
+const REFUSAL_LOG_MAX = 5;
+const REFUSAL_LOG_WINDOW_MS = 60000;
+
+function createRefusalLog({ log, now }) {
+    let windowStart = -Infinity;
+    let logged = 0;
+    let unlogged = 0;
+    return (line) => {
+        try {
+            const t = now();
+            if (t - windowStart >= REFUSAL_LOG_WINDOW_MS) {
+                if (unlogged) line += ` (${unlogged} earlier refusal${unlogged === 1 ? '' : 's'} not logged)`;
+                windowStart = t;
+                logged = 0;
+                unlogged = 0;
+            }
+            if (logged >= REFUSAL_LOG_MAX) {
+                unlogged++;
+                return;
+            }
+            logged++;
+            if (logged === REFUSAL_LOG_MAX) line += '; any more this minute are counted, not logged';
+            log(line);
+        } catch {
+            // Nowhere to report it: the log is what failed.
+        }
+    };
+}
+
+const monotonic = () => performance.now();
+
+/**
  * CSRF protection for state-changing requests (POST).
  *
  * Validates Origin/Referer against Host to block cross-origin POSTs driven by a
  * malicious page in the user's browser. Requests with neither header (curl,
  * server-to-server) are allowed: a browser always sends one on a cross-origin
  * POST, so absence is not the case being defended against.
+ *
+ * Its log is capped (createRefusalLog): app-wide and first in line, it is what
+ * a hostile page's upload POSTs meet before any other guard.
  */
-function createOriginGuard({ log = console.warn } = {}) {
+function createOriginGuard({ log = console.warn, now = monotonic } = {}) {
+    const report = createRefusalLog({ log, now });
     return (req, res, next) => {
         if (req.method !== 'POST') return next();
 
         const { allowed, source } = checkOrigin((name) => req.get(name));
         if (allowed) return next();
 
-        log(`Blocked cross-origin POST from: ${source}`);
+        report(`Blocked cross-origin POST from: ${source}`);
         return refuse(req, res, 403, { error: 'Cross-origin requests are not allowed' });
     };
 }
@@ -190,43 +240,15 @@ function createOriginGuard({ log = console.warn } = {}) {
  * the sidebar's own requests are same-origin, ingress included. A download
  * leaks nothing to such a page, so it keeps the default.
  *
- * Its log line is capped, because what it refuses is what a hostile page can
- * send in a loop (an <img> per frame): at most CROSS_SITE_LOG_MAX lines a
- * minute per guard (each router builds its own), the last of them saying so.
- * Every request is still refused; the ones not logged are counted, and the
- * count goes out with the next line logged once the minute is over (a burst
- * that ends for good leaves its count unsaid). The minute runs on a
- * monotonic clock, so a wall clock set back cannot silence the log; `now` is
- * injectable for tests, as createRateLimiter's is.
+ * Its log is capped (createRefusalLog), per guard: each router builds its own.
  */
-const CROSS_SITE_LOG_MAX = 5;
-const CROSS_SITE_LOG_WINDOW_MS = 60000;
-
 function createCrossSiteGuard({
     log = console.warn,
     message = 'Downloads cannot be started from another site. Use the Files sidebar.',
     allowSameSite = true,
-    now = () => performance.now(),
+    now = monotonic,
 } = {}) {
-    let windowStart = -Infinity;
-    let logged = 0;
-    let unlogged = 0;
-    const report = (line) => {
-        const t = now();
-        if (t - windowStart >= CROSS_SITE_LOG_WINDOW_MS) {
-            if (unlogged) line += ` (${unlogged} earlier refusal${unlogged === 1 ? '' : 's'} not logged)`;
-            windowStart = t;
-            logged = 0;
-            unlogged = 0;
-        }
-        if (logged >= CROSS_SITE_LOG_MAX) {
-            unlogged++;
-            return;
-        }
-        logged++;
-        if (logged === CROSS_SITE_LOG_MAX) line += '; any more this minute are counted, not logged';
-        log(line);
-    };
+    const report = createRefusalLog({ log, now });
 
     return (req, res, next) => {
         const site = String(req.get('sec-fetch-site') || '').toLowerCase();
@@ -246,13 +268,15 @@ function createCrossSiteGuard({
  *
  * Call with the raw request and socket before handing the upgrade on. Returns
  * true to proceed; on false it has already answered 403 and closed the socket.
+ * Its log is capped (createRefusalLog): any page can open a socket a frame.
  */
-function createUpgradeGuard({ log = console.warn } = {}) {
+function createUpgradeGuard({ log = console.warn, now = monotonic } = {}) {
+    const report = createRefusalLog({ log, now });
     return (req, socket) => {
         const { allowed, source } = checkOrigin((name) => req.headers[name]);
         if (allowed) return true;
 
-        log(`Blocked cross-origin WebSocket from: ${source}`);
+        report(`Blocked cross-origin WebSocket from: ${source}`);
         socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
         return false;
     };
