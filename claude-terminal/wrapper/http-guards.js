@@ -348,6 +348,7 @@ function createRequestDeadline({ totalMs, idleMs, log = console.warn }) {
         };
         const stalled = () => cut(`no data for ${idleMs} ms`);
         const total = setTimeout(cut, totalMs, `still arriving after ${totalMs} ms`);
+        total.unref();   // a request's bound never keeps the process alive
         req.setTimeout(idleMs, stalled);
         const done = () => {
             clearTimeout(total);
