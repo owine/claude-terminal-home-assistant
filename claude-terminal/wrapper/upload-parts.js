@@ -34,8 +34,10 @@ async function lstatOrNull(p) {
  *
  * add() rejects when the record cannot be written, and the upload is then
  * refused: a part nobody recorded could outlive a crash forever.
+ *
+ * `open` is a test seam for the temp file's open.
  */
-function createPartRecord({ file, root, log = console.error }) {
+function createPartRecord({ file, root, log = console.error, open = fsp.open }) {
     const parts = new Set();
     // A record start() could not sweep (its root was not there yet): carried
     // into every write, so the next start still finds it.
@@ -48,7 +50,16 @@ function createPartRecord({ file, root, log = console.error }) {
     };
     const write = async (list) => {
         const tmp = `${file}.tmp`;
-        await fsp.writeFile(tmp, JSON.stringify([...carried, ...list]) + '\n', { mode: 0o600 });
+        const handle = await open(tmp, 'w', 0o600);
+        try {
+            await handle.writeFile(JSON.stringify([...carried, ...list]) + '\n');
+            // On disk before the rename: after a power cut the rename can
+            // survive while unsynced data does not, which would leave an
+            // empty record and the parts it named unswept.
+            await handle.sync();
+        } finally {
+            await handle.close();
+        }
         await fsp.rename(tmp, file);
     };
 

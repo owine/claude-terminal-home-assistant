@@ -98,3 +98,27 @@ test('the record is rewritten whole, in order, as uploads come and go', async ()
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), ['/p/3']);
     assert.strictEqual(fs.existsSync(`${file}.tmp`), false);
 });
+
+test('each new record is synced to disk before it replaces the old one', async () => {
+    const file = path.join(base, 'synced-record');
+    // What the record file held each time a temp file was synced: a sync
+    // after the rename would see the new record there already.
+    const seen = [];
+    const open = async (p, flags, mode) => {
+        const handle = await fs.promises.open(p, flags, mode);
+        return {
+            writeFile: (d) => handle.writeFile(d),
+            sync: () => {
+                seen.push(fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null);
+                return handle.sync();
+            },
+            close: () => handle.close(),
+        };
+    };
+    const rec = createPartRecord({ file, root, log: () => {}, open });
+    await rec.add('/p/1');
+    await rec.add('/p/2');
+    assert.deepStrictEqual(seen, [null, ['/p/1']]);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), ['/p/1', '/p/2']);
+    assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+});
