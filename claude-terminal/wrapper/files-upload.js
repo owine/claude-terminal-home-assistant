@@ -53,7 +53,16 @@ const MAX_SUFFIX = 999;
 // link() refusals that mean "no hard links on this filesystem", where a
 // rename after a fresh lstat takes over (see placeNew).
 const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EMLINK']);
-const DISK_FULL = new Set(['ENOSPC', 'EDQUOT']);
+// Failures that are the file system's, not a bug: answered as what they are
+// (the global answer would be "Internal error"), and still logged.
+const DISK_FULL_TEXT = 'The disk is full, so the file was not saved. Free some space and try again.';
+const FS_REFUSALS = new Map([
+    ['ENOSPC', [507, DISK_FULL_TEXT]],
+    ['EDQUOT', [507, DISK_FULL_TEXT]],
+    ['EROFS', [403, 'The file system is read-only, so the file was not saved.']],
+    ['EACCES', [403, 'The add-on is not allowed to write there, so the file was not saved.']],
+    ['ENAMETOOLONG', [400, 'The name is too long for the file system there, so the file was not saved. Try a shorter name.']],
+]);
 // Control characters, and the invisible marks that reorder or hide text:
 // the bidirectional marks, embeddings, overrides and isolates (U+200E-200F,
 // U+202A-202E, U+2066-2069), with which `photo<U+202E>gpj.exe` reads as
@@ -159,7 +168,8 @@ const sizeText = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
 /**
  * Uploads over a files-api instance (for locate() and its root). `record` is
  * upload-parts.js's createPartRecord. The rest are test seams: `fsOps` the
- * link and rename that put a finished part in place, `openPart` its open
+ * link and rename that put a finished part in place and the realpath of the
+ * last check before them (each defaults on its own), `openPart` its open
  * (a FileHandle, or anything with its stat, chmod, write, datasync, truncate
  * and close), `partName` its name, `onPlanned` a hook between the checks and
  * the part's open, and `beforeCommit` one between the last byte and the
@@ -176,13 +186,16 @@ function createUploads({
     // a link at the part's name. O_NOFOLLOW says the latter again.
     openPart = (p) => fsp.open(p, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
         | (fs.constants.O_NOFOLLOW || 0), 0o644),
-    fsOps = { link: fsp.link, rename: fsp.rename },
+    fsOps: ops = {},
     onPlanned = null,
     beforeCommit = null,
 } = {}) {
+    const fsOps = { link: fsp.link, rename: fsp.rename, realpath: fsp.realpath, ...ops };
     const maxMb = Math.round(maxBytes / MB);
     const limitText = `the ${maxMb} MB upload limit (the add-on's upload_max_mb option)`;
-    const tooBig = (bytes) => new FilesError(413, bytes === undefined
+    // A size that rounds to the limit or under ("1.0 MB, over the 1 MB
+    // limit") would read as no excess at all: then it is just "over".
+    const tooBig = (bytes) => new FilesError(413, bytes === undefined || Number((bytes / MB).toFixed(1)) <= maxMb
         ? `This file is over ${limitText}.`
         : `This file is ${sizeText(bytes)}, over ${limitText}.`);
     const notPlainFolder = (display) => new FilesError(409,
@@ -321,10 +334,19 @@ function createUploads({
     // The folder may have gone, or been swapped for a link, while the body
     // came in.
     async function recheck(planned) {
+        const removed = () => new FilesError(404, `${planned.display} was removed during the upload.`);
         const st = await lstatOrNull(planned.dir);
-        if (!st) throw new FilesError(404, `${planned.display} was removed during the upload.`);
+        if (!st) throw removed();
         if (st.isSymbolicLink() || !st.isDirectory()) throw notPlainFolder(planned.display);
-        if (await fsp.realpath(planned.dir) !== planned.dir) throw notPlainFolder(planned.display);
+        let real;
+        try {
+            real = await fsOps.realpath(planned.dir);
+        } catch (err) {
+            // gone between the lstat and here
+            if (err.code === 'ENOENT' || err.code === 'ENOTDIR') throw removed();
+            throw err;
+        }
+        if (real !== planned.dir) throw notPlainFolder(planned.display);
     }
 
     // Whether `part` still names the file this upload created (`id`: its
@@ -421,13 +443,14 @@ function createUploads({
     return { plan, receive, tooBig, maxBytes };
 }
 
-// A failure as the answer the UI shows: a full disk is a 507 that says so.
-function asFilesError(err) {
+// A failure as the answer the UI shows: a full disk is a 507 that says so,
+// and the other FS_REFUSALS likewise.
+function asFilesError(err, log) {
     if (err instanceof FilesError) return err;
-    if (err && DISK_FULL.has(err.code)) {
-        return new FilesError(507, 'The disk is full, so the file was not saved. Free some space and try again.');
-    }
-    return err;   // sendError logs it and answers a 500
+    const refusal = err && FS_REFUSALS.get(err.code);
+    if (!refusal) return err;   // sendError logs it and answers a 500
+    log(`Upload not saved: ${err.message}`);
+    return new FilesError(refusal[0], refusal[1]);
 }
 
 /**
@@ -477,7 +500,7 @@ function createUploadRouter({ uploads, uploadLimiter, checkLimiter, log = consol
             // the answer went out already: there is no one to tell.
             if (res.writableEnded || !res.socket || res.socket.destroyed) return;
             if (!check && !req.complete) res.set('Connection', 'close');
-            sendError(res, asFilesError(err), log);
+            sendError(res, asFilesError(err, log), log);
         }
     });
 

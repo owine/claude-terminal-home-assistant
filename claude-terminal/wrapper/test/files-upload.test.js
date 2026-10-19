@@ -563,6 +563,22 @@ test('check=1 refuses a size over the cap, naming the limit and the option', asy
     });
 });
 
+test('check=1: a file just over the cap is over it, never "1.0 MB, over the 1 MB" limit', async () => {
+    const small = createUploads({ api, record, maxBytes: 1024 * 1024 });
+    await withServer({ uploads: small }, async (url) => {
+        let res = await post(url, { name: 'edge.bin', check: '1', size: String(1024 * 1024 + 1) });
+        assert.strictEqual(res.status, 413);
+        assert.deepStrictEqual(await res.json(),
+            { error: 'This file is over the 1 MB upload limit (the add-on\'s upload_max_mb option).' });
+        res = await post(url, { name: 'edge.bin', check: '1', size: String(Math.round(1.2 * 1024 * 1024)) });
+        assert.match((await res.json()).error, /^This file is 1\.2 MB, over the 1 MB upload limit/);
+        // positive control: a file at the cap is not over it
+        res = await post(url, { name: 'edge.bin', check: '1', size: String(1024 * 1024) });
+        assert.strictEqual(res.status, 200);
+        await res.arrayBuffer();
+    });
+});
+
 // --- the size cap while streaming ---
 
 test('upload: a declared Content-Length over the cap is refused before any check or write', async () => {
@@ -835,6 +851,53 @@ test('upload: a folder removed or swapped for a link during the upload gets no f
     assert.deepStrictEqual(fs.readdirSync(outside), ['target.txt']);
     fs.unlinkSync(path.join(root, 'swapped'));
     fs.rmSync(path.join(root, 'swapped-away'), { recursive: true });
+    assert.deepStrictEqual(partsUnder(), []);
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('upload: a read-only disk, a refused write and a name too long are said plainly, and logged', async () => {
+    const cases = [
+        ['EROFS', 403, /read-only/],
+        ['EACCES', 403, /not allowed to write/],
+        ['ENAMETOOLONG', 400, /too long/],
+    ];
+    for (const [code, status, text] of cases) {
+        const logged = [];
+        const failing = createUploads({
+            api, record,
+            openPart: async () => { throw Object.assign(new Error(`simulated ${code}`), { code }); },
+        });
+        await withServer({ uploads: failing, log: (m) => logged.push(m) }, async (url) => {
+            const res = await post(url, { name: 'ro.txt', dest: 'blueprints' }, 'x');
+            assert.strictEqual(res.status, status, code);
+            assert.match((await res.json()).error, text);
+        });
+        assert.ok(logged.some((m) => m.includes(`simulated ${code}`)), `${code}: ${logged.join(' | ')}`);
+    }
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'ro.txt')), false);
+    assert.deepStrictEqual(partsUnder(), []);
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('upload: a folder that goes between the two halves of its last check is a 404, not a 500', async () => {
+    let gone = false;
+    const racing = createUploads({
+        api, record,
+        // the folder lstats as there, then is gone by its realpath
+        fsOps: {
+            realpath: async (p) => {
+                if (gone) throw Object.assign(new Error('simulated ENOENT'), { code: 'ENOENT' });
+                return fs.promises.realpath(p);
+            },
+        },
+        beforeCommit: async () => { gone = true; },
+    });
+    await withServer({ uploads: racing }, async (url) => {
+        const res = await post(url, { name: 'between.txt', dest: 'blueprints' }, 'x');
+        assert.strictEqual(res.status, 404);
+        assert.match((await res.json()).error, /was removed during the upload/);
+    });
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'between.txt')), false);
     assert.deepStrictEqual(partsUnder(), []);
     assert.deepStrictEqual(recorded(), []);
 });
