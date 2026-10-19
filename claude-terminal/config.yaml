@@ -90,7 +90,8 @@ options:
   # upload_retention_days: Files in the sidebar's inbox, /config/uploads,
   #   last modified more than this many days ago are deleted at startup:
   #   every file at its top level, whoever put it there. 0 keeps them
-  #   forever. A folder chosen with "Upload here" is never swept.
+  #   forever; at most 36500. A folder chosen with "Upload here" is never
+  #   swept.
   upload_retention_days: 30
   persistent_apk_packages: []
   persistent_pip_packages: []
@@ -114,7 +115,7 @@ schema:
   persist_npm_cache: bool?
   image_retention_days: int(0,)?
   upload_max_mb: int(1,1024)?
-  upload_retention_days: int(0,)?
+  upload_retention_days: int(0,36500)?
   persistent_apk_packages:
     - str?
   persistent_pip_packages:

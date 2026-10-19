@@ -210,7 +210,7 @@ mapping cannot be disabled without forking the add-on.
 | `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
 | `image_retention_days` | `30` | Pasted and dropped images older than this many days are deleted at startup. Only the add-on's own uploads (`pasted-*` in `/data/images`) are touched. `0` keeps them forever. `/data` is included in every Home Assistant backup, so this also bounds backup growth. Caches and the Claude binary are always left out of backups; after a restore the add-on reinstalls the Claude version bundled with the image, and Claude updates itself again from there |
 | `upload_max_mb` | `25` | Largest file, in megabytes, that the Files sidebar uploads into `/config`, from 1 to at most 1024. Pasted and dropped images keep their own 10 MB limit. See Uploads under Files Sidebar |
-| `upload_retention_days` | `30` | Files in the sidebar's upload inbox, `/config/uploads`, last modified more than this many days ago are deleted at startup: every file at the inbox's top level, whatever its name and whoever put it there. Folders and symlinks in it are never removed. `0` keeps them forever. A folder you chose with **Upload here** is never swept. See Uploads under Files Sidebar |
+| `upload_retention_days` | `30` | Files in the sidebar's upload inbox, `/config/uploads`, last modified more than this many days ago are deleted at startup: every file at the inbox's top level, whatever its name and whoever put it there. Folders and symlinks in it are never removed. From 0 to at most 36500 (100 years); `0` keeps them forever. A folder you chose with **Upload here** is never swept. See Uploads under Files Sidebar |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |
 | `init_commands` | `[]` | Shell commands run as root on every start, 120 seconds each. See Init Commands above |
@@ -642,10 +642,10 @@ change it; at most 1024 MB); a bigger one is refused before any of it is
 sent, and the message names the limit. Names are cleaned: folders in the
 name, control characters, invisible text-direction marks (which can make a
 name read backwards) and leading dots are taken out (`.env` arrives as
-`env`), and a very long name is shortened. New files can be read by everyone and run by no
-one (`0644`). Certificates and keys can be uploaded like any other file.
-`secrets.yaml` is an ordinary name; replacing one goes through the same
-question. An upload has 30 minutes to arrive, or longer if you raise
+`env`), and a very long name is shortened. New files can be read by everyone
+and run by no one (`0644`). Certificates and keys can be uploaded like any
+other file. `secrets.yaml` is an ordinary name; replacing one goes through the
+same question. An upload has 30 minutes to arrive, or longer if you raise
 `upload_max_mb` (enough for a file at the limit over a 128 kbit/s link), but
 never more than 12 hours.
 

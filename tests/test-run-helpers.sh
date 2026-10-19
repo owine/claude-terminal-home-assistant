@@ -201,6 +201,16 @@ assert_eq "config.yaml's schema caps upload_max_mb at 1024 MB" "  upload_max_mb:
 assert_contains "DOCS.md states the 1024 MB maximum" \
     "$(grep -E '^\| `upload_max_mb`' "$REPO_ROOT/claude-terminal/DOCS.md")" "1024"
 
+# upload_retention_days likewise: prune_old_files (run.sh) finds files older
+# than $((days * 1440)) minutes, and shell arithmetic wraps past 2^63, so an
+# unbounded value could come out small or negative and sweep the inbox.
+# 36500 days (100 years) is far from that.
+assert_eq "config.yaml's schema caps upload_retention_days at 36500 days" "  upload_retention_days: int(0,36500)?" \
+    "$(grep -E '^  upload_retention_days: int' "$REPO_ROOT/claude-terminal/config.yaml")"
+# shellcheck disable=SC2016  # the backticks are Markdown, matched literally
+assert_contains "DOCS.md states the 36500-day maximum" \
+    "$(grep -E '^\| `upload_retention_days`' "$REPO_ROOT/claude-terminal/DOCS.md")" "36500"
+
 # ---------------------------------------------------------------------------
 # prune_claude_versions
 # ---------------------------------------------------------------------------
