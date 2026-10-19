@@ -278,3 +278,117 @@ test('without files-sidebar.js it attaches nothing, and says so', () => {
     assert.strictEqual(win.UploadClient, undefined);
     assert.ok(errors.some((e) => e.includes('files-sidebar.js did not load')), JSON.stringify(errors));
 });
+
+// --- The terminal's paperclip, paste and drop ---
+
+const naming = require('../upload-naming.js');
+
+// A type or a size sent to the image upload that the server then refused
+// would be a dead upload; one it would have taken sent to the inbox instead
+// would change where images land. The two sides must agree.
+test('the image types and limit are the image upload\'s own', () => {
+    assert.deepStrictEqual([...client.IMAGE_TYPES].sort(), Object.keys(naming.EXTENSION_FOR_MIME).sort());
+    assert.strictEqual(client.IMAGE_MAX_BYTES, naming.IMAGE_MAX_BYTES);
+    const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    assert.match(server, /fileSize:\s*IMAGE_MAX_BYTES\b/, 'server.js must limit images with IMAGE_MAX_BYTES');
+});
+
+test('terminalRoute: a small allowlisted image to the image upload, everything else to the inbox', () => {
+    const at = (type, size) => client.terminalRoute({ name: 'f', type, size });
+    for (const type of client.IMAGE_TYPES) {
+        assert.strictEqual(at(type, client.IMAGE_MAX_BYTES), 'image', type);
+        assert.strictEqual(at(type, client.IMAGE_MAX_BYTES + 1), 'inbox', type + ' over the limit');
+    }
+    for (const type of ['image/heic', 'image/tiff', 'application/pdf', 'text/plain', '']) {
+        assert.strictEqual(at(type, 1), 'inbox', type || '(no type)');
+    }
+});
+
+test('sendImage posts the file as the image field to upload, as the paperclip always has', async () => {
+    const { fetchImpl, calls } = fakeFetch(
+        { status: 200, data: { success: true, path: '/data/images/pasted-1-0a0b0c0d.png' } },
+        { status: 502, text: '<html></html>' },
+        new TypeError('Failed to fetch'),
+    );
+    const f = file('shot.png', 'image/png');
+    assert.deepStrictEqual(await client.sendImage(f, { fetchImpl }),
+        { status: 200, data: { success: true, path: '/data/images/pasted-1-0a0b0c0d.png' } });
+    assert.strictEqual(calls[0].url, 'upload');
+    assert.strictEqual(calls[0].init.method, 'POST');
+    assert.strictEqual(calls[0].init.body.get('image').name, 'shot.png');
+    assert.deepStrictEqual(await client.sendImage(f, { fetchImpl }), { status: 502, data: {} });
+    assert.deepStrictEqual(await client.sendImage(f, { fetchImpl }), { status: 0, data: { error: 'Failed to fetch' } });
+});
+
+test('uploadForTerminal: a small image goes to the image upload, with one line and no progress', async () => {
+    const lines = [];
+    const { fetchImpl, calls } = fakeFetch(
+        { status: 200, data: { success: true, path: '/data/images/pasted-1-0a0b0c0d.png' } },
+        { status: 429, data: { error: 'Upload rate limit exceeded, try again in a minute' } },
+    );
+    const got = await client.uploadForTerminal(file('shot.png', 'image/png'),
+        { counter: ' (1 of 2)', onLine: (...a) => lines.push(a), fetchImpl });
+    assert.deepStrictEqual(got, { result: { success: true, path: '/data/images/pasted-1-0a0b0c0d.png' } });
+    assert.deepStrictEqual(lines, [['Uploading shot.png (1 of 2)…', null]]);
+    assert.deepStrictEqual(calls.map((c) => c.url), ['upload']);
+    // A 429 keeps its status, so runBatch stops the batch there.
+    assert.deepStrictEqual(await client.uploadForTerminal(file('shot.png', 'image/png'), { fetchImpl }),
+        { problem: 'shot.png: Upload rate limit exceeded, try again in a minute', status: 429 });
+});
+
+test('uploadForTerminal: anything else is asked about and sent to the inbox, with progress', async () => {
+    const lines = [];
+    const { fetchImpl, calls } = fakeFetch({ status: 200, data: {} });
+    const { XHRImpl, sent } = fakeXHR({ status: 200, data: { path: '/config/uploads/my report.pdf' }, progress: [0.5] });
+    const got = await client.uploadForTerminal(file('my report.pdf', 'application/pdf', 'pdf'),
+        { onLine: (...a) => lines.push(a), fetchImpl, XHRImpl });
+    assert.deepStrictEqual(got, { result: { path: '/config/uploads/my report.pdf' } });
+    assert.strictEqual(calls[0].url, 'api/files/upload?name=my%20report.pdf&check=1&size=3');
+    assert.strictEqual(sent[0].url, 'api/files/upload?name=my%20report.pdf');
+    assert.deepStrictEqual(lines, [['Checking my report.pdf…', null], ['Uploading my report.pdf…', 0], ['Uploading my report.pdf…', 0.5]]);
+});
+
+test('typedPaths: each path quoted where it needs it, space-separated, in order', () => {
+    assert.strictEqual(client.typedPaths([]), '');
+    assert.strictEqual(client.typedPaths([
+        { path: '/data/images/pasted-1-0a0b0c0d.png' },
+        { path: '/config/uploads/my report.pdf' },
+        { path: "/config/uploads/it's $HOME.txt" },
+    ]), "/data/images/pasted-1-0a0b0c0d.png '/config/uploads/my report.pdf' '/config/uploads/it'\\''s $HOME.txt'");
+});
+
+test('terminalStatus: nothing to add when the paths were typed; else what happened, refusals kept', () => {
+    assert.strictEqual(client.terminalStatus({ typed: '/a', count: 1, delivered: 'terminal' }), null);
+    assert.deepStrictEqual(client.terminalStatus({ typed: "'/c/a b'", count: 1, delivered: 'clipboard' }),
+        { message: "Copied path: '/c/a b' — paste in terminal", type: 'success', persistent: false });
+    assert.deepStrictEqual(client.terminalStatus({ typed: '/a /b', count: 2, delivered: 'clipboard' }),
+        { message: 'Copied paths: /a /b — paste in terminal', type: 'success', persistent: false });
+    assert.deepStrictEqual(client.terminalStatus({ typed: '/a', count: 1, delivered: 'none' }),
+        { message: 'Path: /a', type: 'success', persistent: true });
+    assert.deepStrictEqual(client.terminalStatus({
+        typed: '/a', count: 1, delivered: 'terminal',
+        problems: ['big.bin: too big'], busy: ['c.txt', 'd.txt'], folders: ['photos'],
+    }), {
+        message: 'Folders are not uploaded: photos. Drop the files inside them instead. ⚠️ big.bin: too big '
+            + '⏳ 2 not uploaded: too many uploads, try again in a minute.',
+        type: 'error',
+        persistent: true,
+    });
+    assert.deepStrictEqual(client.terminalStatus({ typed: '/a', count: 1, delivered: 'clipboard', problems: ['b: no'] }),
+        { message: 'Copied path: /a — paste in terminal ⚠️ b: no', type: 'error', persistent: true });
+});
+
+// A clipboard with plain text on it is a text paste: spreadsheet cells come
+// with a picture of themselves, and the terminal must get their text.
+test('clipboardFiles: the files of a paste, and none when it also holds plain text', () => {
+    const shot = file('image.png', 'image/png');
+    const fileItem = { kind: 'file', getAsFile: () => shot };
+    const textItem = { kind: 'string', type: 'text/plain', getAsFile: () => null };
+    const names = (cd) => client.clipboardFiles(cd).map((f) => f.name);
+    assert.deepStrictEqual(names({ types: ['Files'], items: [fileItem] }), ['image.png']);
+    assert.deepStrictEqual(names({ types: ['text/html', 'Files'], items: [{ kind: 'string', type: 'text/html' }, fileItem] }), ['image.png']);
+    assert.deepStrictEqual(names({ types: ['text/plain', 'Files'], items: [textItem, fileItem] }), []);
+    assert.deepStrictEqual(names({ types: ['text/plain'], items: [textItem] }), []);
+    assert.deepStrictEqual(names({ types: ['Files'], items: [], files: [shot] }), ['image.png']);
+    assert.deepStrictEqual(names(null), []);
+});

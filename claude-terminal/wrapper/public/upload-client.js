@@ -136,7 +136,119 @@
         return { files, folders };
     }
 
-    const api = { ask, send, uploadOne, runBatch, droppedFiles };
+    // --- The terminal's paperclip, paste and drop ---
+
+    // The image upload's types and size limit, as server.js enforces them
+    // (upload-naming.js's EXTENSION_FOR_MIME and IMAGE_MAX_BYTES). The unit
+    // tests hold the two sides equal.
+    const IMAGE_TYPES = Object.freeze(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml']);
+    const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+    /**
+     * Where a file from the terminal's paperclip, a paste or a drop goes:
+     * 'image' (the image upload, /data/images, exactly as before) for an
+     * allowlisted image of at most IMAGE_MAX_BYTES; 'inbox' (api/files/upload
+     * into /config/uploads) for everything else: HEIC photos, bigger images,
+     * any other file.
+     */
+    function terminalRoute(file) {
+        return IMAGE_TYPES.includes(file.type) && file.size <= IMAGE_MAX_BYTES ? 'image' : 'inbox';
+    }
+
+    // The image upload (POST upload, multipart, field `image`), as the
+    // paperclip has always sent it: { status, data }, status 0 when no
+    // answer came, data {} when the answer was not JSON.
+    async function sendImage(file, { fetchImpl } = {}) {
+        const form = new FormData();
+        form.append('image', file);
+        try {
+            const res = await (fetchImpl || fetch)('upload', { method: 'POST', body: form });
+            let data = {};
+            try { data = JSON.parse(await res.text()) || {}; } catch { /* not JSON */ }
+            return { status: res.status, data };
+        } catch (err) {
+            return { status: 0, data: { error: err.message } };
+        }
+    }
+
+    /**
+     * One file from the terminal, sent where terminalRoute says: resolves
+     * to what uploadOne does. onLine(text, fraction) is the status line,
+     * fraction null while there is no progress to show, else 0 to 1. Never
+     * asks about a taken name: the inbox numbers it, and image names are
+     * the server's own.
+     */
+    async function uploadForTerminal(file, { counter = '', onLine = () => {}, fetchImpl, XHRImpl } = {}) {
+        const shown = helpers.displayName(file.name);
+        const line = 'Uploading ' + shown + counter + '…';
+        if (terminalRoute(file) === 'image') {
+            onLine(line, null);
+            const sent = await sendImage(file, { fetchImpl });
+            if (sent.status === 200 && typeof sent.data.path === 'string') return { result: sent.data };
+            return { problem: helpers.uploadErrorText(sent.status, sent.data, file.name), status: sent.status };
+        }
+        return uploadOne(file, {
+            onCheck: () => onLine('Checking ' + shown + counter + '…', null),
+            onSend: () => {
+                onLine(line, 0);
+                return (fraction) => onLine(line, fraction);
+            },
+            fetchImpl,
+            XHRImpl,
+        });
+    }
+
+    /**
+     * What the terminal types for a batch: every path that came back, in
+     * order, space-separated, each quoted only where the shell would read
+     * something into it (inbox names are the user's; image names are safe
+     * words and stay as they are).
+     */
+    function typedPaths(results) {
+        return results.map((r) => helpers.shellQuote(r.path)).join(' ');
+    }
+
+    /**
+     * The status line after a terminal batch, as { message, type,
+     * persistent }, or null when the paths were typed and nothing went wrong
+     * (injectIntoTerminal said so already). `delivered`: 'terminal' (typed),
+     * 'clipboard' (copied instead) or 'none' (only shown here). Refusals use
+     * the sidebar's words (uploadSummary) and stay until the next message.
+     */
+    function terminalStatus({ typed = '', count = 0, delivered = 'terminal', problems = [], busy = [], folders = [] } = {}) {
+        const parts = [];
+        if (typed && delivered === 'clipboard') {
+            parts.push((count > 1 ? 'Copied paths: ' : 'Copied path: ') + typed + ' — paste in terminal');
+        }
+        if (typed && delivered === 'none') parts.push((count > 1 ? 'Paths: ' : 'Path: ') + typed);
+        parts.push(...helpers.uploadSummary({ problems, busy, folders }).lines);
+        if (!parts.length) return null;
+        const refused = problems.length + busy.length + folders.length > 0;
+        return { message: parts.join(' '), type: refused ? 'error' : 'success', persistent: refused || delivered === 'none' };
+    }
+
+    /**
+     * The files in a paste, or none. A clipboard that also holds plain text
+     * is a text paste and is left alone: spreadsheet cells come with a
+     * picture of themselves, and pasting their text into the terminal must
+     * not upload the picture instead. Screenshots and copied images carry no
+     * plain text.
+     */
+    function clipboardFiles(clipboardData) {
+        if (!clipboardData) return [];
+        if (Array.from(clipboardData.types || []).includes('text/plain')) return [];
+        const files = Array.from(clipboardData.items || [])
+            .filter((i) => i.kind === 'file')
+            .map((i) => i.getAsFile())
+            .filter(Boolean);
+        return files.length ? files : Array.from(clipboardData.files || []);
+    }
+
+    const api = {
+        ask, send, uploadOne, runBatch, droppedFiles,
+        IMAGE_TYPES, IMAGE_MAX_BYTES, terminalRoute, sendImage, uploadForTerminal,
+        typedPaths, terminalStatus, clipboardFiles,
+    };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.UploadClient = api;
 })(typeof self !== 'undefined' ? self : this,

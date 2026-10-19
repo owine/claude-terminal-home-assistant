@@ -30,6 +30,12 @@ const EXTENSION_FOR_MIME = Object.freeze(Object.assign(Object.create(null), {
     'image/svg+xml': '.svg',
 }));
 
+// The image upload's size limit (multer's fileSize in server.js). The
+// terminal sends bigger images to the Files inbox instead;
+// public/upload-client.js holds the same number, and its tests keep the two
+// equal.
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
 function isAllowedImageMime(mimetype) {
     return typeof mimetype === 'string' && mimetype in EXTENSION_FOR_MIME;
 }
@@ -49,4 +55,4 @@ function uploadFilename(mimetype, { now = Date.now, randomBytes = crypto.randomB
     return `pasted-${now()}-${suffix}${EXTENSION_FOR_MIME[mimetype]}`;
 }
 
-module.exports = { uploadFilename, isAllowedImageMime, EXTENSION_FOR_MIME };
+module.exports = { uploadFilename, isAllowedImageMime, EXTENSION_FOR_MIME, IMAGE_MAX_BYTES };
