@@ -362,6 +362,64 @@ async function checkSidebarTabs(browser, url) {
     }
 }
 
+// 6c. The sidebar's width when the window changes. A stored width the
+//     window cannot fit is shown narrower, to leave the terminal its room,
+//     but the width the user chose is kept: the window wide again, it comes
+//     back. Only a drag stores a width; a bare click on the edge stores
+//     nothing (it used to store the narrowed width as the user's choice).
+//     Its own context, with its own storage and window size.
+async function checkSidebarWidth(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 720 } });
+    const page = await context.newPage();
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        let wrapper = await wrapperFrame(page);
+        await wrapper.evaluate(`localStorage.setItem('filesSidebar.width', '650');
+            localStorage.setItem('filesSidebar.open', '1');`);
+        await page.reload({ waitUntil: 'load' });
+        wrapper = await wrapperFrame(page);
+        const state = () => wrapper.evaluate(`JSON.stringify({
+            shown: Math.round(document.getElementById('files-sidebar').getBoundingClientRect().width),
+            stored: localStorage.getItem('filesSidebar.width'),
+            main: document.getElementById('main').clientWidth,
+        })`).then(JSON.parse);
+        check('fixture: a stored width that fits is shown as it is',
+            await waitFor(async () => (await state()).shown === 650), true);
+        await page.setViewportSize({ width: 760, height: 720 });
+        check('fixture: in a narrower window the sidebar is shown narrower, leaving the terminal its room',
+            await waitFor(async () => {
+                const v = await state();
+                return v.shown < 650 && v.shown === v.main - 200;
+            }), true);
+        check('and the stored width is left alone', (await state()).stored, '650');
+        const handle = await wrapper.locator('#files-resizer').boundingBox();
+        const edge = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
+        await page.mouse.click(edge.x, edge.y);
+        check('a bare click on the edge, with no drag, stores nothing', (await state()).stored, '650');
+        // Nor a click with a tremble in it: a pixel is not a drag.
+        await page.mouse.move(edge.x, edge.y);
+        await page.mouse.down();
+        await page.mouse.move(edge.x - 1, edge.y);
+        await page.mouse.up();
+        check('nor a click that trembles a pixel', await state(), (v) => v.stored === '650' && v.shown === v.main - 200);
+        await page.setViewportSize({ width: 1280, height: 720 });
+        check('in a wide window again, the width the user chose comes back',
+            await waitFor(async () => (await state()).shown === 650), true);
+        // Positive control: a real drag still stores what it was dragged to.
+        const before = (await state()).shown;
+        const grip = await wrapper.locator('#files-resizer').boundingBox();
+        const at = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
+        await page.mouse.move(at.x, at.y);
+        await page.mouse.down();
+        await page.mouse.move(at.x - 50, at.y, { steps: 5 });
+        await page.mouse.up();
+        check('a drag stores the width it was dragged to',
+            await state(), (v) => Math.abs(v.shown - (before + 50)) <= 2 && v.stored === String(v.shown));
+    } finally {
+        await context.close();
+    }
+}
+
 // Opens the sidebar (it reopens by itself after a reload), lists dotfiles,
 // and expands the fixture folder. Returns the tree.
 async function openSidebarFixture(wrapper) {
@@ -2058,6 +2116,121 @@ async function checkUploadRace(browser, url) {
     }
 }
 
+// 8d. Listings that fail, or answer with something that is not a listing
+//     (a proxy's page answering 200, say). A failed folder listing shows
+//     its error and is not kept: collapsing and expanding the folder asks
+//     again. A listing that is not one shows an error line instead of
+//     "Loading…" forever, in the tree and in Recent changes. And an upload
+//     the server confirmed is reported as uploaded even when the listing
+//     that would reveal it fails: "Upload failed" there would invite the
+//     same file twice. Its own context with service workers blocked, so
+//     context.route sees the listings it fakes. One real upload body.
+async function checkBadListing(browser, url) {
+    const FILE = 'ctp-bad-listing.txt';
+    const pickDir = mkdtempSync(join(tmpdir(), 'ctp-bad-listing-'));
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    const isList = (p) => (u) => u.pathname.endsWith('/api/files/list') && u.searchParams.get('path') === p;
+    const isRecent = (u) => u.pathname.endsWith('/api/files/recent');
+    const notAListing = (route) => route.fulfill({ status: 200, contentType: 'text/html',
+        body: '<html><body>A proxy\'s page</body></html>' });
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        if (await wrapper.evaluate('document.getElementById("files-sidebar").classList.contains("collapsed")')) {
+            await wrapper.locator('#files-btn').click();
+        }
+        const fixtureName = SIDEBAR_DIR.split('/').pop();
+        const folder = wrapper.locator('#files-list .files-row', { hasText: fixtureName });
+        await waitFor(async () => (await folder.count()) === 1);
+        // What the fixture folder's own group shows: its notes and rows.
+        const inFolder = () => wrapper.evaluate(`(() => {
+            const wrap = [...document.querySelectorAll('#files-list .files-row-wrap')]
+                .find((w) => w.querySelector('.files-name')?.textContent === ${JSON.stringify(fixtureName)});
+            const group = wrap && wrap.nextElementSibling;
+            if (!group || group.hidden) return JSON.stringify(null);
+            return JSON.stringify({
+                notes: [...group.querySelectorAll(':scope > .files-note')].map((n) => n.textContent),
+                rows: group.querySelectorAll('.files-row').length,
+            });
+        })()`).then(JSON.parse);
+
+        // Failed once, then fine.
+        let listed = 0;
+        await context.route(isList(SIDEBAR_DIR), (route) => {
+            listed++;
+            if (listed === 1) {
+                return route.fulfill({ status: 500, contentType: 'application/json',
+                    body: JSON.stringify({ error: 'ctp: the listing failed' }) });
+            }
+            return route.continue();
+        });
+        await folder.click();
+        check('fixture: a failed folder listing shows its error',
+            await waitFor(async () => JSON.stringify((await inFolder())?.notes) === JSON.stringify(['⚠️ ctp: the listing failed'])), true);
+        await folder.click();
+        await folder.click();
+        check('collapsed and expanded again, a folder whose listing failed is listed again',
+            await waitFor(async () => {
+                const v = await inFolder();
+                return listed === 2 && v && v.rows > 0 && v.notes.length === 0;
+            }), true);
+        await folder.click();
+        await folder.click();
+        check('and a listing that worked is kept: expanding again asks nothing',
+            { listed, rows: (await inFolder())?.rows }, (v) => v.listed === 2 && v.rows > 0);
+        await context.unroute(isList(SIDEBAR_DIR));
+
+        // Not a listing: a 200 that is not JSON.
+        await context.route(isList(SIDEBAR_DIR), notAListing);
+        await wrapper.locator('#files-refresh').click();   // the tree drawn again, the folder closed
+        await waitFor(async () => (await folder.count()) === 1 && (await inFolder()) === null);
+        await folder.click();
+        check('a folder listing that is not one shows an error line, not Loading… forever',
+            await waitFor(async () => {
+                const v = await inFolder();
+                return !!v && v.rows === 0 && v.notes.length === 1 && /unexpected answer/.test(v.notes[0]);
+            }), true);
+        await context.unroute(isList(SIDEBAR_DIR));
+        await context.route(isRecent, notAListing);
+        await wrapper.locator('.files-tab[data-tab="recent"]').click();
+        const listNotes = () => wrapper.evaluate(`JSON.stringify([...document.querySelectorAll('#files-list > .files-note')]
+            .map((n) => n.textContent))`).then(JSON.parse);
+        check('so does a Recent changes answer that is not one',
+            await waitFor(async () => {
+                const notes = await listNotes();
+                return notes.length === 1 && /unexpected answer/.test(notes[0]);
+            }), true);
+        await context.unroute(isRecent);
+        await wrapper.locator('.files-tab[data-tab="files"]').click();
+        await waitFor(async () => (await folder.count()) === 1);
+
+        // The upload is saved; only the listing that reveals it fails.
+        await context.route(isList(INBOX_DIR), notAListing);
+        const local = join(pickDir, FILE);
+        writeFileSync(local, 'listed or not\n');
+        await uploadBudget(1);
+        const [chooser] = await Promise.all([page.waitForEvent('filechooser'), wrapper.locator('#files-upload-btn').click()]);
+        await chooser.setFiles(local);
+        check('fixture: the upload is saved',
+            await waitFor(() => dexec(['sh', '-c', 'cat "$1" 2>/dev/null || true', 'sh', `${INBOX_DIR}/${FILE}`]) === 'listed or not\n'), true);
+        const notice = () => wrapper.evaluate(`JSON.stringify({
+            text: document.getElementById('files-notice').hidden ? '' : document.getElementById('files-notice-text').textContent,
+            kind: document.getElementById('files-notice').className,
+        })`).then(JSON.parse);
+        check('an upload the server confirmed is reported as uploaded, even when the listing after it fails',
+            await waitFor(async () => JSON.stringify(await notice())
+                === JSON.stringify({ text: `Uploaded ${FILE} to ${INBOX_DIR}.`, kind: '' })), true);
+        await sleep(300);
+        check('and stays so: never "Upload failed"', (await notice()).text, `Uploaded ${FILE} to ${INBOX_DIR}.`);
+        await context.unroute(isList(INBOX_DIR));
+    } finally {
+        await context.close();
+        rmSync(pickDir, { recursive: true, force: true });
+        dexec(['rm', '-rf', INBOX_DIR]);
+    }
+}
+
 // 9. The terminal's own ways in: the paperclip, a paste and a drop take any
 //    file. Small images (PNG, JPEG, GIF, WebP, SVG, at most 10 MB) still go
 //    to the image upload, faked here so section 5 keeps the image limiter's
@@ -3027,6 +3200,7 @@ async function run(engine, mode, url) {
 
     await checkStaleView(browser, url);
     await checkSidebarTabs(browser, url);
+    await checkSidebarWidth(browser, url);
     await checkDownloads(browser, url);
     await checkZipMenu(browser, url);
     await checkLateProtectedPreview(browser, url);
@@ -3037,6 +3211,7 @@ async function run(engine, mode, url) {
     await checkUploads(browser, url);
     await checkWaitingQuestion(browser, url);
     await checkUploadRace(browser, url);
+    await checkBadListing(browser, url);
     await checkTerminalUploads(browser, url);
     await checkUploadClientMissing(browser, url);
     await checkKeyboardViewport(browser, engine, mode, url);

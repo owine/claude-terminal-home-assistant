@@ -177,9 +177,15 @@
         // or toggled Hidden files) while it was in flight.
         let viewGen = 0;
 
+        // What a listing that is not one shows (helpers.isListing): a
+        // proxy's page answering 200, say, which getJson reads as {}.
+        const NOT_A_LISTING = '⚠️ The add-on gave an unexpected answer. Try again.';
+
         // One folder level into `container`; subfolders load on expand.
         // `gen` is passed for the top level only: a subfolder renders into
         // its own container, which a refresh detaches rather than reuses.
+        // Resolves to whether the folder was listed: false when it failed
+        // (its error showing in its place) or was dropped as stale.
         async function renderFolder(folderPath, container, depth, gen) {
             const stale = () => gen !== undefined && gen !== viewGen;
             container.replaceChildren(note('Loading…', depth));
@@ -187,11 +193,15 @@
             try {
                 data = await getJson('api/files/list?path=' + encodeURIComponent(folderPath));
             } catch (err) {
-                if (stale()) return;
+                if (stale()) return false;
                 container.replaceChildren(note('⚠️ ' + err.message, depth));
-                return;
+                return false;
             }
-            if (stale()) return;
+            if (stale()) return false;
+            if (!helpers.isListing(data)) {
+                container.replaceChildren(note(NOT_A_LISTING, depth));
+                return false;
+            }
             if (depth === 0 && data.root) rootPath = data.root;
             const entries = data.entries.filter((e) => showHidden.checked || !e.name.startsWith('.'));
             container.replaceChildren();
@@ -228,11 +238,19 @@
                     };
                     // Opens the folder, listing it the first time, or again
                     // with `reload` (reveal(), after an upload into it).
-                    // Resolves once its listing is in.
+                    // Resolves once its listing is in. A listing that
+                    // failed is not kept: opening the folder again (collapse
+                    // and expand) asks again, where a kept failure would
+                    // show its error until the whole tree was refreshed.
                     let loading = null;
                     const open = ({ reload = false } = {}) => {
                         expand(true);
-                        if (!loading || reload) loading = renderFolder(entry.path, children, depth + 1);
+                        if (!loading || reload) {
+                            const listing = renderFolder(entry.path, children, depth + 1);
+                            loading = listing;
+                            const forget = () => { if (loading === listing) loading = null; };
+                            listing.then((listed) => { if (!listed) forget(); }, forget);
+                        }
                         return loading;
                     };
                     folderOpeners.set(row, open);
@@ -246,6 +264,9 @@
                 }
             }
             if (data.truncated) container.append(note('… more entries not shown', depth));
+            const unreadable = helpers.unreadableNote(data.unreadableNames, 'folder');
+            if (unreadable) container.append(note(unreadable, depth));
+            return true;
         }
 
         async function renderRecent(gen) {
@@ -259,6 +280,10 @@
                 return;
             }
             if (gen !== viewGen) return;
+            if (!helpers.isListing(data)) {
+                list.replaceChildren(note(NOT_A_LISTING));
+                return;
+            }
             if (data.root) rootPath = data.root;
             list.replaceChildren();
             if (!data.entries.length) list.append(note('Nothing changed in this period'));
@@ -268,6 +293,8 @@
                 list.append(row);
             }
             if (data.truncated || data.incomplete) list.append(note('… showing the newest found; the search stopped early'));
+            const unreadable = helpers.unreadableNote(data.unreadableNames, 'recent');
+            if (unreadable) list.append(note(unreadable));
         }
 
         // The selected tab: aria-selected, the tablist's one tab stop, and
@@ -414,9 +441,10 @@
                 return;
             }
             startDownload(helpers.downloadUrl(entry.path, { zip: true }));
+            const unreadable = helpers.unreadableNote(plan.unreadableNames, 'zip');
             showNoticeIf(gen, 'Downloading ' + (plan.name || zipName) + ': ' + plan.files
                 + (plan.files === 1 ? ' file, ' : ' files, ') + helpers.formatSize(plan.bytes)
-                + ' before compression. Protected files are left out.');
+                + ' before compression. Protected files are left out.' + (unreadable ? ' ' + unreadable : ''));
         }
 
         // Folder actions, behind the always-visible ⋯ on each folder row
@@ -742,7 +770,16 @@
                 showNotice(lines.join('\n'), kind);
                 return;
             }
-            const row = await reveal(last.path);
+            // The upload is in, whatever the tree does next: a listing that
+            // fails to show it must not turn it into "Upload failed", which
+            // would invite the same file again. Unrevealed, it is not
+            // previewed either.
+            let row = null;
+            try {
+                row = await reveal(last.path);
+            } catch (err) {
+                console.error('[wrapper] could not show the upload in the tree:', err);
+            }
             const entry = row && rowEntries.get(row);
             if (row) {
                 select(row);
@@ -1175,10 +1212,20 @@
         // the pointer if capture does not hold across the frame boundary.
         // Every way a drag can end clears both, so the terminal is never
         // left without the pointer.
+        //
+        // The width the user chose (stored, or dragged to) is kept apart
+        // from the one shown: a window too narrow for it shows less, and the
+        // window wide again shows it again. Only a drag changes it and is
+        // stored; a bare click on the edge, which moves nothing, stores
+        // nothing (it used to store the narrowed width as the choice).
         function applyWidth(width) {
             sidebar.style.width = helpers.clampWidth(width, document.getElementById('main').clientWidth) + 'px';
         }
-        applyWidth(load(STORE.width));
+        let chosenWidth = load(STORE.width);
+        applyWidth(chosenWidth);
+        // How far the pointer must go before a press on the edge is a drag:
+        // a click with a tremble in it is not one.
+        const DRAG_SLOP = 3;
 
         let drag = null;
         function endDrag() {
@@ -1192,7 +1239,9 @@
             resizer.classList.remove('dragging');
             document.body.classList.remove('files-resizing');
             try { resizer.releasePointerCapture(ending.pointerId); } catch { /* already released */ }
-            save(STORE.width, parseInt(sidebar.style.width, 10));
+            if (!ending.moved) return;
+            chosenWidth = parseInt(sidebar.style.width, 10);
+            save(STORE.width, chosenWidth);
         }
         resizer.addEventListener('pointerdown', (e) => {
             // One drag at a time. A second pointer going down mid-drag
@@ -1202,10 +1251,14 @@
             if (e.button !== 0 || sidebar.classList.contains('collapsed') || PHONE.matches) return;
             e.preventDefault();
             const right = sidebar.getBoundingClientRect().right;
-            drag = {
-                pointerId: e.pointerId,
-                onMove: (ev) => applyWidth(right - ev.clientX),
+            const startX = e.clientX;
+            const d = { pointerId: e.pointerId, moved: false };
+            d.onMove = (ev) => {
+                if (!d.moved && Math.abs(ev.clientX - startX) < DRAG_SLOP) return;
+                d.moved = true;
+                applyWidth(right - ev.clientX);
             };
+            drag = d;
             try { resizer.setPointerCapture(e.pointerId); } catch { /* best effort */ }
             resizer.classList.add('dragging');
             document.body.classList.add('files-resizing');
@@ -1219,9 +1272,10 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') endDrag();
         });
-        // A narrower window may no longer fit a remembered width.
+        // A narrower window may no longer fit the chosen width, and a wider
+        // one may fit it again.
         window.addEventListener('resize', () => {
-            if (!drag) applyWidth(parseInt(sidebar.style.width, 10));
+            if (!drag) applyWidth(chosenWidth);
         });
 
         // Restore. A phone never reopens on load: there the sidebar
