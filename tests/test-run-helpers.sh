@@ -212,6 +212,78 @@ assert_contains "DOCS.md states the 36500-day maximum" \
     "$(grep -E '^\| `upload_retention_days`' "$REPO_ROOT/claude-terminal/DOCS.md")" "36500"
 
 # ---------------------------------------------------------------------------
+# prune_old_files: a retention period too large to count in minutes
+# ---------------------------------------------------------------------------
+# find is given $((days * 1440)) minutes, and shell arithmetic wraps past 2^63
+# without a word. 12810238940076078 days times 1440 is 2^64 + 704, so it came
+# out as 704 minutes and swept every file older than half a day.
+# 18459554312649627694 is that number plus 2^64: the shell's own parse wraps
+# it to the same value, and `[` cannot read it at all. The schema caps
+# upload_retention_days, but image_retention_days is int(0,)? and existing
+# installs must keep validating, so prune_old_files refuses anything over
+# 36500 days itself.
+printf '\n%s\n' "prune_old_files: oversized retention"
+
+# A folder holding one file last modified in 2020.
+aged_folder() {
+    local dir
+    dir=$(new_tmpdir)
+    touch -t 202001010000 "$dir/old.txt"
+    printf '%s\n' "$dir"
+}
+kept() { [ -e "$1/old.txt" ] && echo yes || echo no; }
+
+for huge in 12810238940076078 18459554312649627694; do
+    reset_config
+    dir=$(aged_folder)
+    set_config image_retention_days "$huge"
+    out=$(prune_old_files "$dir" image_retention_days '*' "test files" 2>&1 >/dev/null)
+    assert_eq "a ${#huge}-digit retention deletes nothing" "yes" "$(kept "$dir")"
+    assert_contains "and says it keeps them all (${#huge} digits)" "$out" "more than 36500 days (${huge}); keeping all test files"
+done
+
+reset_config
+dir=$(aged_folder)
+set_config image_retention_days 36501
+out=$(prune_old_files "$dir" image_retention_days '*' "test files" 2>&1 >/dev/null)
+assert_contains "36501 days, one past the cap, keeps all too" "$out" "keeping all test files"
+
+reset_config
+dir=$(aged_folder)
+set_config image_retention_days 36500
+out=$(prune_old_files "$dir" image_retention_days '*' "test files" 2>&1 >/dev/null)
+assert_not_contains "36500 days, the cap itself, is accepted" "$out" "keeping all"
+
+reset_config
+dir=$(aged_folder)
+set_config image_retention_days 30
+prune_old_files "$dir" image_retention_days '*' "test files" 2>/dev/null
+assert_eq "an ordinary retention still prunes" "no" "$(kept "$dir")"
+
+# bashio logs to LOG_FD, never stdout; the stub logs to stderr likewise.
+reset_config
+set_config image_retention_days 18459554312649627694
+assert_eq "the refusal writes nothing to stdout" "" \
+    "$(prune_old_files "$(aged_folder)" image_retention_days '*' "test files" 2>/dev/null)"
+reset_config
+
+# Under bashio's options, inherit_errexit included: a 20-digit value is not a
+# number to `[`, and the guard must neither abort startup nor fall through.
+dir=$(aged_folder)
+# shellcheck disable=SC2016  # expanded by the inner shell
+assert_status "survives bashio's shell options, and still deletes nothing" 0 run_under_bashio '
+    shopt -s inherit_errexit 2>/dev/null || true
+    bashio::config() { printf "%s\n" 18459554312649627694; }
+    . "$REPO_ROOT/claude-terminal/run.sh"
+    prune_old_files "$1" image_retention_days "*" "test files"
+    [ -e "$1/old.txt" ]
+' "$dir"
+
+# shellcheck disable=SC2016  # the backticks are Markdown, matched literally
+assert_contains "DOCS.md says a retention over 36500 days keeps everything" \
+    "$(grep -E '^\| `image_retention_days`' "$REPO_ROOT/claude-terminal/DOCS.md")" "over 36500"
+
+# ---------------------------------------------------------------------------
 # prune_claude_versions
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "prune_claude_versions"
