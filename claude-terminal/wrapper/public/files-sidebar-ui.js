@@ -519,8 +519,9 @@
         // limit, a protected folder - comes back as an answer: one sent
         // before a big body has been read is often lost behind ingress, and
         // the browser shows only a network error. A sidebar upload never
-        // types into the terminal: it reveals the new file and opens its
-        // preview, a protected one only with Show protected files on.
+        // types into the terminal: it reveals the new file and, while the
+        // user is still in the sidebar, opens its preview (a protected one
+        // only with Show protected files on).
 
         let pickDest;   // where the next pick goes; undefined is the inbox
         let uploadChain = Promise.resolve();
@@ -663,9 +664,21 @@
             return rowFor(filePath);
         }
 
+        // Where the user is when a batch ends, which can be minutes after
+        // it began: still in the open sidebar (focus in it, or nowhere), or
+        // gone back to the terminal or elsewhere.
+        function stillInSidebar() {
+            const active = document.activeElement;
+            return !sidebar.classList.contains('collapsed')
+                && (!active || active === document.body || sidebar.contains(active));
+        }
+
         // After a batch: one line for it, with every refusal, then the last
-        // file uploaded revealed and previewed. A protected file is revealed
-        // but not opened unless Show protected files is on.
+        // file uploaded revealed and, if the user is still in the sidebar,
+        // previewed. The preview covers the whole page: sprung on someone
+        // typing in the terminal it would take their keys, and a drop on
+        // it would once have gone to the terminal. A protected file is
+        // revealed but not opened unless Show protected files is on.
         async function finishBatch(results, problems, skipped) {
             const lines = [];
             const last = results[results.length - 1];
@@ -690,7 +703,7 @@
                 return;
             }
             showNotice(lines.join('\n'), kind);
-            if (entry && !problems.length) openPreview(entry.path, entry.sensitive);
+            if (entry && !problems.length && stillInSidebar()) openPreview(entry.path, entry.sensitive);
         }
 
         async function runBatch(files, dest) {
@@ -1000,6 +1013,27 @@
                 return;
             }
             uploadFiles(files, entry.path);
+        });
+
+        // Files dragged over the open preview. It covers the whole page, so
+        // a drop there has no target the user can see: refused (the cursor
+        // says so during the drag), never uploaded somewhere they did not
+        // pick, and stopped here, so the page's terminal drop handler (on
+        // document) never sends an image to /data/images and types its
+        // path for a sidebar upload, nor shows its overlay.
+        for (const type of ['dragenter', 'dragover', 'dragleave']) {
+            preview.addEventListener(type, (e) => {
+                if (!carriesFiles(e)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (type !== 'dragleave') e.dataTransfer.dropEffect = 'none';
+            });
+        }
+        preview.addEventListener('drop', (e) => {
+            if (!carriesFiles(e)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            showNotice('⚠️ Not uploaded: close the preview first, then drop the files onto the Files sidebar.', 'error');
         });
 
         // previewPath is read at click time: a blanked preview has none,

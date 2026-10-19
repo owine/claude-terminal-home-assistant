@@ -1356,7 +1356,20 @@ async function checkUploads(browser, url) {
         await dropOn('#files-footer', 'loose.txt', 'loose\n');
         check('a drop elsewhere on the sidebar goes to the inbox',
             await waitFor(() => read(`${INBOX_DIR}/loose.txt`) === 'loose\n'), true);
-        await waitFor(async () => (await previewText(wrapper)) === 'loose\n');
+        // The preview covers the whole page, sidebar and terminal alike. A
+        // drop on it has no target the user can see, so it is refused: it
+        // must not fall through to the terminal's drop, which sends an
+        // image to /data/images and types its path.
+        check('fixture: the uploaded file\'s preview is open',
+            await waitFor(async () => (await previewText(wrapper)) === 'loose\n'), true);
+        const paneBeforeDrop = dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop();
+        const overPreview = await dropOn('#files-preview', 'onpreview.png', 'png');
+        check('a drop on the preview is refused in the notice',
+            await waitFor(async () => /close the preview/.test((await notice()).text)), true);
+        check('and never reaches the terminal: no overlay, no image upload, nothing typed',
+            { overlay: overPreview.overlay, images: imageUploads,
+                typed: dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop() !== paneBeforeDrop },
+            (v) => !v.overlay && v.images === 1 && !v.typed);
         await closePreview();
 
         // Never into a protected folder or through a symlinked one.
@@ -1418,14 +1431,42 @@ async function checkUploads(browser, url) {
                 const n = await notice();
                 return n.text === 'Uploading slow.bin…' && n.bar;
             }), true);
+        // Meanwhile the user goes back to the terminal: the file is
+        // revealed when it is in, but no preview springs up over the
+        // terminal they are typing in.
+        await wrapper.evaluate(`${TERM}.focus()`);
         release();
         check('the bar goes when it is done',
             await waitFor(async () => {
                 const n = await notice();
                 return n.text === `Uploaded slow.bin to ${INBOX_DIR}.` && !n.bar;
             }), true);
+        check('with focus back in the terminal, the file is revealed but not previewed',
+            { selected: await selected(), preview: (await previewState(wrapper)).active,
+                focus: await wrapper.evaluate('document.activeElement && document.activeElement.id') },
+            (v) => v.selected === `${INBOX_DIR}/slow.bin` && !v.preview && v.focus === 'terminal-frame');
+        await closePreview();
+        // Nor with the sidebar closed by the time it is in.
+        await uploadBudget(1);
+        const gate2 = new Promise((r) => { release = r; });
+        held = 0;
+        await context.unroute(isBody);
+        await context.route(isBody, async (route) => {
+            held++;
+            await gate2;
+            await route.continue().catch(() => {});
+        });
+        await pick(uploadButton, local('closed.txt', 'closed\n'));
+        await waitFor(() => held === 1);
+        await wrapper.locator('#files-hide').click();
+        release();
+        check('with the sidebar closed meanwhile, it uploads and nothing opens',
+            await waitFor(async () => read(`${INBOX_DIR}/closed.txt`) === 'closed\n'
+                && (await selected()) === `${INBOX_DIR}/closed.txt`
+                && !(await previewState(wrapper)).active), true);
         await context.unroute(isBody);
         await closePreview();
+        await wrapper.locator('#files-btn').click();
 
         // Two files in one pick: one after another, then one line.
         await uploadBudget(2);
@@ -1438,7 +1479,7 @@ async function checkUploads(browser, url) {
         check('no upload part is left anywhere',
             dexec(['find', '/config', '-maxdepth', '3', '-name', '.ctp-upload-*.part', '!', '-name', UPLOAD_PART]).trim(), '');
         // uploadBudget must have seen every body that reached the server.
-        check('fixture: every real upload body was budgeted', bodies.length, 10);
+        check('fixture: every real upload body was budgeted', bodies.length, 11);
     } finally {
         release();
         await context.close();
