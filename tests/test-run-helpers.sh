@@ -284,6 +284,109 @@ assert_contains "DOCS.md says a retention over 36500 days keeps everything" \
     "$(grep -E '^\| `image_retention_days`' "$REPO_ROOT/claude-terminal/DOCS.md")" "over 36500"
 
 # ---------------------------------------------------------------------------
+# prune_upload_inbox: only an inbox the add-on made
+# ---------------------------------------------------------------------------
+# /config/uploads is swept by default, and before 2.11.0 it was the user's
+# own folder name to use: a folder called uploads that predates the add-on's
+# inbox lost every file older than 30 days on the first boot after the
+# upgrade, whoever made it (an mtime-preserving copy too). The wrapper now
+# writes a marker, .ctp-inbox, into the inbox when it makes it
+# (files-upload.js), and only a folder holding that marker as a regular file
+# is swept. The marker itself is never deleted, however old.
+printf '\n%s\n' "prune_upload_inbox: ownership marker"
+
+# An inbox holding one old file, and (with "marked") an old marker.
+inbox_with() {
+    local dir
+    dir="$(new_tmpdir)/uploads"
+    mkdir -p "$dir"
+    touch -t 202001010000 "$dir/old.pdf"
+    if [ "${1:-}" = "marked" ]; then
+        printf 'note\n' >"$dir/.ctp-inbox"
+        touch -t 202001010000 "$dir/.ctp-inbox"
+    fi
+    printf '%s\n' "$dir"
+}
+there() { [ -e "$1" ] && echo yes || echo no; }
+
+reset_config
+set_config upload_retention_days 30
+dir=$(inbox_with marked)
+out=$(prune_upload_inbox "$dir" 2>&1 >/dev/null)
+assert_eq "a marked inbox is swept" "no" "$(there "$dir/old.pdf")"
+assert_eq "but never its marker, however old" "yes" "$(there "$dir/.ctp-inbox")"
+assert_contains "and the count leaves the marker out" "$out" "removed 1 "
+
+dir=$(inbox_with)
+out=$(prune_upload_inbox "$dir" 2>&1 >/dev/null)
+assert_eq "an inbox without the marker is untouched" "yes" "$(there "$dir/old.pdf")"
+assert_contains "and the log says it is skipped" "$out" "${dir} has no .ctp-inbox marker, so it is not swept"
+assert_contains "and how to opt in" "$out" "touch ${dir}/.ctp-inbox"
+assert_eq "and creates no marker" "no" "$(there "$dir/.ctp-inbox")"
+# Not "the add-on did not make it": a marker the wrapper could not write, or
+# one the user deleted to opt out, leaves a folder the add-on did make.
+assert_not_contains "and does not guess who made the folder" "$out" "did not make"
+
+# With upload_retention_days 0 nothing would be swept anyway, so there is
+# nothing to explain: no line at every start for a choice already made.
+set_config upload_retention_days 0
+dir=$(inbox_with)
+assert_eq "retention 0: an unmarked inbox logs nothing" "" "$(prune_upload_inbox "$dir" 2>&1)"
+ln -s "$(inbox_with marked)/.ctp-inbox" "$dir/.ctp-inbox"
+assert_eq "retention 0: nor does a symlinked marker" "" "$(prune_upload_inbox "$dir" 2>&1)"
+assert_eq "and the files stay" "yes" "$(there "$dir/old.pdf")"
+set_config upload_retention_days 30
+
+# A symlink is not the marker: `[ -f ]` follows one, so a link to any regular
+# file (another folder's marker, say) would pass for it.
+dir=$(inbox_with)
+other=$(inbox_with marked)
+ln -s "$other/.ctp-inbox" "$dir/.ctp-inbox"
+out=$(prune_upload_inbox "$dir" 2>&1 >/dev/null)
+assert_eq "a symlinked marker does not count" "yes" "$(there "$dir/old.pdf")"
+assert_contains "and the log says why" "$out" "is a symlink"
+assert_eq "and the link stays" "yes" "$([ -L "$dir/.ctp-inbox" ] && echo yes || echo no)"
+
+dir=$(inbox_with)
+mkdir "$dir/.ctp-inbox"
+prune_upload_inbox "$dir" 2>/dev/null
+assert_eq "a folder named like the marker does not count" "yes" "$(there "$dir/old.pdf")"
+
+# The skip line is logged, never printed: main reads nothing back from this
+# function, but bashio logs to LOG_FD and the stub to stderr likewise.
+assert_eq "the skip writes nothing to stdout" "" "$(prune_upload_inbox "$(inbox_with)" 2>/dev/null)"
+
+# image_retention_days shares prune_old_files, which spares the marker only
+# when asked: a .ctp-inbox among the pasted images is nothing special.
+reset_config
+set_config image_retention_days 30
+dir=$(inbox_with marked)
+prune_old_files "$dir" image_retention_days '*' "test files" 2>/dev/null
+assert_eq "prune_old_files spares no name unless told to" "no" "$(there "$dir/.ctp-inbox")"
+reset_config
+
+dir=$(inbox_with)
+other=$(inbox_with)
+ln -s "$other/old.pdf" "$other/link"
+# shellcheck disable=SC2016  # expanded by the inner shell
+assert_status "every skip survives bashio's shell options" 0 run_under_bashio '
+    shopt -s inherit_errexit 2>/dev/null || true
+    bashio::config() { printf "%s\n" "${2:-}"; }
+    . "$REPO_ROOT/claude-terminal/run.sh"
+    prune_upload_inbox "$1"
+    ln -s "$2/link" "$1/.ctp-inbox"
+    prune_upload_inbox "$1"
+    [ -e "$1/old.pdf" ]
+' "$dir" "$other"
+
+# The wrapper writes the marker and hides it; run.sh looks for it. One name.
+assert_contains "the wrapper writes the marker run.sh looks for" \
+    "$(grep -E "^const INBOX_MARKER = " "$REPO_ROOT/claude-terminal/wrapper/files-api.js")" "'.ctp-inbox'"
+# shellcheck disable=SC2016  # the backticks are Markdown, matched literally
+assert_contains "DOCS.md's upload_retention_days row names the marker" \
+    "$(grep -E '^\| `upload_retention_days`' "$REPO_ROOT/claude-terminal/DOCS.md")" ".ctp-inbox"
+
+# ---------------------------------------------------------------------------
 # prune_claude_versions
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "prune_claude_versions"

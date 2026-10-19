@@ -154,14 +154,17 @@ reset_config
 # itself a symlink or a file.
 printf '\n%s\n' "prune_upload_inbox"
 
-# Fixture: an inbox with old files of any name (a dotfile among them), a new
-# one, a subfolder holding an old file, and an old symlink to an old file
-# outside the inbox. Prints the inbox; the outside folder is beside it.
+# Fixture: an inbox the add-on made (it holds the .ctp-inbox marker; the
+# marker itself is tested in test-run-helpers.sh), with old files of any name
+# (a dotfile among them), a new one, a subfolder holding an old file, and an
+# old symlink to an old file outside the inbox. Prints the inbox; the outside
+# folder is beside it.
 new_inbox() {
     local base dir
     base=$(new_tmpdir)
     dir="$base/uploads"
     mkdir -p "$dir/sub" "$base/outside"
+    touch "$dir/.ctp-inbox"
     touch -t 202001010000 "$dir/report.pdf" "$dir/.hidden-old" "$dir/sub/old-inside.txt" "$base/outside/target.txt"
     touch "$dir/fresh.txt"
     ln -s "$base/outside/target.txt" "$dir/old-link"
@@ -220,9 +223,10 @@ assert_eq "and the file is untouched" "yes" "$(present "$file_base/uploads")"
 # A sweep that fails (here, an inbox find cannot read) must not stop startup:
 # bashio runs run.sh with errexit and pipefail, and the add-on would never come
 # up. Root reads anything, so this case needs a non-root run (CI, a Mac).
+# Searchable but not readable: the marker is found, the listing is not.
 if [ "$(id -u)" -ne 0 ]; then
     dir=$(new_inbox)
-    chmod 000 "$dir"
+    chmod 300 "$dir"
     # shellcheck disable=SC2016  # expanded by the inner shell
     out=$(bash -c '
         set -o errexit -o errtrace -o nounset -o pipefail

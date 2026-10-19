@@ -31,7 +31,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const express = require('express');
-const { classifyRelative, inside, sendError, FilesError } = require('./files-api');
+const {
+    classifyRelative, inside, sendError, FilesError, INBOX, INBOX_MARKER,
+} = require('./files-api');
 const { createCrossSiteGuard } = require('./http-guards');
 
 const MB = 1024 * 1024;
@@ -40,9 +42,14 @@ const MB = 1024 * 1024;
 // startup rather than read "" when the Supervisor is unreachable (bashio's
 // inherit_errexit), but the wrapper can also be started without either.
 const DEFAULT_MAX_MB = 25;
-// The inbox, relative to the root. run.sh sweeps its top level at startup
-// (upload_retention_days); a folder chosen with "Upload here" is never swept.
-const INBOX = 'uploads';
+// The inbox is INBOX (files-api.js), relative to the root. run.sh sweeps its
+// top level at startup (upload_retention_days), but only when it holds
+// INBOX_MARKER, which is written here when the wrapper makes the folder: a
+// folder called uploads that was there first is the user's, and never swept.
+// A folder chosen with "Upload here" is never swept.
+const INBOX_MARKER_NOTE = 'The Claude Terminal Prowine add-on made this folder as its upload inbox, '
+    + 'and at every start deletes the files at its top level older than upload_retention_days. '
+    + 'Delete this file to stop that.\n';
 // A client that stops sending must not hold a descriptor and a part forever:
 // the server has no socket timeout of its own. Same value as downloads.
 const IDLE_MS = 60 * 1000;
@@ -248,10 +255,27 @@ function createUploads({
         : new FilesError(409, `${name} already exists in ${display}.`, { reason: 'exists', replaceable: true }));
     const display = (relative) => path.join(path.resolve(api.root), relative);
 
+    // Mark a folder this wrapper just made as its inbox, so run.sh sweeps
+    // it. Only on a mkdir that succeeded: EEXIST means someone made it
+    // first, maybe the user, and a folder that was there is never marked.
+    // 'wx' creates the file or fails, never writing through a symlink. A
+    // marker that cannot be written fails safe: the upload goes on and the
+    // inbox is not swept. Logged here, since run.sh's line at every start
+    // cannot tell this apart from a marker the user deleted.
+    async function markInbox(dir, log) {
+        const marker = path.join(dir, INBOX_MARKER);
+        try {
+            await fsp.writeFile(marker, INBOX_MARKER_NOTE, { flag: 'wx', mode: 0o644 });
+        } catch (err) {
+            log(`Upload inbox: could not write its marker ${JSON.stringify(marker)} (${err.code || err.message}), `
+                + 'so the inbox will not be swept (upload_retention_days)');
+        }
+    }
+
     // Where an upload goes: a real folder (not a symlink, nor below one)
     // inside the root, not protected and not under deps. The inbox is made
     // on first use (`create`; a check=1 only asks).
-    async function destination(requested, { inbox, create }) {
+    async function destination(requested, { inbox, create, log }) {
         const at = await api.locate(requested);   // 400, 404 (outside, .git), 503
         const shown = display(at.relative);
         if (at.kind === 'sensitive') {
@@ -263,11 +287,14 @@ function createUploads({
         let st = await lstatOrNull(at.asked);
         if (!st && inbox) {
             if (!create) return { dir: at.asked, relative: at.relative, display: shown };
+            let made = false;
             try {
                 await fsp.mkdir(at.asked, { mode: 0o755 });
+                made = true;
             } catch (err) {
                 if (err.code !== 'EEXIST') throw err;
             }
+            if (made) await markInbox(at.asked, log);
             st = await lstatOrNull(at.asked);
         }
         if (!st) throw new FilesError(404, `${shown} does not exist.`);
@@ -290,7 +317,7 @@ function createUploads({
      * { name, dest, onConflict }: the plan receive() follows, or a
      * FilesError. Shared by check=1 and the upload itself.
      */
-    async function plan({ name, dest, onConflict }, { create = true } = {}) {
+    async function plan({ name, dest, onConflict }, { create = true, log = console.error } = {}) {
         if (typeof name !== 'string' || name === '') throw new FilesError(400, 'Missing or invalid file name');
         if (dest !== undefined && typeof dest !== 'string') throw new FilesError(400, 'Invalid path');
         if (onConflict !== undefined && onConflict !== 'replace' && onConflict !== 'keep-both') {
@@ -303,7 +330,7 @@ function createUploads({
         if (inbox && onConflict === 'replace') {
             throw new FilesError(400, 'The inbox never replaces a file: a taken name gets a number. Choose a folder to replace a file in it.');
         }
-        const folder = await destination(inbox ? INBOX : dest, { inbox, create });
+        const folder = await destination(inbox ? INBOX : dest, { inbox, create, log });
         const safe = sanitizeUploadName(name, { now });
         if (classifyRelative(path.join(folder.relative, safe)) === 'hidden') {
             throw new FilesError(400, `${safe} ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.`);
@@ -648,7 +675,7 @@ function createUploadRouter({ uploads, uploadLimiter, checkLimiter, log = consol
             }
             const declared = Number(req.get('content-length'));
             if (declared > uploads.maxBytes) throw uploads.tooBig(declared);
-            const planned = await uploads.plan(query);
+            const planned = await uploads.plan(query, { log });
             res.json(await uploads.receive(req, planned, { log }));
         } catch (err) {
             // The client is gone (a ClientGone, or a stall cut off), or

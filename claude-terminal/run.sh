@@ -795,16 +795,16 @@ get_claude_launch_command() {
 }
 
 
-# prune_old_files <dir> <option> <name pattern> <what>
+# prune_old_files <dir> <option> <name pattern> <what> [keep]
 #
 # Delete the regular files at the top level of <dir> whose names match
 # <pattern> and that are older than <option> days (default 30; 0 keeps them
-# all). Never a subfolder, nor anything in one, nor a symlink: `find -type f`
-# does not match a link, and without -L it is not followed. A value that is
-# not a whole number, or is over 36500, deletes nothing: guessing wrong here
-# is the one mistake that cannot be undone.
+# all), except one named <keep>. Never a subfolder, nor anything in one, nor
+# a symlink: `find -type f` does not match a link, and without -L it is not
+# followed. A value that is not a whole number, or is over 36500, deletes
+# nothing: guessing wrong here is the one mistake that cannot be undone.
 prune_old_files() {
-    local dir="$1" option="$2" pattern="$3" what="$4"
+    local dir="$1" option="$2" pattern="$3" what="$4" keep="${5:-}"
     local days
     days=$(bashio::config "$option" '30')
 
@@ -842,9 +842,11 @@ prune_old_files() {
     # -print, so GNU find counts only what it deleted (busybox counts what it
     # tried). A find that fails - a folder it cannot read, an I/O error - must
     # not take startup down under bashio's errexit and pipefail (the inbox is
-    # the user's folder): it is logged, and startup goes on.
+    # the user's folder): it is logged, and startup goes on. Without <keep>,
+    # `! -name ''` spares nothing: no file has an empty name (GNU, busybox and
+    # BSD find all accept the empty pattern, silently).
     local removed status=0
-    removed=$(find "$dir" -maxdepth 1 -type f -name "$pattern" -mmin +$((days * 1440)) -delete -print | wc -l | tr -d ' ') || status=$?
+    removed=$(find "$dir" -maxdepth 1 -type f -name "$pattern" ! -name "$keep" -mmin +$((days * 1440)) -delete -print | wc -l | tr -d ' ') || status=$?
     if [ "$status" -ne 0 ]; then
         bashio::log.warning "${what}: could not sweep all of ${dir} (find exited ${status}); continuing"
     fi
@@ -870,11 +872,24 @@ prune_uploaded_images() {
 # level goes once it is old enough, whatever its name and whoever put it
 # there. A folder chosen with "Upload here" is never swept.
 #
+# Only an inbox the add-on made, though: the wrapper writes the marker
+# .ctp-inbox into the folder when it makes it (files-upload.js), and a folder
+# without one, such as an `uploads` the user had before the inbox existed, is
+# left alone and said so, with how to opt in (unless upload_retention_days is
+# 0, when nothing would be swept). The line does not say who made the folder:
+# a marker the wrapper could not write, or one the user deleted to opt out,
+# leaves a folder the add-on made. The marker must be a regular
+# file - `[ -f ]` follows a link, so a symlink to any file would pass - and
+# is never swept itself.
+#
 # An inbox that is a symlink, or not a folder at all, is left alone and said
 # so: `[ -d ]` follows a link, so without this a symlinked inbox would pass
 # for one, and its target be swept.
 prune_upload_inbox() {
     local dir="${1:-/config/uploads}"
+    local marker_name=".ctp-inbox"
+    local marker="${dir}/${marker_name}"
+    local days
     if [ -L "$dir" ]; then
         bashio::log.warning "${dir} is a symlink, not a plain folder; not sweeping it (upload_retention_days)"
         return 0
@@ -883,7 +898,26 @@ prune_upload_inbox() {
         bashio::log.warning "${dir} is not a folder; not sweeping it (upload_retention_days)"
         return 0
     fi
-    prune_old_files "$dir" upload_retention_days '*' "upload inbox files"
+    if [ ! -d "$dir" ]; then
+        return 0
+    fi
+    # With retention 0 no sweep runs, so a missing marker needs no word at
+    # every start. Any other value, even one prune_old_files will refuse,
+    # goes on: the marker is checked first, and prune_old_files says the rest.
+    days=$(bashio::config 'upload_retention_days' '30')
+    case "$days" in
+        '' | *[!0]*) ;;
+        *) return 0 ;;
+    esac
+    if [ -L "$marker" ]; then
+        bashio::log.warning "${marker} is a symlink, not the add-on's marker; not sweeping ${dir} (upload_retention_days)"
+        return 0
+    fi
+    if [ ! -f "$marker" ]; then
+        bashio::log.info "${dir} has no ${marker_name} marker, so it is not swept (upload_retention_days). To have it swept as the upload inbox: touch ${marker}. To keep it as your own folder, move it elsewhere; the add-on makes a fresh inbox on the next upload"
+        return 0
+    fi
+    prune_old_files "$dir" upload_retention_days '*' "upload inbox files" "$marker_name"
 }
 
 # Start wrapper service (UI, terminal proxy, image uploads, clipboard delivery)

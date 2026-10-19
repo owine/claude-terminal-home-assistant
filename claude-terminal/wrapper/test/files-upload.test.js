@@ -17,7 +17,8 @@ const path = require('node:path');
 const net = require('node:net');
 const { once } = require('node:events');
 const express = require('express');
-const { createFilesApi } = require('../files-api.js');
+const { createFilesApi, INBOX_MARKER } = require('../files-api.js');
+const { createDownloads } = require('../files-download.js');
 const { createRateLimiter } = require('../http-guards.js');
 const { createPartRecord } = require('../upload-parts.js');
 const {
@@ -209,13 +210,131 @@ test('the inbox is made on first use, never followed when it is a link or a file
     assert.strictEqual(fs.lstatSync(path.join(inboxRoot, 'uploads')).isDirectory(), true);
     assert.strictEqual(planned.dir, path.join(inboxRoot, 'uploads'));
 
-    fs.rmdirSync(path.join(inboxRoot, 'uploads'));
+    fs.rmSync(path.join(inboxRoot, 'uploads'), { recursive: true });
     fs.symlinkSync(outside, path.join(inboxRoot, 'uploads'));
     await refused(u.plan({ name: 'a.txt' }), 409, 'not-plain-folder');
     fs.unlinkSync(path.join(inboxRoot, 'uploads'));
     fs.writeFileSync(path.join(inboxRoot, 'uploads'), 'a file');
     await refused(u.plan({ name: 'a.txt' }), 409, 'not-plain-folder');
     assert.deepStrictEqual(fs.readdirSync(outside), ['target.txt']);
+});
+
+// run.sh sweeps /config/uploads only when it holds this marker as a regular
+// file, so a folder of that name the user made before the inbox existed is
+// never swept. The marker is written by whoever makes the folder: here.
+test('the inbox the wrapper makes is marked as its own; a folder already there is not', async () => {
+    const markRoot = path.join(base, 'mark-root');
+    fs.mkdirSync(markRoot);
+    const u = createUploads({ api: createFilesApi({ root: markRoot }), record });
+    const marker = path.join(markRoot, 'uploads', INBOX_MARKER);
+
+    await u.plan({ name: 'a.txt' }, { create: false });
+    assert.strictEqual(fs.existsSync(marker), false, 'check=1 makes nothing, so marks nothing');
+
+    await u.plan({ name: 'a.txt' });
+    const st = fs.lstatSync(marker);
+    assert.ok(st.isFile(), 'a regular file, which is what run.sh accepts');
+    const note = fs.readFileSync(marker, 'utf8');
+    assert.match(note, /^[^\n]+\n$/, 'one line');
+    assert.match(note, /upload_retention_days/);
+    // a later upload leaves it as it is
+    fs.writeFileSync(marker, 'edited\n');
+    await u.plan({ name: 'b.txt' });
+    assert.strictEqual(fs.readFileSync(marker, 'utf8'), 'edited\n');
+    // nor puts it back once the user deleted it: deleting it opts out
+    fs.unlinkSync(marker);
+    await u.plan({ name: 'c.txt' });
+    assert.strictEqual(fs.existsSync(marker), false);
+
+    // A folder named uploads that was there first is the user's.
+    const ownRoot = path.join(base, 'own-root');
+    fs.mkdirSync(path.join(ownRoot, 'uploads'), { recursive: true });
+    fs.writeFileSync(path.join(ownRoot, 'uploads', 'keep.pdf'), 'mine');
+    const own = createUploads({ api: createFilesApi({ root: ownRoot }), record });
+    assert.strictEqual((await own.plan({ name: 'a.txt' })).inbox, true);
+    assert.deepStrictEqual(fs.readdirSync(path.join(ownRoot, 'uploads')), ['keep.pdf']);
+
+    // Nor one made by someone else between the wrapper's look and its mkdir:
+    // only a mkdir of the wrapper's own that succeeded marks the folder.
+    const raceRoot = path.join(base, 'race-root');
+    fs.mkdirSync(raceRoot);
+    const race = createUploads({ api: createFilesApi({ root: raceRoot }), record });
+    const fsp = require('node:fs/promises');
+    const realMkdir = fsp.mkdir;
+    fsp.mkdir = async (dir, options) => {
+        await realMkdir(dir, options);
+        throw Object.assign(new Error('EEXIST: made first by someone else'), { code: 'EEXIST' });
+    };
+    try {
+        assert.strictEqual((await race.plan({ name: 'a.txt' })).inbox, true);
+    } finally {
+        fsp.mkdir = realMkdir;
+    }
+    assert.deepStrictEqual(fs.readdirSync(path.join(raceRoot, 'uploads')), []);
+});
+
+// The marker is not the upload: one that cannot be written leaves an inbox
+// run.sh will not sweep, which is safe, but is said in the log.
+test('a marker that cannot be written is logged, and the upload still lands', async () => {
+    const failRoot = path.join(base, 'fail-root');
+    fs.mkdirSync(failRoot);
+    const failUploads = createUploads({ api: createFilesApi({ root: failRoot }), record });
+    const fsp = require('node:fs/promises');
+    const realWriteFile = fsp.writeFile;
+    fsp.writeFile = async (file, ...rest) => {
+        if (path.basename(String(file)) === INBOX_MARKER) {
+            throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+        }
+        return realWriteFile(file, ...rest);
+    };
+    const logs = [];
+    try {
+        await withServer({ uploads: failUploads, log: (line) => logs.push(line) }, async (url) => {
+            const res = await post(url, { name: 'a.txt' }, 'bytes');
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual((await res.json()).inbox, true);
+        });
+    } finally {
+        fsp.writeFile = realWriteFile;
+    }
+    const inbox = path.join(failRoot, 'uploads');
+    assert.strictEqual(fs.readFileSync(path.join(inbox, 'a.txt'), 'utf8'), 'bytes');
+    assert.strictEqual(fs.existsSync(path.join(inbox, INBOX_MARKER)), false);
+    const line = logs.find((l) => l.includes(INBOX_MARKER));
+    assert.ok(line, `logged: ${JSON.stringify(logs)}`);
+    assert.match(line, /EACCES/);
+    assert.match(line, /not be swept/);
+});
+
+test('the marker is never shown: not in the listing, recent changes or a zip', async () => {
+    const hideRoot = path.join(base, 'hide-root');
+    fs.mkdirSync(hideRoot);
+    const hideApi = createFilesApi({ root: hideRoot });
+    await createUploads({ api: hideApi, record }).plan({ name: 'a.txt' });
+    fs.writeFileSync(path.join(hideRoot, 'uploads', 'report.pdf'), 'r');
+    // positive controls: the name means nothing anywhere else, nor as a folder
+    fs.mkdirSync(path.join(hideRoot, 'other'));
+    fs.writeFileSync(path.join(hideRoot, 'other', INBOX_MARKER), 'mine');
+
+    const listed = (await hideApi.list('uploads')).entries.map((e) => e.name);
+    assert.deepStrictEqual(listed, ['report.pdf']);
+    assert.deepStrictEqual((await hideApi.list('other')).entries.map((e) => e.name), [INBOX_MARKER]);
+
+    const recent = (await hideApi.recent(1)).entries.map((e) => e.path);
+    assert.ok(recent.some((p) => p.endsWith(`${path.sep}report.pdf`)), 'recent changes is not empty');
+    assert.ok(!recent.includes(path.join(hideRoot, 'uploads', INBOX_MARKER)), 'not in recent changes');
+
+    const downloads = createDownloads({ api: hideApi });
+    const zipped = (plan) => plan.files.map((f) => f.name);
+    assert.deepStrictEqual(zipped(await downloads.planZip('uploads')), ['uploads/report.pdf']);
+    assert.deepStrictEqual(zipped(await downloads.planZip('')).sort(),
+        ['hide-root/other/.ctp-inbox', 'hide-root/uploads/report.pdf']);
+
+    // A folder at the marker's name is not the marker, and is listed.
+    fs.unlinkSync(path.join(hideRoot, 'uploads', INBOX_MARKER));
+    fs.mkdirSync(path.join(hideRoot, 'uploads', INBOX_MARKER));
+    assert.deepStrictEqual((await hideApi.list('uploads')).entries.map((e) => e.name).sort(),
+        [INBOX_MARKER, 'report.pdf']);
 });
 
 // --- the route: helpers ---
