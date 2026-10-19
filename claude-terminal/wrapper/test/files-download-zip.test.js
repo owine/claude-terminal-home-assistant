@@ -53,6 +53,31 @@ test('zip: entries keep the planned mtime and mode', async () => {
     }
 });
 
+// yazl writes the mtime's whole seconds as an unsigned 32-bit number, inside a
+// stream 'end' listener: a negative one threw there, past zip.on('error'), and
+// took the wrapper down with every session in it. Before 1970 by a year and
+// by half a second, which Math.floor still makes -1.
+test('zip: a file dated before 1970 goes in at the epoch; nothing throws', async () => {
+    const old = write('ancient/old.txt', 'old\n');
+    const barely = write('ancient/barely.txt', 'barely\n');
+    fs.utimesSync(old, new Date('1965-01-01T00:00:00Z'), new Date('1965-01-01T00:00:00Z'));
+    fs.utimesSync(barely, new Date(-500), new Date(-500));
+    try {
+        await noStrays(() => withServer({}, async (url) => {
+            const res = await fetch(`${url}/download-zip?path=ancient`);
+            assert.strictEqual(res.status, 200);
+            const meta = {};
+            const entries = await unzip(Buffer.from(await within(res.arrayBuffer(), 'the zip')), { meta });
+            assert.deepStrictEqual(Object.keys(entries).sort(), ['ancient/barely.txt', 'ancient/old.txt']);
+            assert.strictEqual(entries['ancient/old.txt'].toString(), 'old\n');
+            assert.strictEqual(meta['ancient/old.txt'].getLastModDate().getTime(), 0);
+            assert.strictEqual(meta['ancient/barely.txt'].getLastModDate().getTime(), 0);
+        }));
+    } finally {
+        fs.rmSync(path.join(root, 'ancient'), { recursive: true });
+    }
+});
+
 test('zip: a non-ASCII folder gets filename* and UTF-8 entry names', async () => {
     const folder = 'ünïcödé ✂';
     write(`${folder}/naïve.txt`, 'n\n');
