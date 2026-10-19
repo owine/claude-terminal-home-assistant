@@ -475,18 +475,18 @@ function createUploads({
         if (await samePart(target, id)) return;
         const name = path.basename(target);
         if (how === 'link' && await samePart(part, id)) {
-            log(`Upload saved at ${target}, then moved or replaced at once; left as it is`);
+            log(`Upload saved at ${JSON.stringify(target)}, then moved or replaced at once; left as it is`);
             throw savedThenMoved(name, planned.display);
         }
-        const what = `Upload not in place: ${target} is not the uploaded file (moved or replaced as it was put in place)`;
+        const what = `Upload not in place: ${JSON.stringify(target)} is not the uploaded file (moved or replaced as it was put in place)`;
         let anotherFile = false;
         if (how === 'link' && await sameFileAsPart(target, part)) {
             anotherFile = true;
             try {
                 await fsp.unlink(target);
-                log(`${what}; it was a second name for the file at ${part}, made by this upload, so that name was removed`);
+                log(`${what}; it was a second name for the file at ${JSON.stringify(part)}, made by this upload, so that name was removed`);
             } catch (err) {
-                log(`${what}; the second name this upload made for the file at ${part} was not removed: ${err.message}`);
+                log(`${what}; the second name this upload made for the file at ${JSON.stringify(part)} was not removed: ${err.message}`);
             }
         } else {
             log(`${what}; left as it is`);
@@ -595,7 +595,7 @@ function createUploads({
                 // overwrote a file says the old one is gone; anything else
                 // says neither.
                 if (progress.put) {
-                    log(`Upload put at ${progress.at}, then its check failed: ${err.message}`);
+                    log(`Upload put at ${JSON.stringify(progress.at)}, then its check failed: ${err.message}`);
                     throw progress.overwrote ? replacedChanged(planned.name, planned.display)
                         : notTheUpload(path.basename(progress.at), planned.display);
                 }
@@ -658,8 +658,10 @@ function asFilesError(err, log) {
  * POST, so the app-wide origin guard (createOriginGuard) has already run.
  * The cross-site guard runs too: the origin guard passes a request with no
  * Origin and no Referer, and an ingress one whatever its Origin, while
- * Sec-Fetch-Site still says whether the browser was on another site. Both
- * before the limiters, so a refused request costs no one's budget.
+ * Sec-Fetch-Site still says whether the browser was on another site. It
+ * refuses same-site as well (allowSameSite: false): an upload writes into
+ * /config, and the sidebar's own requests are same-origin. Both before the
+ * limiters, so a refused request costs no one's budget.
  *
  * check=1 (no body) goes to `checkLimiter`, the upload itself to
  * `uploadLimiter`, so asking first does not halve the uploads a minute. But
@@ -682,6 +684,7 @@ function createUploadRouter({ uploads, uploadLimiter, checkLimiter, log = consol
     const sameSite = createCrossSiteGuard({
         log,
         message: 'Uploads cannot be started from another site. Use the Files sidebar.',
+        allowSameSite: false,
     });
     if (typeof uploadLimiter?.peek !== 'function') {
         throw new TypeError('uploadLimiter must have a peek (a createRateLimiter limiter), for check=1');

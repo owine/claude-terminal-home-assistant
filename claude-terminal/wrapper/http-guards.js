@@ -9,6 +9,67 @@
  */
 
 /**
+ * Answer a refusal. A request that declares a body (a Content-Length over 0,
+ * or any Transfer-Encoding) and is refused before anything reads it is
+ * answered with `Connection: close` (closeAfterAnswer): kept alive, the
+ * connection would have Node read and discard the whole body, 50 MiB of a
+ * refused upload, before the socket could carry another request. A request
+ * with no body keeps its connection.
+ */
+function declaresBody(req) {
+    const length = req.get('content-length');
+    return req.get('transfer-encoding') !== undefined || (length !== undefined && Number(length) > 0);
+}
+
+function refuse(req, res, status, body) {
+    if (declaresBody(req)) closeAfterAnswer(req, res);
+    return res.status(status).json(body);
+}
+
+/**
+ * Close a connection once its answer is out, without reading the body still
+ * on its way - and without losing the answer. Closed at once, with the
+ * client's bytes unread, the socket sends a reset, and a client still sending
+ * its body (a browser does, straight after the headers) can lose the answer
+ * it has not read yet: the reset throws it away. So the socket lingers
+ * first: the answer and a FIN go out, the body is left unread, and only
+ * LINGER_MS after they are written is the socket destroyed, by when the
+ * client has read its answer and, if it is well behaved, stopped sending.
+ *
+ * Unread, not discarded: `req.read(0)` marks the request as one its handler
+ * reads, so Node does not dump the body once the answer is out, and the
+ * request's buffer, once full, stops reading from the socket. The linger
+ * replaces the socket's destroySoon, which Node calls once the answer of a
+ * `Connection: close` response is out; a Node that stopped calling it would
+ * close at once, as before. Never throws.
+ */
+const LINGER_MS = 2000;
+
+function closeAfterAnswer(req, res) {
+    res.set('Connection', 'close');
+    try {
+        if (typeof req.read === 'function') req.read(0);
+        const socket = req.socket;
+        if (socket && typeof socket.destroySoon === 'function') {
+            socket.destroySoon = function lingerThenDestroy() {
+                if (this.writable) this.end();
+                // From when the answer is all written, as Node's own
+                // destroySoon waits for 'finish' before it destroys.
+                const arm = () => {
+                    const timer = setTimeout(() => this.destroy(), LINGER_MS);
+                    timer.unref();
+                    this.once('close', () => clearTimeout(timer));
+                };
+                if (this.writableFinished) arm();
+                else this.once('finish', arm);
+            };
+        }
+    } catch {
+        // Closing at once is what is left: the answer still goes.
+    }
+}
+
+/**
  * Sliding-window rate limiter, keyed by client address. No external dependency:
  * this runs on a Raspberry Pi and the whole policy is "a handful of requests a
  * minute".
@@ -50,7 +111,7 @@ function createRateLimiter({
         const timestamps = (hits.get(key) || []).filter(t => t > cutoff);
 
         if (timestamps.length >= max) {
-            return res.status(429).json({ error: message });
+            return refuse(req, res, 429, { error: message });
         }
 
         timestamps.push(timestamp);
@@ -64,7 +125,7 @@ function createRateLimiter({
     limiter.peek = (req, res, next) => {
         const cutoff = now() - windowMs;
         const used = (hits.get(keyOf(req)) || []).filter(t => t > cutoff).length;
-        if (used >= max) return res.status(429).json({ error: message });
+        if (used >= max) return refuse(req, res, 429, { error: message });
         next();
     };
 
@@ -126,22 +187,72 @@ function checkOrigin(header) {
 }
 
 /**
+ * A guard's log of what it refused, capped. Every guard refuses what a hostile
+ * page can send in a loop - an <img> or a form POST per frame, a WebSocket
+ * per frame - so each logged line could be one of thousands a minute. At most
+ * REFUSAL_LOG_MAX lines a minute per guard (each guard makes its own), the
+ * last of them saying so. Every request is still refused; the ones not logged
+ * are counted, and the count goes out with the next line logged once the
+ * minute is over (a burst that ends for good leaves its count unsaid). The
+ * minute runs on a monotonic clock, so a wall clock set back cannot silence
+ * the log; `now` is injectable for tests, as createRateLimiter's is.
+ *
+ * Never throws, not even when `log` does: the upgrade guard runs in the http
+ * server's 'upgrade' listener, where a throw is uncaught and restarts the
+ * wrapper with every session in it. A refusal is answered either way.
+ */
+const REFUSAL_LOG_MAX = 5;
+const REFUSAL_LOG_WINDOW_MS = 60000;
+
+function createRefusalLog({ log, now }) {
+    let windowStart = -Infinity;
+    let logged = 0;
+    let unlogged = 0;
+    return (line) => {
+        try {
+            const t = now();
+            if (t - windowStart >= REFUSAL_LOG_WINDOW_MS) {
+                if (unlogged) line += ` (${unlogged} earlier refusal${unlogged === 1 ? '' : 's'} not logged)`;
+                windowStart = t;
+                logged = 0;
+                unlogged = 0;
+            }
+            if (logged >= REFUSAL_LOG_MAX) {
+                unlogged++;
+                return;
+            }
+            logged++;
+            if (logged === REFUSAL_LOG_MAX) line += '; any more this minute are counted, not logged';
+            log(line);
+        } catch {
+            // Nowhere to report it: the log is what failed.
+        }
+    };
+}
+
+const monotonic = () => performance.now();
+
+/**
  * CSRF protection for state-changing requests (POST).
  *
  * Validates Origin/Referer against Host to block cross-origin POSTs driven by a
  * malicious page in the user's browser. Requests with neither header (curl,
  * server-to-server) are allowed: a browser always sends one on a cross-origin
  * POST, so absence is not the case being defended against.
+ *
+ * Its log is capped (createRefusalLog): app-wide and first in line, it is what
+ * a hostile page's upload POSTs meet before any other guard.
  */
-function createOriginGuard({ log = console.warn } = {}) {
+function createOriginGuard({ log = console.warn, now = monotonic } = {}) {
+    const report = createRefusalLog({ log, now });
     return (req, res, next) => {
         if (req.method !== 'POST') return next();
 
         const { allowed, source } = checkOrigin((name) => req.get(name));
         if (allowed) return next();
 
-        log(`Blocked cross-origin POST from: ${source}`);
-        return res.status(403).json({ error: 'Cross-origin requests are not allowed' });
+        report(`Blocked cross-origin POST from: ${source}`);
+        return refuse(req, res, 403, { error: 'Cross-origin requests are not allowed' });
     };
 }
 
@@ -164,49 +275,29 @@ function createOriginGuard({ log = console.warn } = {}) {
  * HA-ingress one whatever its Origin, where Sec-Fetch-Site still says what the
  * browser saw. `message` words the refusal for the route.
  *
- * Its log line is capped, because what it refuses is what a hostile page can
- * send in a loop (an <img> per frame): at most CROSS_SITE_LOG_MAX lines a
- * minute per guard (each router builds its own), the last of them saying so.
- * Every request is still refused; the ones not logged are counted, and the
- * count goes out with the next line logged once the minute is over (a burst
- * that ends for good leaves its count unsaid). The minute runs on a
- * monotonic clock, so a wall clock set back cannot silence the log; `now` is
- * injectable for tests, as createRateLimiter's is.
+ * `allowSameSite: false` refuses `same-site` too, for uploads: they write into
+ * /config, and a page on another port or subdomain of the same site (another
+ * add-on, a router's admin page) can send one - a no-cors POST of a raw body
+ * needs no preflight. Only same-origin, none and an absent header pass then;
+ * the sidebar's own requests are same-origin, ingress included. A download
+ * leaks nothing to such a page, so it keeps the default.
+ *
+ * Its log is capped (createRefusalLog), per guard: each router builds its own.
  */
-const CROSS_SITE_LOG_MAX = 5;
-const CROSS_SITE_LOG_WINDOW_MS = 60000;
-
 function createCrossSiteGuard({
     log = console.warn,
     message = 'Downloads cannot be started from another site. Use the Files sidebar.',
-    now = () => performance.now(),
+    allowSameSite = true,
+    now = monotonic,
 } = {}) {
-    let windowStart = -Infinity;
-    let logged = 0;
-    let unlogged = 0;
-    const report = (line) => {
-        const t = now();
-        if (t - windowStart >= CROSS_SITE_LOG_WINDOW_MS) {
-            if (unlogged) line += ` (${unlogged} earlier refusal${unlogged === 1 ? '' : 's'} not logged)`;
-            windowStart = t;
-            logged = 0;
-            unlogged = 0;
-        }
-        if (logged >= CROSS_SITE_LOG_MAX) {
-            unlogged++;
-            return;
-        }
-        logged++;
-        if (logged === CROSS_SITE_LOG_MAX) line += '; any more this minute are counted, not logged';
-        log(line);
-    };
+    const report = createRefusalLog({ log, now });
 
     return (req, res, next) => {
         const site = String(req.get('sec-fetch-site') || '').toLowerCase();
-        if (site !== 'cross-site') return next();
+        if (site !== 'cross-site' && (allowSameSite || site !== 'same-site')) return next();
 
-        report(`Blocked cross-site request for ${JSON.stringify(`${req.baseUrl || ''}${req.path || ''}`)}`);
-        return res.status(403).json({ error: message });
+        report(`Blocked ${site} request for ${JSON.stringify(`${req.baseUrl || ''}${req.path || ''}`)}`);
+        return refuse(req, res, 403, { error: message });
     };
 }
 
@@ -219,15 +310,62 @@ function createCrossSiteGuard({
  *
  * Call with the raw request and socket before handing the upgrade on. Returns
  * true to proceed; on false it has already answered 403 and closed the socket.
+ * Its log is capped (createRefusalLog): any page can open a socket a frame.
  */
-function createUpgradeGuard({ log = console.warn } = {}) {
+function createUpgradeGuard({ log = console.warn, now = monotonic } = {}) {
+    const report = createRefusalLog({ log, now });
     return (req, socket) => {
         const { allowed, source } = checkOrigin((name) => req.headers[name]);
         if (allowed) return true;
 
-        log(`Blocked cross-origin WebSocket from: ${source}`);
+        report(`Blocked cross-origin WebSocket from: ${source}`);
         socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
         return false;
+    };
+}
+
+/**
+ * Bounds of one route's own on the time its request body may take, inside the
+ * server-wide server.requestTimeout. Node has no per-route timeout, and
+ * server.js raises the server's to 30 minutes or more for the Files uploads,
+ * so a route that has no reason to wait that long (the image upload, at most
+ * 10 MB) puts this in front of whatever reads its body.
+ *
+ * The body is cut off - the request destroyed, so its socket goes and whatever
+ * reads it sees an abort (multer then removes the partial file) - when no byte
+ * of it has arrived for `idleMs`, or when it is still arriving at `totalMs`.
+ * Both end once the body has arrived or the request is closed, not when the
+ * response is over: a body still arriving after an early answer is no less
+ * bounded for it (and multer, refusing a file type, reads the rest before it
+ * answers). A request in time is never touched, and its socket keeps no
+ * timeout of ours past it. Never throws: it runs in timer and socket
+ * callbacks.
+ */
+function createRequestDeadline({ totalMs, idleMs, log = console.warn }) {
+    return (req, res, next) => {
+        const cut = (why) => {
+            if (req.complete || req.destroyed) return;
+            try {
+                log(`Request body for ${JSON.stringify(req.originalUrl || req.url)} cut off: ${why}`);
+            } catch {
+                // A failing log must not keep the request open.
+            }
+            req.destroy();
+        };
+        const stalled = () => cut(`no data for ${idleMs} ms`);
+        const total = setTimeout(cut, totalMs, `still arriving after ${totalMs} ms`);
+        total.unref();   // a request's bound never keeps the process alive
+        req.setTimeout(idleMs, stalled);
+        const done = () => {
+            clearTimeout(total);
+            req.removeListener('timeout', stalled);
+        };
+        req.once('end', () => {
+            done();
+            req.setTimeout(0);
+        });
+        req.once('close', done);
+        next();
     };
 }
 
@@ -256,6 +394,7 @@ module.exports = {
     createOriginGuard,
     createCrossSiteGuard,
     createUpgradeGuard,
+    createRequestDeadline,
     errorResponseFor,
     INVALID_FILE_TYPE,
 };

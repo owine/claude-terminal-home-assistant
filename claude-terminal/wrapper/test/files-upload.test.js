@@ -19,7 +19,7 @@ const { once } = require('node:events');
 const express = require('express');
 const { createFilesApi, INBOX_MARKER } = require('../files-api.js');
 const { createDownloads } = require('../files-download.js');
-const { createRateLimiter } = require('../http-guards.js');
+const { createRateLimiter, createOriginGuard } = require('../http-guards.js');
 const { createPartRecord } = require('../upload-parts.js');
 const {
     createUploads,
@@ -432,10 +432,11 @@ const q = (params) => new URLSearchParams(params).toString();
 const post = (url, params, body = '') => fetch(`${url}/upload?${q(params)}`, { method: 'POST', body });
 
 // Sends the headers and `first` bytes of a body, and returns the socket.
-function rawUpload(url, params, { length, first = '', headers = '' } = {}) {
+// allowHalfOpen: a client that goes on sending after the server's FIN.
+function rawUpload(url, params, { length, first = '', headers = '', allowHalfOpen = false } = {}) {
     const { port } = new URL(url);
     return new Promise((resolve) => {
-        const sock = net.connect(Number(port), '127.0.0.1', () => {
+        const sock = net.connect({ port: Number(port), host: '127.0.0.1', allowHalfOpen }, () => {
             const size = length === undefined ? '' : `Content-Length: ${length}\r\n`;
             sock.write(`POST /api/files/upload?${q(params)} HTTP/1.1\r\nHost: x\r\n${size}${headers}\r\n${first}`);
             resolve(sock);
@@ -621,17 +622,21 @@ test('upload: refusals are JSON with the right status, and write nothing', async
     assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'a.txt')), false);
 });
 
-test('upload: a cross-site request is refused before anything else, and costs no budget', async () => {
+test('upload: a cross-site or same-site request is refused before anything else, and costs no budget', async () => {
     await withServer({
         uploadLimiter: createRateLimiter({ max: 1 }),
         checkLimiter: createRateLimiter({ max: 1 }),
     }, async (url) => {
-        for (const params of [{ name: 'x.txt', dest: 'blueprints' }, { name: 'x.txt', dest: 'blueprints', check: '1', size: '1' }]) {
-            const res = await fetch(`${url}/upload?${q(params)}`, {
-                method: 'POST', body: 'x', headers: { 'Sec-Fetch-Site': 'cross-site' },
-            });
-            assert.strictEqual(res.status, 403);
-            assert.match((await res.json()).error, /^Uploads cannot be started from another site/);
+        // Same-site too: an upload writes into /config, and another port or
+        // subdomain of the same site can send one without a preflight.
+        for (const site of ['cross-site', 'same-site']) {
+            for (const params of [{ name: 'x.txt', dest: 'blueprints' }, { name: 'x.txt', dest: 'blueprints', check: '1', size: '1' }]) {
+                const res = await fetch(`${url}/upload?${q(params)}`, {
+                    method: 'POST', body: 'x', headers: { 'Sec-Fetch-Site': site },
+                });
+                assert.strictEqual(res.status, 403, site);
+                assert.match((await res.json()).error, /^Uploads cannot be started from another site/, site);
+            }
         }
         assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'x.txt')), false);
         // Each limiter's one request is still there.
@@ -639,6 +644,119 @@ test('upload: a cross-site request is refused before anything else, and costs no
         assert.strictEqual((await post(url, { name: 'x.txt', dest: 'blueprints' }, 'x')).status, 200);
     });
     fs.unlinkSync(path.join(root, 'blueprints', 'x.txt'));
+});
+
+// A refusal before the route reads the body: the origin guard (app-wide in
+// server.js), the cross-site guard and the limiter. Kept alive, the
+// connection had Node read and discard the whole body, 50 MiB of it, before
+// anything else could use it. Each now closes it once the answer is out, as
+// the route's own early refusals do. Counted at the server's socket.
+//
+// Two ways to send: the answer read before the body goes, and the body
+// streamed straight after the headers, as a browser sends it. Closed at
+// once, the second lost its answer about half the time on macOS: the server
+// hung up with the client's bytes unread, and the reset that sends threw
+// away the 403 the client had not read yet. The guards linger first.
+async function refusedUploads(fn) {
+    const app = express();
+    app.use(createOriginGuard({ log: () => {} }));
+    app.use('/api/files', createUploadRouter({
+        uploads,
+        uploadLimiter: createRateLimiter({ max: 0, message: 'Too many uploads' }),
+        checkLimiter: createRateLimiter({ max: 1000 }),
+        log: () => {},
+    }));
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const read = [];
+    const closedAt = [];
+    server.on('connection', (s) => s.on('close', () => {
+        read.push(s.bytesRead);
+        closedAt.push(performance.now());
+    }));
+    try {
+        await fn(`http://127.0.0.1:${server.address().port}/api/files`, read, closedAt);
+    } finally {
+        server.closeAllConnections();
+        await new Promise((r) => server.close(r));
+    }
+    assert.deepStrictEqual(partsUnder(), []);
+}
+const REFUSALS = [
+    ['origin', 'Origin: http://evil.example\r\n', 403],
+    ['cross-site', 'Sec-Fetch-Site: cross-site\r\n', 403],
+    ['rate limit', '', 429],
+];
+const REFUSED_BODY = 50 * 1024 * 1024;
+
+// Sends the refused upload's body, as a client that keeps sending until the
+// server hangs up. Once the socket has closed, returns what the client read,
+// and when it had read the answer's headers.
+async function sendRefused(url, headers, { answerFirst, allowHalfOpen = false }) {
+    const sock = await rawUpload(url, { name: 'big.bin', dest: 'blueprints' }, { length: REFUSED_BODY, headers, allowHalfOpen });
+    let text = '';
+    let answeredAt = null;
+    sock.on('data', (d) => {
+        text += d;
+        if (answeredAt === null && text.includes('\r\n\r\n')) answeredAt = performance.now();
+    });
+    const closed = new Promise((resolve) => sock.on('close', resolve));
+    if (answerFirst) assert.ok(await until(() => text.includes('\r\n\r\n')), 'the answer');
+    const chunk = Buffer.alloc(64 * 1024);
+    let sent = 0;
+    const pump = () => {
+        while (sent < REFUSED_BODY && !sock.destroyed) {
+            sent += chunk.length;
+            if (!sock.write(chunk)) return sock.once('drain', pump);
+        }
+    };
+    pump();
+    await within(closed, 'the refused socket closed', 20000);
+    return { text, answeredAt };
+}
+
+test('upload: a refusal before the body is read closes the connection rather than reading the rest', async () => {
+    await refusedUploads(async (url, read) => {
+        for (const [what, headers, status] of REFUSALS) {
+            read.length = 0;
+            const { text } = await sendRefused(url, headers, { answerFirst: true });
+            assert.ok(await until(() => read.length === 1), `the server's ${what} socket closed`);
+            assert.ok(read[0] < REFUSED_BODY / 2, `${what}: the server read ${read[0]} of ${REFUSED_BODY} bytes`);
+            assert.match(text, new RegExp(`^HTTP/1\\.1 ${status} `), what);
+            assert.match(text, /Connection: close/i, what);
+        }
+    });
+});
+
+test('upload: a refusal reaches a client streaming its body straight after the headers', async () => {
+    // Each refused socket lingers 2 s (LINGER_MS) before it goes, so the
+    // tries are few: the lost answer was a race, lost about half the time,
+    // so the origin refusal three times and the others once.
+    //
+    // Whether an answer is lost depends on the client's system (Linux kept
+    // it every time), so the linger itself is checked too: the server's
+    // socket outlives the answer by about LINGER_MS, wherever this runs.
+    await refusedUploads(async (url, read, closedAt) => {
+        for (const [what, headers, status] of REFUSALS) {
+            for (let i = 0; i < (what === 'origin' ? 3 : 1); i++) {
+                read.length = 0;
+                closedAt.length = 0;
+                const { text, answeredAt } = await sendRefused(url, headers, { answerFirst: false });
+                assert.match(text, new RegExp(`^HTTP/1\\.1 ${status} `), `${what}, try ${i + 1}: ${JSON.stringify(text)}`);
+                assert.ok(await until(() => read.length === 1), `the server's ${what} socket closed`);
+                assert.ok(read[0] < REFUSED_BODY / 2, `${what}: the server read ${read[0]} of ${REFUSED_BODY} bytes`);
+                const lingered = closedAt[0] - answeredAt;
+                assert.ok(lingered >= 1500, `${what}: the server's socket closed ${Math.round(lingered)} ms after the answer`);
+            }
+        }
+        // A client that goes on sending after the server's FIN: the linger
+        // leaves its bytes unread rather than reading them all for 2 s.
+        read.length = 0;
+        const { text } = await sendRefused(url, REFUSALS[0][1], { answerFirst: false, allowHalfOpen: true });
+        assert.match(text, /^HTTP\/1\.1 403 /, JSON.stringify(text));
+        assert.ok(await until(() => read.length === 1), 'the server\'s socket closed');
+        assert.ok(read[0] < REFUSED_BODY / 2, `the server read ${read[0]} of ${REFUSED_BODY} bytes`);
+    });
 });
 
 test('upload: its own limiter for uploads; check=1 counts against the other one', async () => {
@@ -1932,6 +2050,69 @@ test('race: any other failure of the check after the file is put in place is no 
         // both files are the upload, every byte, and no part is left
         assert.deepStrictEqual(filesIn(f.dir), { 'n.txt': 'USER CONTENT', 'old.txt': 'USER CONTENT' });
         assert.ok(logged.some((m) => /EACCES/.test(m)) && logged.some((m) => /EIO/.test(m)), logged.join('\n'));
+    } finally {
+        f.cleanup();
+    }
+    assert.deepStrictEqual(recorded(), []);
+});
+
+// The add-on log is line-based, and run.sh relays the wrapper's output into
+// it a line at a time: a path logged as it is could start a line of its own.
+// The folder an upload goes to is any folder in /config, its name whatever
+// made it. Every line that names one quotes it, as JSON.
+test('race: the log lines of a race quote the paths they name', async () => {
+    const f = raceFixture('race-log\nINFO: [Wrapper] forged\u001b[31m');
+    const dest = path.basename(f.dir);
+    const swap = (part) => { fs.unlinkSync(part); fs.writeFileSync(part, 'not the upload'); };
+    const cases = [
+        // "Upload saved at <target>, then moved or replaced at once"
+        ['saved then moved', createUploads({
+            api, record,
+            fsOps: { link: async (a, b) => { await fs.promises.link(a, b); fs.unlinkSync(b); fs.writeFileSync(b, 'other'); } },
+        }), 'a.txt'],
+        // "<target> is not the uploaded file ...; it was a second name for the file at <part>"
+        ['second name', createUploads({
+            api, record, partName: () => PART,
+            fsOps: { link: async (a, b) => { swap(a); return fs.promises.link(a, b); } },
+        }), 'b.txt'],
+        // "<target> is not the uploaded file ...; left as it is"
+        ['left as it is', createUploads({
+            api, record, partName: () => PART,
+            fsOps: {
+                link: async () => { throw Object.assign(new Error('not supported'), { code: 'EPERM' }); },
+                rename: async (a, b) => { swap(a); return fs.promises.rename(a, b); },
+            },
+        }), 'c.txt'],
+        // "Upload put at <target>, then its check failed"
+        ['check failed', (() => {
+            let placed = null;
+            return createUploads({
+                api, record,
+                fsOps: {
+                    link: async (a, b) => { await fs.promises.link(a, b); placed = b; },
+                    lstat: async (p, opts) => {
+                        if (p === placed) { placed = null; throw Object.assign(new Error('EIO: lstat failed'), { code: 'EIO' }); }
+                        return fs.promises.lstat(p, opts);
+                    },
+                },
+            });
+        })(), 'd.txt'],
+    ];
+    try {
+        for (const [what, uploads, name] of cases) {
+            const logged = [];
+            await withServer({ uploads, log: (m) => logged.push(m) }, async (url) => {
+                const res = await post(url, { dest, name }, 'USER CONTENT');
+                assert.strictEqual(res.status, 409, what);
+                await res.arrayBuffer();
+            });
+            assert.ok(logged.length > 0, what);
+            for (const line of logged) {
+                assert.ok(!line.includes('\n') && !line.includes('\u001b'), `${what}: ${JSON.stringify(line)}`);
+            }
+            assert.ok(logged.some((m) => m.includes(JSON.stringify(path.join(f.dir, name)))), `${what}: ${logged.join('\n')}`);
+            for (const n of fs.readdirSync(f.dir)) fs.rmSync(path.join(f.dir, n));
+        }
     } finally {
         f.cleanup();
     }

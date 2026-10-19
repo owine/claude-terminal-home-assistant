@@ -1,7 +1,9 @@
 'use strict';
 
 const assert = require('node:assert');
-const { createRateLimiter, createOriginGuard, createUpgradeGuard, createCrossSiteGuard, errorResponseFor } = require('../http-guards.js');
+const {
+    createRateLimiter, createOriginGuard, createUpgradeGuard, createCrossSiteGuard, createRequestDeadline, errorResponseFor,
+} = require('../http-guards.js');
 
 let passed = 0;
 function test(name, fn) {
@@ -34,8 +36,10 @@ function makeRes() {
     return {
         statusCode: null,
         body: null,
+        headers: {},
         status(code) { this.statusCode = code; return this; },
         json(payload) { this.body = payload; return this; },
+        set(name, value) { this.headers[name.toLowerCase()] = value; return this; },
     };
 }
 
@@ -258,6 +262,44 @@ test('words its refusal as the route asks, and downloads by default', () => {
     assert.match(crossSite({ 'Sec-Fetch-Site': 'cross-site' }).res.body.error, /^Downloads cannot be started/);
 });
 
+// An upload writes into /config, and a same-site page (another port or
+// subdomain of the same registrable domain: another add-on, a router's admin
+// page) can send one: a no-cors POST of a raw body needs no preflight. The
+// upload route refuses same-site as well; the sidebar's own requests are
+// same-origin, ingress included. Downloads keep allowing it.
+function uploadGuard(headers) {
+    const res = makeRes();
+    let passedOn = false;
+    createCrossSiteGuard({ log: () => {}, allowSameSite: false, message: 'Uploads cannot come from another site.' })(
+        makeReq({ method: 'POST', headers }), res, () => { passedOn = true; });
+    return { passedOn, res };
+}
+
+test('allowSameSite: false refuses a same-site request too, with the route\'s 403', () => {
+    for (const site of ['same-site', 'Same-Site', 'cross-site']) {
+        const { passedOn, res } = uploadGuard({ 'Sec-Fetch-Site': site });
+        assert.strictEqual(passedOn, false, site);
+        assert.strictEqual(res.statusCode, 403, site);
+        assert.deepStrictEqual(res.body, { error: 'Uploads cannot come from another site.' }, site);
+    }
+});
+
+test('allowSameSite: false still lets same-origin, none and a missing header through', () => {
+    for (const headers of [{ 'Sec-Fetch-Site': 'same-origin' }, { 'Sec-Fetch-Site': 'none' }, {}]) {
+        const { passedOn, res } = uploadGuard(headers);
+        assert.strictEqual(passedOn, true, JSON.stringify(headers));
+        assert.strictEqual(res.statusCode, null, JSON.stringify(headers));
+    }
+});
+
+test('logs a refused same-site request as such', () => {
+    const lines = [];
+    createCrossSiteGuard({ log: (line) => lines.push(line), allowSameSite: false })(
+        makeReq({ method: 'POST', headers: { 'Sec-Fetch-Site': 'same-site' } }), makeRes(), () => {});
+    assert.strictEqual(lines.length, 1);
+    assert.match(lines[0], /^Blocked same-site request for /);
+});
+
 test('logs a refused cross-site request', () => {
     const lines = [];
     crossSite({ 'Sec-Fetch-Site': 'cross-site' }, (line) => lines.push(line));
@@ -424,6 +466,86 @@ test('records the rejected origin so a refused terminal is diagnosable', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The refusal log cap, on every guard
+// ---------------------------------------------------------------------------
+//
+// The origin guard and the upgrade guard refuse what any page can send in a
+// loop too (a form POST, a `new WebSocket` per frame), and they logged every
+// refusal: the add-on log could be flooded from a site the user visited. The
+// origin guard runs first, so for a hostile upload POST the cross-site
+// guard's cap never came into play. Each guard caps its log the same way,
+// with one shared implementation. Each takes the guard, and returns how many
+// requests it refused of `n`.
+const capped = {
+    'origin guard': (options) => {
+        const guard = createOriginGuard(options);
+        return (n) => {
+            let refused = 0;
+            for (let i = 0; i < n; i++) {
+                const req = makeReq({ method: 'POST', headers: { Host: 'ha.local', Origin: 'http://evil.example' } });
+                if (!run(guard, req).allowed) refused++;
+            }
+            return refused;
+        };
+    },
+    'upgrade guard': (options) => {
+        const guard = createUpgradeGuard(options);
+        return (n) => {
+            let refused = 0;
+            for (let i = 0; i < n; i++) {
+                const { allowed, socket } = upgrade(guard, makeUpgradeReq({ Host: 'ha.local', Origin: 'http://evil.example' }));
+                if (!allowed && socket.closed) refused++;
+            }
+            return refused;
+        };
+    },
+    'cross-site guard': (options) => {
+        const guard = createCrossSiteGuard(options);
+        return (n) => {
+            let refused = 0;
+            for (let i = 0; i < n; i++) {
+                if (!run(guard, makeReq({ headers: { 'Sec-Fetch-Site': 'cross-site' } })).allowed) refused++;
+            }
+            return refused;
+        };
+    },
+};
+
+for (const [name, make] of Object.entries(capped)) {
+    test(`${name}: logs at most 5 refusals a minute, then the count, and refuses every one`, () => {
+        const clock = { t: 5000000 };
+        const lines = [];
+        const send = make({ log: (line) => lines.push(line), now: () => clock.t });
+        assert.strictEqual(send(20), 20);
+        assert.strictEqual(lines.length, 5, lines.join('\n'));
+        assert.match(lines[4], /; any more this minute are counted, not logged$/);
+        clock.t += 59999;
+        send(1);
+        assert.strictEqual(lines.length, 5, 'still inside the minute');
+        clock.t += 1;
+        send(1);
+        assert.strictEqual(lines.length, 6);
+        assert.match(lines[5], / \(16 earlier refusals not logged\)$/);
+    });
+
+    // Its minute is its own: a refusal another guard logged spends none of it.
+    test(`${name}: has a log budget of its own`, () => {
+        const lines = [];
+        const options = { log: (line) => lines.push(line), now: () => 0 };
+        make(options)(5);
+        make(options)(5);
+        assert.strictEqual(lines.length, 10);
+    });
+
+    // Never throws: the upgrade guard runs in the http server's 'upgrade'
+    // listener, where a throw is uncaught and restarts the wrapper.
+    test(`${name}: a log that throws still refuses, and throws nothing`, () => {
+        const send = make({ log: () => { throw new Error('log down'); }, now: () => 0 });
+        assert.strictEqual(send(7), 7);
+    });
+}
+
+// ---------------------------------------------------------------------------
 // createRateLimiter
 // ---------------------------------------------------------------------------
 
@@ -499,6 +621,51 @@ test('falls back to the socket address when req.ip is unset', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A refusal of a request that still has its body to come
+// ---------------------------------------------------------------------------
+//
+// Answered with the connection kept alive, a refused upload's body is read
+// and thrown away by Node, all of it: a 50 MiB POST refused by the origin
+// guard was read to the end. With Connection: close the socket goes once the
+// answer is out, as files-upload.js does with its own early refusals. A
+// request with no body keeps its connection.
+
+const bodies = {
+    'a Content-Length': { 'Content-Length': String(50 * 1024 * 1024) },
+    'chunked': { 'Transfer-Encoding': 'chunked' },
+};
+
+// Every refusal in this file that an upload can meet, by name.
+const refusals = {
+    'origin guard': (headers) => refusedConnection(createOriginGuard(silent),
+        makeReq({ method: 'POST', headers: { Host: 'ha.local', Origin: 'http://evil.example', ...headers } })),
+    'cross-site guard': (headers) => refusedConnection(createCrossSiteGuard(silent),
+        makeReq({ method: 'POST', headers: { 'Sec-Fetch-Site': 'cross-site', ...headers } })),
+    'rate limiter': (headers) => refusedConnection(createRateLimiter({ max: 0 }), makeReq({ method: 'POST', headers })),
+    'rate limiter peek': (headers) => refusedConnection(createRateLimiter({ max: 0 }).peek, makeReq({ method: 'POST', headers })),
+};
+function refusedConnection(middleware, req) {
+    const res = makeRes();
+    let nexted = false;
+    middleware(req, res, () => { nexted = true; });
+    assert.strictEqual(nexted, false);
+    assert.ok([403, 429].includes(res.statusCode), String(res.statusCode));
+    return res.headers.connection;
+}
+
+for (const [guard, refuse] of Object.entries(refusals)) {
+    for (const [kind, headers] of Object.entries(bodies)) {
+        test(`${guard}: refusing a request with ${kind} body closes the connection`, () => {
+            assert.strictEqual(refuse(headers), 'close');
+        });
+    }
+    test(`${guard}: refusing a request with no body keeps the connection`, () => {
+        assert.strictEqual(refuse({}), undefined);
+        assert.strictEqual(refuse({ 'Content-Length': '0' }), undefined);
+    });
+}
+
+// ---------------------------------------------------------------------------
 // errorResponseFor
 // ---------------------------------------------------------------------------
 //
@@ -543,4 +710,178 @@ test('treats an unrecognised error code as a server error, not a client error', 
     assert.strictEqual(errorResponseFor(err).status, 500);
 });
 
-console.log(`\n${passed} passed`);
+// ---------------------------------------------------------------------------
+// createRequestDeadline
+// ---------------------------------------------------------------------------
+//
+// server.requestTimeout is server-wide and, for the Files uploads, 30 minutes
+// or more, so the image route (/upload, multer) inherited it: a client that
+// sent part of a body and stopped held the connection, and the partial file,
+// for half an hour. The route keeps bounds of its own. Real sockets and real
+// multer, so what the route does with a cut request is what is tested.
+// These run after the synchronous cases above, one at a time.
+
+const asyncTests = [];
+function testAsync(name, fn) { asyncTests.push([name, fn]); }
+
+const http = require('node:http');
+const net = require('node:net');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const express = require('express');
+const multer = require('multer');
+
+const BOUNDARY = '----deadline';
+const PART_HEAD = `--${BOUNDARY}\r\nContent-Disposition: form-data; name="image"; filename="a.png"\r\nContent-Type: image/png\r\n\r\n`;
+const PART_TAIL = `\r\n--${BOUNDARY}--\r\n`;
+
+// The image route as server.js builds it, with a deadline in front of
+// multer. Returns its port, the folder it saves into, what reached the error
+// handler, and the server's sockets as they close.
+async function imageRoute(deadline) {
+    const logged = [];
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deadline-'));
+    const upload = multer({
+        storage: multer.diskStorage({ destination: dir, filename: (req, file, cb) => cb(null, 'image.png') }),
+        fileFilter: (req, file, cb) => cb(file.mimetype === 'image/png' ? null : new Error('Only image files are allowed'), true),
+    });
+    const app = express();
+    const errors = [];
+    app.post('/upload', createRequestDeadline({ log: (line) => logged.push(line), ...deadline }), upload.single('image'), (req, res) => res.json({ size: req.file.size }));
+    app.use((err, req, res, next) => {   // eslint-disable-line no-unused-vars
+        errors.push(err.message);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+    const server = http.createServer(app);
+    const closed = [];
+    server.on('connection', (s) => s.on('close', () => closed.push(Date.now())));
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return {
+        port: server.address().port, dir, errors, closed, logged,
+        async stop() {
+            server.closeAllConnections();
+            await new Promise((resolve) => server.close(resolve));
+            fs.rmSync(dir, { recursive: true, force: true });
+        },
+    };
+}
+function connect(port, body, length) {
+    return new Promise((resolve) => {
+        const sock = net.connect(port, '127.0.0.1', () => {
+            sock.write(`POST /upload HTTP/1.1\r\nHost: x\r\nContent-Type: multipart/form-data; boundary=${BOUNDARY}\r\n`
+                + `Content-Length: ${length}\r\n\r\n${body}`);
+            resolve(sock);
+        });
+        sock.on('error', () => {});
+    });
+}
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function until(predicate, ms) {
+    const end = Date.now() + ms;
+    while (!predicate() && Date.now() < end) await sleep(10);
+    return predicate();
+}
+
+testAsync('request deadline: a body that stops arriving is cut off after idleMs, and its partial file removed', async () => {
+    const route = await imageRoute({ totalMs: 10000, idleMs: 200 });
+    try {
+        const started = Date.now();
+        await connect(route.port, `${PART_HEAD}partial`, 100000);
+        assert.ok(await until(() => route.closed.length === 1, 3000), 'the stalled upload is still open');
+        assert.ok(route.closed[0] - started >= 150, `cut after ${route.closed[0] - started} ms`);
+        assert.deepStrictEqual(route.logged, ['Request body for "/upload" cut off: no data for 200 ms']);
+        assert.ok(await until(() => fs.readdirSync(route.dir).length === 0, 2000), String(fs.readdirSync(route.dir)));
+    } finally {
+        await route.stop();
+    }
+});
+
+testAsync('request deadline: a log that throws still cuts the body off, and throws nothing', async () => {
+    const stray = [];
+    const onStray = (err) => stray.push(err);
+    process.on('uncaughtException', onStray);
+    const route = await imageRoute({ totalMs: 10000, idleMs: 100, log: () => { throw new Error('log down'); } });
+    try {
+        await connect(route.port, `${PART_HEAD}partial`, 100000);
+        assert.ok(await until(() => route.closed.length === 1, 3000), 'the stalled upload is still open');
+        await sleep(50);
+        assert.deepStrictEqual(stray.map(String), []);
+    } finally {
+        process.off('uncaughtException', onStray);
+        await route.stop();
+    }
+});
+
+testAsync('request deadline: a body that keeps trickling is cut off at totalMs', async () => {
+    const route = await imageRoute({ totalMs: 300, idleMs: 5000 });
+    let timer;
+    try {
+        const started = Date.now();
+        const sock = await connect(route.port, PART_HEAD, 100000);
+        timer = setInterval(() => sock.write('x'), 20);
+        assert.ok(await until(() => route.closed.length === 1, 3000), 'the trickling upload is still open');
+        assert.ok(route.closed[0] - started >= 250, `cut after ${route.closed[0] - started} ms`);
+        assert.deepStrictEqual(route.logged, ['Request body for "/upload" cut off: still arriving after 300 ms']);
+        assert.ok(await until(() => fs.readdirSync(route.dir).length === 0, 2000), String(fs.readdirSync(route.dir)));
+    } finally {
+        clearInterval(timer);
+        await route.stop();
+    }
+});
+
+testAsync('request deadline: a body refused early is still bounded while multer drains it', async () => {
+    // multer refuses the file type at the part's headers, then reads the rest
+    // of the body before it answers: that read is bounded too.
+    const route = await imageRoute({ totalMs: 300, idleMs: 5000 });
+    let timer;
+    try {
+        const started = Date.now();
+        const sock = await connect(route.port, PART_HEAD.replace('image/png', 'image/gif'), 100000);
+        timer = setInterval(() => sock.write('x'), 20);
+        assert.ok(await until(() => route.closed.length === 1, 3000), 'the refused upload is still open');
+        assert.ok(route.closed[0] - started >= 250, `cut after ${route.closed[0] - started} ms`);
+        assert.ok(await until(() => route.errors.length === 1, 1000), 'multer never gave up');
+        assert.deepStrictEqual(route.errors, ['Only image files are allowed']);
+        assert.deepStrictEqual(fs.readdirSync(route.dir), []);
+    } finally {
+        clearInterval(timer);
+        await route.stop();
+    }
+});
+
+testAsync('request deadline: an upload in time is answered, and its kept-alive connection outlives both bounds', async () => {
+    const route = await imageRoute({ totalMs: 300, idleMs: 200 });
+    try {
+        const body = `${PART_HEAD}${'p'.repeat(1000)}${PART_TAIL}`;
+        const sock = await connect(route.port, body, Buffer.byteLength(body));
+        let text = '';
+        sock.on('data', (d) => { text += d; });
+        assert.ok(await until(() => /\{"size":1000\}$/.test(text), 2000), text);
+        assert.match(text, /^HTTP\/1\.1 200 /);
+        // Past both bounds: neither may fire on a request that is over.
+        await sleep(600);
+        assert.deepStrictEqual(route.closed, []);
+        assert.strictEqual(sock.destroyed, false);
+        assert.deepStrictEqual(route.errors, []);
+        assert.deepStrictEqual(route.logged, []);
+        assert.deepStrictEqual(fs.readdirSync(route.dir), ['image.png']);
+    } finally {
+        await route.stop();
+    }
+});
+
+(async () => {
+    for (const [name, fn] of asyncTests) {
+        try {
+            await fn();
+            passed++;
+            console.log(`ok - ${name}`);
+        } catch (err) {
+            console.error(`FAIL - ${name}`);
+            console.error(err.message);
+            process.exitCode = 1;
+        }
+    }
+    console.log(`\n${passed} passed`);
+})();

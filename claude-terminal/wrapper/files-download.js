@@ -59,6 +59,17 @@ const STORED = new RegExp('\\.(' + [
 // holding one keeps a '_' instead.
 const zipSafe = (name) => name.replace(/\\/g, '_');
 
+// An entry's mtime as yazl can write it. yazl 3.3.1 puts the whole seconds in
+// the Info-ZIP extended timestamp with writeUInt32LE, which throws on a
+// negative number - and it does so in a stream 'end' listener, out of
+// zip.on('error')'s reach, so one file dated before 1970 would take the
+// wrapper and every terminal session down. Such a file goes in at the epoch
+// (its DOS date says 1980, the least it can say, either way). Anything below
+// 0 ms counts: Math.floor makes half a second before the epoch -1. Past 2038
+// is yazl's own business: it clamps that end itself.
+const EPOCH = new Date(0);
+const zipMtime = (mtime) => (mtime.getTime() >= 0 ? mtime : EPOCH);
+
 // Same steps as the sidebar's formatSize (public/files-sidebar.js), for
 // messages the UI shows as they are.
 function formatSize(bytes) {
@@ -282,7 +293,7 @@ function sendZipBody(plan, req, res, { openFile, log = console.error, idleMs = I
             };
             zip.on('error', fail);
             for (const file of plan.files) {
-                const options = { mtime: file.mtime, mode: file.mode, size: file.size, compress: !STORED.test(file.name) };
+                const options = { mtime: zipMtime(file.mtime), mode: file.mode, size: file.size, compress: !STORED.test(file.name) };
                 zip.addReadStreamLazy(file.name, options, (callback) => {
                     // Only saves an open: the check after the open, which
                     // the tests cover, is what keeps a gone client's

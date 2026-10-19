@@ -28,6 +28,7 @@ const {
     createRateLimiter,
     createOriginGuard,
     createUpgradeGuard,
+    createRequestDeadline,
     errorResponseFor,
     INVALID_FILE_TYPE,
 } = require('./http-guards');
@@ -132,8 +133,16 @@ app.get('/config', generalLimiter, (req, res) => {
     });
 });
 
+// The image upload's own bounds on its body, inside server.requestTimeout,
+// which is server-wide and raised to 30 minutes or more for the Files uploads
+// (see below): cut off after a minute without a byte, as Files uploads are,
+// or 11 minutes in all, which a 10 MB image at the 128 kbit/s the Files
+// uploads allow for takes. Not Node's former 5 minutes: that cut off an image
+// at the cap below 280 kbit/s. See createRequestDeadline (http-guards.js).
+const imageDeadline = createRequestDeadline({ totalMs: 11 * 60 * 1000, idleMs: 60 * 1000 });
+
 // Image upload endpoint (stricter rate limit)
-app.post('/upload', uploadLimiter, upload.single('image'), (req, res) => {
+app.post('/upload', uploadLimiter, imageDeadline, upload.single('image'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No image file provided' });
     }
@@ -239,7 +248,8 @@ const server = http.createServer(app);
 // minutes, or as long as a file at the cap takes at 128 kbit/s, but never
 // over 12 hours (uploadRequestTimeoutMs, MAX_REQUEST_TIMEOUT_MS): it is
 // server-wide, since Node has no per-route setting, so no request of any
-// kind may hold a connection open for longer. headersTimeout (60 s) is
+// kind may hold a connection open for longer; the image route keeps a
+// shorter bound of its own (imageDeadline, above). headersTimeout (60 s) is
 // deliberately left alone, so a client that never finishes its headers is
 // still cut off quickly, and uploads have their own idle timeout for a body
 // that stops arriving (files-upload.js).
