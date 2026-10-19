@@ -18,27 +18,37 @@ DOCKERFILE="$REPO_ROOT/claude-terminal/Dockerfile"
 PUBLISH="$REPO_ROOT/.github/workflows/publish.yml"
 TEST_WORKFLOW="$REPO_ROOT/.github/workflows/test.yml"
 
-# The instruction that follows `ARG APK_REFRESH`, skipping comments and blank
-# lines: it must be the apk layer itself, so nothing cached sits in between.
-after_arg=$(awk '
-    found && /^[[:space:]]*(#|$)/ { next }
+# Only active instructions count: comment lines are dropped first, so a
+# comment or a quoted string mentioning these names cannot satisfy a check.
+active() { grep -v -E '^[[:space:]]*#' "$1"; }
+
+# The instruction that follows `ARG APK_REFRESH` must be the apk layer itself,
+# naming APK_REFRESH, so nothing cached sits in between.
+after_arg=$(active "$DOCKERFILE" | awk '
+    found && /^[[:space:]]*$/ { next }
     found { print; exit }
     /^ARG APK_REFRESH(=|$)/ { found = 1 }
-' "$DOCKERFILE")
-assert_contains "the Dockerfile declares APK_REFRESH right before the apk layer" \
-    "$after_arg" "RUN apk upgrade --no-cache"
+')
+# shellcheck disable=SC2016  # the literal Dockerfile text, not shell
+assert_contains "the apk layer comes right after ARG APK_REFRESH and names it" \
+    "$after_arg" 'RUN echo "apk refresh: ${APK_REFRESH:-none}"'
+apk_layer=$(active "$DOCKERFILE" | awk '/^ARG APK_REFRESH(=|$)/ { found = 1; next } found && /^RUN / { on = 1 } on { print } on && !/\\$/ { exit }')
+assert_contains "and that layer runs apk upgrade" "$apk_layer" '&& apk upgrade --no-cache'
 
 # Declared before any other RUN, so the first RUN it invalidates is the apk one.
 first_run=$(grep -n -m1 '^RUN ' "$DOCKERFILE" | cut -d: -f1)
 arg_line=$(grep -n -m1 '^ARG APK_REFRESH' "$DOCKERFILE" | cut -d: -f1)
 assert_eq "no RUN comes before APK_REFRESH" "1" "$([ -n "$arg_line" ] && [ "$arg_line" -lt "$first_run" ] && echo 1 || echo 0)"
 
-# The release build passes a value unique to the run (a rerun gets a new one).
+# The release build passes a value unique to the run (a rerun gets a new one),
+# as a line of the builder's build-args, not in a comment.
 # shellcheck disable=SC2016  # a literal GitHub Actions expression, not shell
-assert_contains "publish.yml passes APK_REFRESH unique to the run" \
-    "$(cat "$PUBLISH")" 'APK_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}'
+assert_eq "publish.yml passes APK_REFRESH unique to the run" "1" \
+    "$(active "$PUBLISH" | grep -c -E '^[[:space:]]+APK_REFRESH=\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}$')"
+assert_eq "under build-args" "1" "$(active "$PUBLISH" | grep -B1 -E '^[[:space:]]+APK_REFRESH=' | grep -c -E '^[[:space:]]+build-args: \|$')"
 
-# Test builds must not pass it, or every CI build would miss the cache.
-assert_not_contains "test.yml does not pass APK_REFRESH" "$(cat "$TEST_WORKFLOW")" "APK_REFRESH"
+# Test builds must not pass it, or every CI build would miss the cache. A
+# comment mentioning it is fine.
+assert_not_contains "test.yml does not pass APK_REFRESH" "$(active "$TEST_WORKFLOW")" "APK_REFRESH"
 
 finish_suite

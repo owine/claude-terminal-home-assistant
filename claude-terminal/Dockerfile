@@ -19,8 +19,11 @@ LABEL \
 # shipped libexpat 2.8.5 (CVE-2026-77214) that way while 2.9.0 was in the repo.
 # publish.yml passes a value unique to the run, so every release reinstalls
 # from the current index; test builds pass nothing and keep their cache.
+# Docker already treats a changed ARG as a cache miss at the next RUN; the
+# echo names it there too, and logs which refresh a build used.
 ARG APK_REFRESH=""
-RUN apk upgrade --no-cache \
+RUN echo "apk refresh: ${APK_REFRESH:-none}" \
+    && apk upgrade --no-cache \
     && apk add --no-cache \
     bash=5.3.9-r1 \
     curl=8.22.0-r0 \
