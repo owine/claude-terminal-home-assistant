@@ -143,9 +143,9 @@ function withSuffix(name, n) {
     return dot > 0 ? `${name.slice(0, dot)} (${n})${name.slice(dot)}` : `${name} (${n})`;
 }
 
-async function lstatOrNull(p) {
+async function lstatOrNull(p, options) {
     try {
-        return await fsp.lstat(p);
+        return await fsp.lstat(p, options);
     } catch (err) {
         if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
         throw err;
@@ -170,8 +170,9 @@ const sizeText = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
  * upload-parts.js's createPartRecord. The rest are test seams: `fsOps` the
  * link and rename that put a finished part in place and the realpath of the
  * last check before them (each defaults on its own), `openPart` its open
- * (a FileHandle, or anything with its stat, chmod, write, datasync, truncate
- * and close), `partName` its name, `onPlanned` a hook between the checks and
+ * (a FileHandle, or anything with its stat - which must honour
+ * { bigint: true } - chmod, write, datasync, truncate and close),
+ * `partName` its name, `onPlanned` a hook between the checks and
  * the part's open, and `beforeCommit` one between the last byte and the
  * rename.
  */
@@ -352,21 +353,33 @@ function createUploads({
     // Whether `part` still names the file this upload created (`id`: its
     // device and inode, from the open descriptor). Everything done to the
     // part by its path - the link or rename that puts it in place, the
-    // unlink after - asks this first. O_NOFOLLOW guards only the last
-    // component of a path: a folder swapped for a link just before the open
-    // puts the part outside the folder that was checked, and a part swapped
-    // for a link later would make the path act on the link's target.
+    // unlink after - asks this first, and the name it was put at is asked
+    // after. O_NOFOLLOW guards only the last component of a path: a folder
+    // swapped for a link just before the open puts the part outside the
+    // folder that was checked, and a part swapped for a link later would
+    // make the path act on the link's target. Compared as BigInts on both
+    // sides: an inode number can be over 2^53, where a Number rounds it.
     async function samePart(part, id) {
-        const st = await lstatOrNull(part);
+        const st = await lstatOrNull(part, { bigint: true });
         return Boolean(st && st.dev === id.dev && st.ino === id.ino);
     }
     async function mustBeOurs(part, id, planned) {
         if (!(await samePart(part, id))) throw partChanged(planned.display);
     }
+    // After the link or rename: the part's name can be given to another
+    // file between the last mustBeOurs and that call, which then puts the
+    // other file in place. Nothing this upload wrote is there, so it is
+    // not a success. What landed is not this upload's to remove: logged,
+    // and left.
+    async function mustHavePlaced(target, id, planned, log) {
+        if (await samePart(target, id)) return;
+        log(`Upload not saved: ${target} is not the uploaded file (its temporary file was replaced as it was put in place); left as it is`);
+        throw partChanged(planned.display);
+    }
 
     // `handle` is the part's open descriptor, still open: Replace sets the
     // mode through it, never through the path.
-    async function commit(part, planned, handle, id) {
+    async function commit(part, planned, handle, id, log) {
         await recheck(planned);
         const target = path.join(planned.dir, planned.name);
         if (planned.onConflict === 'replace') {
@@ -378,6 +391,7 @@ function createUploads({
             if (old) await handle.chmod(old.mode & 0o777);
             await mustBeOurs(part, id, planned);
             await fsOps.rename(part, target);   // swaps the whole file in at once
+            await mustHavePlaced(target, id, planned, log);
             return { path: target, name: planned.name, replaced: Boolean(old) };
         }
         await mustBeOurs(part, id, planned);
@@ -385,7 +399,10 @@ function createUploads({
         for (let n = 0; n <= (suffix ? MAX_SUFFIX : 0); n++) {
             const name = n === 0 ? planned.name : withSuffix(planned.name, n);
             const candidate = path.join(planned.dir, name);
-            if (await placeNew(part, candidate)) return { path: candidate, name, replaced: false };
+            if (await placeNew(part, candidate)) {
+                await mustHavePlaced(candidate, id, planned, log);
+                return { path: candidate, name, replaced: false };
+            }
         }
         if (!suffix) throw exists(planned.name, planned.display, await lstatOrNull(target));
         throw new FilesError(409, `Too many files named like ${planned.name} in ${planned.display}.`,
@@ -412,7 +429,7 @@ function createUploads({
         let placed = null;
         try {
             handle = await openPart(part);
-            const opened = await handle.stat();
+            const opened = await handle.stat({ bigint: true });
             id = { dev: opened.dev, ino: opened.ino };
             // Made in the folder plan() checked, and still there? Before
             // the first byte, so none is ever written anywhere else.
@@ -422,7 +439,16 @@ function createUploads({
             const size = await writeBody(req, handle, planned.name, log);
             await handle.datasync();     // on disk before it replaces anything
             if (beforeCommit) await beforeCommit(part, planned);
-            placed = await commit(part, planned, handle, id);
+            try {
+                placed = await commit(part, planned, handle, id, log);
+            } catch (err) {
+                // A link or rename that finds no part, or no folder, at
+                // the path: the folder was moved or swapped for a link
+                // since its last check. Changed, not a fault.
+                if (err.code !== 'ENOENT') throw err;
+                log(`Upload not saved: ${err.message}`);
+                throw partChanged(planned.display);
+            }
             return { ...placed, size, dir: planned.display, inbox: planned.inbox };
         } finally {
             if (handle) {

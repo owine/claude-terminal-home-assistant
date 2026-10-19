@@ -735,7 +735,7 @@ test('upload: a full disk is a 507 that says so, and leaves no part', async () =
             partIno = (await handle.stat()).ino;
             let writes = 0;
             return {
-                stat: () => handle.stat(),
+                stat: (opts) => handle.stat(opts),
                 chmod: (m) => handle.chmod(m),
                 datasync: () => handle.datasync(),
                 truncate: (n) => handle.truncate(n),
@@ -1228,6 +1228,120 @@ test('race: a link or a file already at the part\'s name is never written throug
             await res.arrayBuffer();
         });
         assert.deepStrictEqual(filesIn(f.dir), { [PART]: 'someone else\'s' });
+    } finally {
+        f.cleanup();
+    }
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('race: a part swapped in the moment before it is put in place is a logged 409, never a false success', async () => {
+    const f = raceFixture('race-place');
+    // Between the last check of the part and the link or rename that puts
+    // it in place, its name is given to another file.
+    const swap = (part) => { fs.unlinkSync(part); fs.writeFileSync(part, 'not the upload'); };
+    const logged = [];
+    const viaLink = createUploads({
+        api, record, partName: () => PART,
+        fsOps: { link: async (a, b) => { swap(a); return fs.promises.link(a, b); } },
+    });
+    const viaRename = createUploads({
+        api, record, partName: () => PART,
+        fsOps: { rename: async (a, b) => { swap(a); return fs.promises.rename(a, b); } },
+    });
+    const noLinks = createUploads({
+        api, record, partName: () => PART,
+        fsOps: {
+            link: async () => { throw Object.assign(new Error('not supported'), { code: 'EPERM' }); },
+            rename: async (a, b) => { swap(a); return fs.promises.rename(a, b); },
+        },
+    });
+    const cases = [
+        [viaLink, { name: 'l.txt' }, 'l.txt'],
+        [viaRename, { name: 'old.txt', onConflict: 'replace' }, 'old.txt'],
+        [noLinks, { name: 'n.txt' }, 'n.txt'],
+    ];
+    try {
+        for (const [uploads, params, landed] of cases) {
+            fs.rmSync(f.dir, { recursive: true, force: true });
+            fs.mkdirSync(f.dir);
+            fs.writeFileSync(path.join(f.dir, 'old.txt'), 'old');
+            await withServer({ uploads, log: (m) => logged.push(m) }, async (url) => {
+                const res = await post(url, { dest: 'race-place', ...params }, 'content');
+                assert.strictEqual(res.status, 409, JSON.stringify(params));
+                assert.strictEqual((await res.json()).reason, 'changed');
+            });
+            // what landed is the other file, never this upload's bytes
+            assert.strictEqual(fs.readFileSync(path.join(f.dir, landed), 'utf8'), 'not the upload');
+            assert.ok(logged.some((m) => m.includes(path.join(f.dir, landed))), logged.join('\n'));
+        }
+    } finally {
+        f.cleanup();
+    }
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('race: a folder swapped for a link as the part is put in place is a 409, not a 500', async () => {
+    const f = raceFixture('race-enoent');
+    const logged = [];
+    // The link or rename runs through the swapped folder, where the part
+    // is not: ENOENT, which says the folder changed, not that a bug did.
+    const viaLink = createUploads({
+        api, record,
+        fsOps: { link: async (a, b) => { f.toLink(); return fs.promises.link(a, b); } },
+    });
+    const viaRename = createUploads({
+        api, record,
+        fsOps: { rename: async (a, b) => { f.toLink(); return fs.promises.rename(a, b); } },
+    });
+    fs.writeFileSync(path.join(f.out, 'victim.conf'), 'original');
+    try {
+        for (const [uploads, params] of [[viaLink, { name: 'n.txt' }], [viaRename, { name: 'victim.conf', onConflict: 'replace' }]]) {
+            fs.writeFileSync(path.join(f.dir, 'victim.conf'), 'old');
+            await withServer({ uploads, log: (m) => logged.push(m) }, async (url) => {
+                const res = await post(url, { dest: 'race-enoent', ...params }, 'USER CONTENT');
+                assert.strictEqual(res.status, 409, JSON.stringify(params));
+                assert.strictEqual((await res.json()).reason, 'changed');
+            });
+            assert.deepStrictEqual(filesIn(f.out), { 'victim.conf': 'original' });
+            f.back();
+        }
+        assert.ok(logged.some((m) => /ENOENT/.test(m)), logged.join('\n'));
+    } finally {
+        f.cleanup();
+    }
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('race: the part is told apart by its exact inode, never one rounded to a Number', async () => {
+    // Inode numbers can be over 2^53, where two of them can round to the
+    // same Number. Modelled here: the open part reports, exactly, an inode
+    // one past the one at its path; rounded, the two look the same.
+    const f = raceFixture('race-bigint');
+    const off = createUploads({
+        api, record,
+        openPart: async (p) => {
+            const handle = await openNoFollow(p);
+            return {
+                stat: async (opts) => {
+                    const st = await handle.stat(opts);
+                    if (opts && opts.bigint) st.ino += 1n;
+                    return st;
+                },
+                chmod: (m) => handle.chmod(m),
+                write: (...args) => handle.write(...args),
+                datasync: () => handle.datasync(),
+                truncate: (n) => handle.truncate(n),
+                close: () => handle.close(),
+            };
+        },
+    });
+    try {
+        await withServer({ uploads: off }, async (url) => {
+            const res = await post(url, { name: 'b.txt', dest: 'race-bigint' }, 'content');
+            assert.strictEqual(res.status, 409);
+            assert.strictEqual((await res.json()).reason, 'changed');
+        });
+        assert.strictEqual(fs.existsSync(path.join(f.dir, 'b.txt')), false);
     } finally {
         f.cleanup();
     }
