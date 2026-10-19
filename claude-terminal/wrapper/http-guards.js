@@ -163,16 +163,49 @@ function createOriginGuard({ log = console.warn } = {}) {
  * that guard lets a request with no Origin and no Referer through, and an
  * HA-ingress one whatever its Origin, where Sec-Fetch-Site still says what the
  * browser saw. `message` words the refusal for the route.
+ *
+ * Its log line is capped, because what it refuses is what a hostile page can
+ * send in a loop (an <img> per frame): at most CROSS_SITE_LOG_MAX lines a
+ * minute per guard (each router builds its own), the last of them saying so.
+ * Every request is still refused; the ones not logged are counted, and the
+ * count goes out with the next line logged once the minute is over (a burst
+ * that ends for good leaves its count unsaid). The minute runs on a
+ * monotonic clock, so a wall clock set back cannot silence the log; `now` is
+ * injectable for tests, as createRateLimiter's is.
  */
+const CROSS_SITE_LOG_MAX = 5;
+const CROSS_SITE_LOG_WINDOW_MS = 60000;
+
 function createCrossSiteGuard({
     log = console.warn,
     message = 'Downloads cannot be started from another site. Use the Files sidebar.',
+    now = () => performance.now(),
 } = {}) {
+    let windowStart = -Infinity;
+    let logged = 0;
+    let unlogged = 0;
+    const report = (line) => {
+        const t = now();
+        if (t - windowStart >= CROSS_SITE_LOG_WINDOW_MS) {
+            if (unlogged) line += ` (${unlogged} earlier refusal${unlogged === 1 ? '' : 's'} not logged)`;
+            windowStart = t;
+            logged = 0;
+            unlogged = 0;
+        }
+        if (logged >= CROSS_SITE_LOG_MAX) {
+            unlogged++;
+            return;
+        }
+        logged++;
+        if (logged === CROSS_SITE_LOG_MAX) line += '; any more this minute are counted, not logged';
+        log(line);
+    };
+
     return (req, res, next) => {
         const site = String(req.get('sec-fetch-site') || '').toLowerCase();
         if (site !== 'cross-site') return next();
 
-        log(`Blocked cross-site request for ${JSON.stringify(`${req.baseUrl || ''}${req.path || ''}`)}`);
+        report(`Blocked cross-site request for ${JSON.stringify(`${req.baseUrl || ''}${req.path || ''}`)}`);
         return res.status(403).json({ error: message });
     };
 }

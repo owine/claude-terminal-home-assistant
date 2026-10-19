@@ -265,6 +265,61 @@ test('logs a refused cross-site request', () => {
     assert.match(lines[0], /cross-site/);
 });
 
+// The requests this guard refuses are the ones a hostile page can send in a
+// loop (an <img> per frame), and each one used to log a line: the add-on log
+// could be flooded from any site the user visited. The refusal stays; only
+// the logging is capped. One guard for many requests, on a clock the test
+// moves; returns the status each request got.
+function loggingGuard() {
+    const clock = { t: 1000000 };
+    const lines = [];
+    const guard = createCrossSiteGuard({ log: (line) => lines.push(line), now: () => clock.t });
+    const send = (n, headers = { 'Sec-Fetch-Site': 'cross-site' }) => {
+        const statuses = [];
+        for (let i = 0; i < n; i++) {
+            const res = makeRes();
+            guard(makeReq({ headers }), res, () => {});
+            statuses.push(res.statusCode);
+        }
+        return statuses;
+    };
+    return { lines, clock, send };
+}
+
+test('logs at most 5 refusals a minute, the fifth saying so, and refuses every one', () => {
+    const { lines, send } = loggingGuard();
+    assert.deepStrictEqual(send(20), new Array(20).fill(403));
+    assert.strictEqual(lines.length, 5, lines.join('\n'));
+    assert.ok(lines.slice(0, 4).every((line) => !/not logged/.test(line)), lines.join('\n'));
+    assert.match(lines[4], /; any more this minute are counted, not logged$/);
+});
+
+test('logs again once the minute is over, with how many it left out', () => {
+    const { lines, clock, send } = loggingGuard();
+    send(20);
+    clock.t += 59999;
+    send(1);
+    assert.strictEqual(lines.length, 5, 'still inside the minute');
+    clock.t += 1;
+    send(1);
+    assert.strictEqual(lines.length, 6);
+    assert.match(lines[5], /^Blocked cross-site request for "[^"]*" \(16 earlier refusals not logged\)$/);
+    send(5);   // the new minute's other four, then one over
+    clock.t += 60000;
+    send(1);
+    assert.strictEqual(lines.length, 11);
+    assert.match(lines[10], /\(1 earlier refusal not logged\)$/);
+});
+
+test('a request let through spends none of the log budget', () => {
+    const { lines, send } = loggingGuard();
+    send(10, { 'Sec-Fetch-Site': 'same-origin' });
+    assert.strictEqual(lines.length, 0);
+    send(5);
+    assert.strictEqual(lines.length, 5);
+    assert.ok(lines.slice(0, 4).every((line) => !/not logged/.test(line)), lines.join('\n'));
+});
+
 // ---------------------------------------------------------------------------
 // createUpgradeGuard
 // ---------------------------------------------------------------------------
