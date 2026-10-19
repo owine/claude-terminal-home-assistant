@@ -24,6 +24,7 @@ const {
     FilesError,
 } = require('../files-api.js');
 const { createRateLimiter } = require('../http-guards.js');
+const { makeBadName, needsBadNames } = require('./bad-name.js');
 
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'files-api-')));
 const root = path.join(base, 'config');
@@ -507,27 +508,10 @@ test('recent changes stops when its time budget runs out', async () => {
 // with U+FFFD in it, a path that names nothing: the entry dropped out of the
 // listing and of recent changes without a word. Now it is counted.
 
-// Makes `rel` (a Buffer of the name's bytes) under `dir`; false where the
-// file system refuses names that are not UTF-8 (macOS: EILSEQ).
-function makeBadName(dir, bytes, { folder = false } = {}) {
-    const full = Buffer.concat([Buffer.from(dir + path.sep), bytes]);
-    try {
-        fs.mkdirSync(dir, { recursive: true });
-        if (folder) {
-            fs.mkdirSync(full);
-            fs.writeFileSync(Buffer.concat([full, Buffer.from('/inner.txt')]), 'inner');
-        } else {
-            fs.writeFileSync(full, 'bad name');
-        }
-        return true;
-    } catch {
-        return false;
-    }
-}
-const canBadNames = makeBadName(path.join(base, 'probe'), Buffer.from([0x70, 0xff]));
+const badNames = needsBadNames(path.join(base, 'probe'));
 
 test('a name that is not valid UTF-8 is counted in a listing, not silently left out',
-    { skip: !canBadNames && 'the file system refuses names that are not UTF-8' }, async () => {
+    badNames, async () => {
         const dir = path.join(root, 'odd-names');
         try {
             write('odd-names/plain.txt', 'plain');
@@ -544,7 +528,7 @@ test('a name that is not valid UTF-8 is counted in a listing, not silently left 
     });
 
 test('a name that is not valid UTF-8 is counted in recent changes, not silently left out',
-    { skip: !canBadNames && 'the file system refuses names that are not UTF-8' }, async () => {
+    badNames, async () => {
         const recentRoot = path.join(base, 'recent-odd');
         write('plain.txt', 'plain', recentRoot);
         write('sub/ok�.txt', 'valid', recentRoot);

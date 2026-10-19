@@ -17,6 +17,7 @@ const { createDownloads, MAX_ZIP_BYTES, MAX_CONCURRENT_ZIPS } = require('../file
 const {
     root, outside, write, BLUEPRINT_NAMES, api, downloads, refused, names, withServer, q, unzip,
 } = require('./files-download-fixture.js');
+const { makeBadName, needsBadNames } = require('./bad-name.js');
 
 test('a zip holds the ordinary files under the folder, named below it', async () => {
     const plan = await downloads.planZip('blueprints');
@@ -231,27 +232,11 @@ test('an upload-part folder is not zipped; another *.part folder is', async () =
 
 // Linux allows any bytes in a name but '/' and NUL; one that is not valid
 // UTF-8 cannot be named in a zip (yazl takes strings) nor in a request, so it
-// is left out - and counted, so the preflight can say so. False where the
-// file system refuses such names (macOS: EILSEQ).
-function makeBadName(dir, bytes, { folder = false } = {}) {
-    const full = Buffer.concat([Buffer.from(dir + path.sep), bytes]);
-    try {
-        fs.mkdirSync(dir, { recursive: true });
-        if (folder) {
-            fs.mkdirSync(full);
-            fs.writeFileSync(Buffer.concat([full, Buffer.from('/inner.txt')]), 'inner');
-        } else {
-            fs.writeFileSync(full, 'bad name');
-        }
-        return true;
-    } catch {
-        return false;
-    }
-}
-const canBadNames = makeBadName(path.join(root, '..', 'probe'), Buffer.from([0x70, 0xff]));
+// is left out - and counted, so the preflight can say so.
+const badNames = needsBadNames(path.join(root, '..', 'probe'));
 
 test('a name that is not valid UTF-8 is left out of a zip and counted, in the plan and the check=1 answer',
-    { skip: !canBadNames && 'the file system refuses names that are not UTF-8' }, async () => {
+    badNames, async () => {
         const dir = path.join(root, 'odd');
         try {
             write('odd/plain.txt', 'plain');
