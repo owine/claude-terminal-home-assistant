@@ -2017,6 +2017,126 @@ async function checkKeyboardViewport(browser, engine, mode, url) {
     }
 }
 
+// HA's top window outlives the ingress iframe: a reload replaces the frame's
+// document, and leaving the panel and coming back replaces the frame itself.
+// Each wrapper document adds a resize and a scroll listener to the TOP
+// visual viewport and must take them off on pagehide, or every visit leaves
+// two more behind, still firing into a dead document and keeping it alive.
+// The top window's add/removeEventListener are counted before anything
+// runs, so the count is of live listeners whatever registered them. Ingress
+// only: on the direct port the wrapper is the top window and adds none.
+const COUNT_TOP_VIEWPORT_LISTENERS = `(() => {
+    if (window !== window.top || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const add = vv.addEventListener;
+    const remove = vv.removeEventListener;
+    const live = [];
+    let adds = 0;
+    const at = (type, fn) => live.findIndex((l) => l.type === type && l.fn === fn);
+    vv.addEventListener = function (type, fn, opts) {
+        adds++;
+        if (at(type, fn) < 0) live.push({ type, fn });
+        return add.call(this, type, fn, opts);
+    };
+    vv.removeEventListener = function (type, fn, opts) {
+        const i = at(type, fn);
+        if (i >= 0) live.splice(i, 1);
+        return remove.call(this, type, fn, opts);
+    };
+    window.__ctpTopListeners = () => JSON.stringify({ adds, live: live.map((l) => l.type).sort() });
+})()`;
+
+async function checkOuterViewportTeardown(browser, mode, url) {
+    if (mode !== 'ingress') return;
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    await context.addInitScript(COUNT_TOP_VIEWPORT_LISTENERS);
+    const page = await context.newPage();
+    const listeners = () => page.evaluate('window.__ctpTopListeners()').then(JSON.parse);
+    const BOTH = JSON.stringify(['resize', 'scroll']);
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        await wrapperFrame(page);
+        const first = await listeners();
+        check('fixture: the counter sees the wrapper add its resize and scroll listeners to the top viewport',
+            first, (v) => v.adds === 2 && JSON.stringify(v.live) === BOTH);
+
+        // Alternating: a reload of the frame's document, then HA dropping the
+        // frame and making a new one, as on leaving the panel and returning.
+        const cycles = [
+            ['a frame reload', `document.getElementById('ingress-frame').contentWindow.location.reload()`],
+            ['a new ingress frame', `(() => {
+                const old = document.getElementById('ingress-frame');
+                old.replaceWith(old.cloneNode());
+            })()`],
+        ];
+        const counts = [];
+        for (let i = 0; i < 4; i++) {
+            const [, script] = cycles[i % cycles.length];
+            const addsBefore = (await listeners()).adds;
+            await page.evaluate(script);
+            // The new document has attached once its adds arrive; the old
+            // one's teardown ran on its pagehide, before the new one loaded.
+            await waitFor(async () => (await listeners()).adds >= addsBefore + 2, { timeout: 20000 });
+            await wrapperFrame(page);
+            counts.push({ after: cycles[i % cycles.length][0], ...(await listeners()) });
+        }
+        check('fixture: every new wrapper document attached to the top viewport again',
+            counts.map((c) => c.adds), (a) => a.every((n, i) => n === 2 * (i + 2)));
+        check('the top viewport keeps exactly the live document\'s two listeners across reloads and new frames',
+            counts, (c) => c.every((v) => JSON.stringify(v.live) === BOTH));
+    } finally {
+        await context.close();
+    }
+}
+
+// viewport-fit.js failing to load (a 404 mid-update): the page must still
+// size itself, from its own visual viewport as before the module existed,
+// and keep following it, with no uncaught error from the missing global.
+// Errors are collected in every frame before any script runs; a thrown probe
+// proves the collector sees the wrapper's.
+async function checkViewportFitMissing(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    await context.addInitScript(`window.__ctpErrors = [];
+        window.addEventListener('error', (e) => window.__ctpErrors.push(String(e.message)));
+        window.addEventListener('unhandledrejection', (e) => window.__ctpErrors.push('rejection: ' + String(e.reason)));`);
+    const page = await context.newPage();
+    let aborted = 0;
+    await page.route('**/viewport-fit.js', (route) => { aborted++; return route.abort(); });
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const layout = () => wrapper.evaluate(`JSON.stringify({
+            app: getComputedStyle(document.documentElement).getPropertyValue('--app-height').trim(),
+            container: document.getElementById('container').getBoundingClientRect().height,
+            own: visualViewport.height,
+            rows: ${TERM}.rows,
+        })`).then(JSON.parse);
+        const sized = (v) => v.app === `${Math.round(v.own)}px` && Math.abs(v.container - v.own) <= 1;
+        check('fixture: the viewport fit script was blocked', aborted, (n) => n >= 1);
+        check('fixture: the page has no ViewportFit', await wrapper.evaluate('typeof window.ViewportFit'), 'undefined');
+        const before = await layout();
+        check('without viewport-fit.js the page sizes itself from its own viewport, and the terminal runs',
+            before, (v) => sized(v) && v.rows > 0);
+
+        const viewport = page.viewportSize();
+        await page.setViewportSize({ width: viewport.width, height: viewport.height - 160 });
+        await waitFor(async () => { const v = await layout(); return v.own < before.own && sized(v); });
+        check('and follows that viewport when it shrinks',
+            await layout(), (v) => v.own < before.own && sized(v));
+
+        await wrapper.evaluate(`setTimeout(() => { throw new Error('ctp-probe'); })`);
+        const errors = () => wrapper.evaluate('JSON.stringify(window.__ctpErrors)').then(JSON.parse);
+        await waitFor(async () => (await errors()).some((m) => m.includes('ctp-probe')));
+        const seen = await errors();
+        check('fixture: the error collector sees an uncaught error in the wrapper',
+            seen.some((m) => m.includes('ctp-probe')), true);
+        check('and the missing module threw none',
+            seen.filter((m) => !m.includes('ctp-probe')), (e) => e.length === 0);
+    } finally {
+        await context.close();
+    }
+}
+
 async function run(engine, mode, url) {
     console.log(`\n=== ${engine.name()} / ${mode} ===`);
     const failuresBefore = failures;
@@ -2494,6 +2614,8 @@ async function run(engine, mode, url) {
     await checkTerminalUploads(browser, url);
     await checkUploadClientMissing(browser, url);
     await checkKeyboardViewport(browser, engine, mode, url);
+    await checkOuterViewportTeardown(browser, mode, url);
+    await checkViewportFitMissing(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {
