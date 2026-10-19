@@ -299,18 +299,21 @@
         // one for nothing. Checked when the text changes (at once: a
         // ResizeObserver can run frames later), and when the box changes
         // size for any other reason: the sidebar reopened (closed, nothing
-        // scrolls), resized, or the window. Focus on it when it stops
-        // scrolling goes to Upload, not the page.
-        function fitNoticeScroll() {
+        // scrolls), resized, or the window. With focus on it when it stops
+        // scrolling, it keeps the tab stop until focus leaves: moving focus
+        // would lose the reader's place.
+        function fitNotice(focused) {
             if (noticeText.scrollHeight > noticeText.clientHeight) {
                 noticeText.setAttribute('tabindex', '0');
-            } else if (noticeText.hasAttribute('tabindex')) {
-                const hadFocus = document.activeElement === noticeText;
+            } else if (noticeText.hasAttribute('tabindex') && !focused) {
                 noticeText.removeAttribute('tabindex');
-                if (hadFocus) uploadBtn.focus({ preventScroll: true });
             }
         }
-        new ResizeObserver(fitNoticeScroll).observe(noticeText);
+        const fitNoticeScroll = () => fitNotice(document.activeElement === noticeText);
+        noticeText.addEventListener('blur', () => fitNotice(false));
+        // Old iOS WebViews (before 13.4) have no ResizeObserver: there the
+        // check on every text change (setNotice) is the only one.
+        if (typeof ResizeObserver === 'function') new ResizeObserver(fitNoticeScroll).observe(noticeText);
         // The notice's generation. Only what starts something new advances
         // it: a progress line ("Preparing …", "Uploading …") and a
         // dismissal. An operation's later lines go through showNoticeIf
@@ -621,11 +624,13 @@
                     prompt.hidden = true;
                     promptText.textContent = '';
                     // Back where it came from; from nowhere (the page
-                    // body), or from something gone since (a row the tree
-                    // drew again), to Upload rather than the page.
+                    // body), from something gone since (a row the tree
+                    // drew again), or from something hidden since, where
+                    // focus() does not take, to Upload rather than the page.
                     if (hadFocus) {
                         const back = returnTo && returnTo !== document.body && returnTo.isConnected ? returnTo : uploadBtn;
                         back.focus({ preventScroll: true });
+                        if (document.activeElement !== back) uploadBtn.focus({ preventScroll: true });
                     }
                     resolve(choice);
                 };

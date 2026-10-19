@@ -88,9 +88,9 @@ options:
   #   10 MB limit.
   upload_max_mb: 25
   # upload_retention_days: Files in the sidebar's inbox, /config/uploads,
-  #   older than this are deleted at startup: every file at its top level,
-  #   whoever put it there. 0 keeps them forever. A folder chosen with
-  #   "Upload here" is never swept.
+  #   last modified more than this many days ago are deleted at startup:
+  #   every file at its top level, whoever put it there. 0 keeps them
+  #   forever. A folder chosen with "Upload here" is never swept.
   upload_retention_days: 30
   persistent_apk_packages: []
   persistent_pip_packages: []

@@ -632,16 +632,17 @@ in the sidebar; if you are typing in the terminal, or have a preview open, it
 waits in the sidebar and the notice asks you to answer there, so a keystroke
 meant for the terminal never answers it. Once they are in, the last file is
 shown in the tree. Its preview opens only if you are still in the sidebar, and
-not when any file in the batch was refused. Nothing is typed into the terminal. A file whose
-name marks it as protected (a certificate such as `fullchain.pem`, say) is
-shown in the tree but not opened unless **Show protected files** is on.
+not when any file in the batch was refused. Nothing is typed into the
+terminal. A file whose name marks it as protected (a certificate such as
+`fullchain.pem`, say) is shown in the tree but not opened unless **Show
+protected files** is on.
 
 Any type of file can be uploaded, up to `upload_max_mb` (25 MB unless you
 change it; at most 1024 MB); a bigger one is refused before any of it is
-sent, and the message names the limit. Names are cleaned: folders in the name, control
-characters, invisible text-direction marks (which can make a name read
-backwards) and leading dots are taken out (`.env` arrives as `env`), and a
-very long name is shortened. New files can be read by everyone and run by no
+sent, and the message names the limit. Names are cleaned: folders in the
+name, control characters, invisible text-direction marks (which can make a
+name read backwards) and leading dots are taken out (`.env` arrives as
+`env`), and a very long name is shortened. New files can be read by everyone and run by no
 one (`0644`). Certificates and keys can be uploaded like any other file.
 `secrets.yaml` is an ordinary name; replacing one goes through the same
 question. An upload has 30 minutes to arrive, or longer if you raise

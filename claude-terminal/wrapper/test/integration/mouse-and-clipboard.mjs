@@ -1118,6 +1118,46 @@ async function checkSidebarScriptMissing(browser, url) {
     }
 }
 
+// 7b. A browser without ResizeObserver (iOS WebViews before 13.4): the
+//     sidebar is still wired, and a notice too long for its box is still a
+//     tab stop, from the check made whenever its text changes. Removed in
+//     every frame before any script runs.
+async function checkNoResizeObserver(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    await context.addInitScript('delete window.ResizeObserver;');
+    const page = await context.newPage();
+    const pickDir = mkdtempSync(join(tmpdir(), 'ctp-no-ro-'));
+    const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
+    const LONG = 'This refusal is long enough to scroll. '.repeat(30).trim();
+    await context.route(isAsk, (route) => route.fulfill({ status: 403, contentType: 'application/json',
+        body: JSON.stringify({ error: LONG }) }));
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        check('fixture: the page has no ResizeObserver', await wrapper.evaluate('typeof window.ResizeObserver'), 'undefined');
+        await wrapper.locator('#files-btn').click();
+        check('without ResizeObserver the Files button still opens the sidebar',
+            await waitFor(() => wrapper.evaluate('!document.getElementById("files-sidebar").classList.contains("collapsed")')), true);
+        check('and lists the tree',
+            await waitFor(async () => (await wrapper.locator('#files-list .files-row').count()) > 0), true);
+        const file = join(pickDir, 'long.txt');
+        writeFileSync(file, 'x');
+        const chooser = await Promise.all([
+            page.waitForEvent('filechooser', { timeout: 5000 }),
+            wrapper.locator('#files-upload-btn').click(),
+        ]).then(([c]) => c, () => null);
+        check('and Upload opens the file picker', chooser !== null, true);
+        if (chooser) {
+            await chooser.setFiles(file);
+            check('and a notice too long for its box is still a tab stop',
+                await waitFor(() => wrapper.evaluate('document.getElementById("files-notice-text").getAttribute("tabindex") === "0"')), true);
+        }
+    } finally {
+        await context.close();
+        rmSync(pickDir, { recursive: true, force: true });
+    }
+}
+
 // 8. Uploads from the Files sidebar: the Upload button (the inbox, made on
 //    first use, numbering a taken name), Upload here with the collision
 //    prompt (Cancel, Escape, Keep both, Replace keeping the old mode), drops
@@ -1366,6 +1406,21 @@ async function checkUploads(browser, url) {
         await page.keyboard.press('Escape');
         check('answered after the tree was drawn again, it gives focus to Upload, not the page',
             await waitFor(async () => !(await promptShown()) && (await focusedId()) === 'files-upload-btn'), true);
+        // From something still there but hidden meanwhile, where focus()
+        // does not take: Upload too.
+        await menuButton(fixtureName).focus();
+        await wrapper.evaluate('document.activeElement.dataset.ctpHide = "1"');
+        await dropOn({ folder: fixtureName }, COLLIDE, 'dropped: 9\n');
+        await waitFor(promptShown);
+        check('fixture: the question took focus from the ⋯ about to be hidden', (await promptState()).focus, 'files-prompt-keep');
+        await wrapper.evaluate('document.querySelector("[data-ctp-hide]").style.display = "none"');
+        await page.keyboard.press('Escape');
+        check('answered after the ⋯ it came from was hidden, it gives focus to Upload, not the page',
+            await waitFor(async () => !(await promptShown()) && (await focusedId()) === 'files-upload-btn'), true);
+        await wrapper.evaluate(`(() => {
+            const b = document.querySelector('[data-ctp-hide]');
+            if (b) { b.style.display = ''; delete b.dataset.ctpHide; }
+        })()`);
         check('and the file is still the replaced one', read(`${SIDEBAR_DIR}/${COLLIDE}`), 'replaced: 4\n');
 
         // Drops (synthetic, see dropOn above).
@@ -1535,18 +1590,30 @@ async function checkUploads(browser, url) {
             await waitFor(async () => (await notice()).text.includes(LONG)), true);
         check('a notice that overflows its box is a tab stop, so the keyboard can scroll it', await noticeTabindex(), '0');
         // Focus on it when it stops scrolling (the next file's short
-        // "Checking" line) goes to Upload, not the page. The refusal is held
-        // back, so the short line shows for a few frames.
+        // "Checking" line) stays there: moved, it would lose the reader's
+        // place. It keeps its tab stop while it has focus, and loses it on
+        // blur if it still fits. The refusal is held back until released,
+        // and then (for the next one too) half a second more, so it lands
+        // after the sidebar below is closed.
         await context.unroute(isAskLong);
+        const longHeld = new Promise((r) => { release = r; });
         await context.route(isAskLong, async (route) => {
+            await longHeld;
             await sleep(500);
             await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: LONG }) });
         });
         await wrapper.evaluate('document.getElementById("files-notice-text").focus()');
         check('fixture: the scrolling notice has focus', await focusedId(), 'files-notice-text');
         await dropOn('#files-footer', 'long2.txt', 'x');
-        check('a notice that stops scrolling with focus on it gives focus to Upload, not the page',
-            await waitFor(async () => (await focusedId()) === 'files-upload-btn'), true);
+        check('fixture: the short "Checking" line replaced the long one',
+            await waitFor(async () => (await notice()).text.startsWith('Checking long2.txt')), true);
+        check('a notice that stops scrolling with focus on it keeps focus, and its tab stop',
+            JSON.stringify({ focus: await focusedId(), tabindex: await noticeTabindex() }),
+            JSON.stringify({ focus: 'files-notice-text', tabindex: '0' }));
+        await wrapper.locator('#files-upload-btn').focus();
+        check('and loses the tab stop once focus leaves it, since it fits',
+            await waitFor(async () => (await noticeTabindex()) === null), true);
+        release();
         await waitFor(async () => (await notice()).text.includes(LONG));
         // Arriving while the sidebar is closed, it has nothing to scroll;
         // the sidebar reopened, it does again.
@@ -2057,6 +2124,7 @@ async function run(engine, mode, url) {
     await checkPreviewRequests(browser, url);
     await checkStaleListingPreview(browser, url);
     await checkSidebarScriptMissing(browser, url);
+    await checkNoResizeObserver(browser, url);
     await checkUploads(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 

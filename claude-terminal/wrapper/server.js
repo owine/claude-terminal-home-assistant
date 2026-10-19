@@ -236,9 +236,10 @@ const server = http.createServer(app);
 // minutes, or as long as a file at the cap takes at 128 kbit/s, but never
 // over 12 hours (uploadRequestTimeoutMs, MAX_REQUEST_TIMEOUT_MS): it is
 // server-wide, since Node has no per-route setting, so no request of any
-// kind may hold a connection open for longer. headersTimeout (60 s) is deliberately left alone, so a client
-// that never finishes its headers is still cut off quickly, and uploads have
-// their own idle timeout for a body that stops arriving (files-upload.js).
+// kind may hold a connection open for longer. headersTimeout (60 s) is
+// deliberately left alone, so a client that never finishes its headers is
+// still cut off quickly, and uploads have their own idle timeout for a body
+// that stops arriving (files-upload.js).
 server.requestTimeout = uploadRequestTimeoutMs(uploadLimit);
 
 // http-proxy-middleware does not auto-bind WS upgrades; without this the terminal won't connect.
