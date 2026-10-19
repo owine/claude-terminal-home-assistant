@@ -459,7 +459,7 @@ async function checkDownloads(browser, url) {
         // Playwright's WebKit on Linux (the CI runner) sanitises spaces in a
         // download's suggested name to underscores; macOS WebKit and Chromium
         // keep them. The server's Content-Disposition is the same either way
-        // (pinned in files-download.test.js), so accept exactly that one
+        // (pinned in files-download-single.test.js), so accept exactly that one
         // substitution there and the exact name everywhere else.
         const linuxWebKit = process.platform === 'linux'
             && page.context().browser().browserType().name() === 'webkit';
