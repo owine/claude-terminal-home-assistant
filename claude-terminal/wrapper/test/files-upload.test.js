@@ -962,6 +962,33 @@ test('upload: a record that cannot be written refuses the upload before any byte
     assert.deepStrictEqual(partsUnder(), []);
 });
 
+test('upload: a record that cannot be written is said to be the add-on\'s data folder, not the destination', async () => {
+    // The record lives in /data. A refusal there worded like one in /config
+    // ("not allowed to write there") sends the user to the wrong folder.
+    const file = path.join(data, 'record-dir', 'upload-parts');
+    const failing = (code) => createPartRecord({
+        file, root, log: () => {},
+        open: async () => { throw Object.assign(new Error(`simulated ${code}`), { code }); },
+    });
+    const dir = path.dirname(file);
+    for (const [code, status, text] of [
+        ['ENOSPC', 507, `The add-on's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`],
+        ['EDQUOT', 507, `The add-on's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`],
+        ['EACCES', 500, `The add-on could not write to its data folder (${dir}), so the file was not saved. The add-on's log says why.`],
+        ['EROFS', 500, `The add-on could not write to its data folder (${dir}), so the file was not saved. The add-on's log says why.`],
+    ]) {
+        const logged = [];
+        await withServer({ uploads: createUploads({ api, record: failing(code) }), log: (m) => logged.push(m) }, async (url) => {
+            const res = await post(url, { name: 'norecord.txt', dest: 'blueprints' }, 'x');
+            assert.strictEqual(res.status, status, code);
+            assert.deepStrictEqual(await res.json(), { error: text }, code);
+        });
+        assert.deepStrictEqual(logged, [`Upload not saved: its part could not be recorded in ${file}: simulated ${code}`], code);
+    }
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'norecord.txt')), false);
+    assert.deepStrictEqual(partsUnder(), []);
+});
+
 test('upload: a part made but never identified stays in the record, and the next start removes it', async () => {
     // openPart made the file (O_EXCL), then the stat that names it by inode
     // failed. Without the inode nothing may delete it by its path now, so

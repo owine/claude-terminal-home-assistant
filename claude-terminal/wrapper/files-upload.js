@@ -68,6 +68,7 @@ const FOLDER_AT_NAME = new Set(['EISDIR', 'ENOTEMPTY']);
 // Failures that are the file system's, not a bug: answered as what they are
 // (the global answer would be "Internal error"), and still logged.
 const DISK_FULL_TEXT = 'The disk is full, so the file was not saved. Free some space and try again.';
+const DISK_FULL = new Set(['ENOSPC', 'EDQUOT']);
 const FS_REFUSALS = new Map([
     ['ENOSPC', [507, DISK_FULL_TEXT]],
     ['EDQUOT', [507, DISK_FULL_TEXT]],
@@ -499,6 +500,23 @@ function createUploads({
             { reason: 'exists', replaceable: false });
     }
 
+    // The record lives in the add-on's data folder (/data), not where the
+    // file goes: a failure to write it is said as that folder's, never with
+    // FS_REFUSALS' words, which are about the destination. Logged, with the
+    // record's path. Nothing is written yet, so nothing is left behind.
+    async function recordPart(part, log) {
+        try {
+            await record.add(part);
+        } catch (err) {
+            const file = record.file ?? '/data/upload-parts';   // server.js's record
+            log(`Upload not saved: its part could not be recorded in ${file}: ${err.message}`);
+            const dir = path.dirname(file);
+            throw DISK_FULL.has(err && err.code)
+                ? new FilesError(507, `The add-on's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`)
+                : new FilesError(500, `The add-on could not write to its data folder (${dir}), so the file was not saved. The add-on's log says why.`);
+        }
+    }
+
     /**
      * Stream the request into a part beside the destination, then put it in
      * place: { path, name, size, dir, replaced, inbox }. On every other way
@@ -512,7 +530,7 @@ function createUploads({
     async function receive(req, planned, { log = console.error } = {}) {
         if (onPlanned) await onPlanned(planned);
         const part = path.join(planned.dir, partName());
-        await record.add(part);
+        await recordPart(part, log);
         let handle = null;
         // The part this upload created (O_EXCL: never a file that was
         // there before), by device and inode. Null until then, and only

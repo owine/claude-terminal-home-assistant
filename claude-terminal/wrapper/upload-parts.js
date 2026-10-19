@@ -153,6 +153,8 @@ function createPartRecord({ file, root, log = console.error, open = fsp.open, un
             await queue(() => write([...parts]));
         },
         list: () => [...parts],
+        /** Where the record is kept, for messages about it. */
+        file,
     };
 }
 
