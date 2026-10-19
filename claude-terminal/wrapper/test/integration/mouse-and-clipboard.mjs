@@ -110,6 +110,26 @@ async function zipBudget(n) {
     zipStats.waitedMs += Date.now() - start;
 }
 
+// The server's Files upload limiter, budgeted the same way: 60 uploads per
+// sliding minute, one bucket for all four runs. Every REAL upload body takes
+// its share first. A check=1 preflight counts against the read limiter
+// instead, and routed fakes never reach the server.
+// Must match filesUploadLimiter's max in server.js; if that changes, change this.
+const UPLOAD_LIMIT = 60;
+const uploadHits = [];
+const uploadStats = { peak: 0, waitedMs: 0 };
+async function uploadBudget(n) {
+    const start = Date.now();
+    for (;;) {
+        while (uploadHits.length && uploadHits[0] <= Date.now() - ZIP_WINDOW_MS) uploadHits.shift();
+        if (uploadHits.length + n <= UPLOAD_LIMIT) break;
+        await sleep(250);
+    }
+    for (let i = 0; i < n; i++) uploadHits.push(Date.now());
+    uploadStats.peak = Math.max(uploadStats.peak, uploadHits.length);
+    uploadStats.waitedMs += Date.now() - start;
+}
+
 // Starts a download and returns it, or null when none began. A download that
 // never starts must be a failed check, not a timeout that ends the run.
 async function expectDownload(page, start, { timeout = 10000 } = {}) {
@@ -168,6 +188,9 @@ const SIDEBAR_FILE = 'with space.yaml';
 const PROTECTED_FILE = '.env';
 const UPLOAD_PART = '.ctp-upload-0a1b2c.part';
 const ZIP_CAP_DIR = '/config/ctp-zip-cap-fixture';
+// The Files sidebar's upload inbox. The suite runs against a throwaway
+// container, so checkUploads empties it before and after.
+const INBOX_DIR = '/config/uploads';
 
 // Leave the pane at a plain shell prompt with plenty of scrollback.
 //
@@ -1095,6 +1118,270 @@ async function checkSidebarScriptMissing(browser, url) {
     }
 }
 
+// 8. Uploads from the Files sidebar: the Upload button (the inbox, made on
+//    first use, numbering a taken name), Upload here with the collision
+//    prompt (Cancel, Escape, Keep both, Replace keeping the old mode), drops
+//    on a folder row and elsewhere on the sidebar (never also the terminal's
+//    drop), protected and symlinked folders, a secret-shaped name, the size
+//    limit, the progress bar, and two files in one pick. What landed is read
+//    from the container, never from the page. Its own context with service
+//    workers blocked, so context.route sees the requests it holds or fakes.
+//    Every real upload body takes its share of uploadBudget first.
+async function checkUploads(browser, url) {
+    const LOCKED = '.ssh';
+    const LINK = 'ctp-up-link';
+    const COLLIDE = 'collide.yaml';
+    dexec(['sh', '-c', 'rm -rf "$1"; mkdir -p "$2/$3" "$2/ctp-up-link-target"; ln -sfn "$2/ctp-up-link-target" "$2/$4"; '
+        + 'printf "old: 1\\n" > "$2/$5"; chmod 600 "$2/$5"', 'sh', INBOX_DIR, SIDEBAR_DIR, LOCKED, LINK, COLLIDE]);
+    const exists = (p) => dexec(['sh', '-c', '[ -e "$1" ] && echo yes || echo no', 'sh', p]).trim() === 'yes';
+    const read = (p) => (exists(p) ? dexec(['cat', p]) : null);
+    const mode = (p) => dexec(['stat', '-c', '%a', p]).trim();
+    const pickDir = mkdtempSync(join(tmpdir(), 'ctp-sidebar-upload-'));
+    const local = (name, body) => {
+        const p = join(pickDir, name);
+        writeFileSync(p, body);
+        return p;
+    };
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    const bodies = [];
+    context.on('request', (r) => {
+        const u = new URL(r.url());
+        if (r.method() === 'POST' && u.pathname.endsWith('/api/files/upload') && !u.searchParams.has('check')) bodies.push(u);
+    });
+    // The terminal's image upload, faked: counted, never sent, so the image
+    // limiter's 10 a minute stays section 5's.
+    let imageUploads = 0;
+    await context.route((u) => /\/upload$/.test(u.pathname) && !u.pathname.endsWith('/api/files/upload'), (route) => {
+        imageUploads++;
+        return route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ success: true, path: '/data/images/pasted-0-00000000.png', filename: 'pasted-0-00000000.png', size: 3 }) });
+    });
+    let release = () => {};
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const list = await openSidebarFixture(wrapper);
+        const hasUpload = (await wrapper.locator('#files-upload-btn').count()) === 1;
+        check('the sidebar has an Upload button', hasUpload, true);
+        if (!hasUpload) return;   // everything below would only time out
+        const fixtureName = SIDEBAR_DIR.split('/').pop();
+        const notice = () => wrapper.evaluate(`JSON.stringify({
+            text: document.getElementById('files-notice').hidden ? '' : document.getElementById('files-notice-text').textContent,
+            kind: document.getElementById('files-notice').className,
+            bar: !document.getElementById('files-notice-progress').hidden,
+        })`).then(JSON.parse);
+        const selected = () => wrapper.evaluate('document.querySelector("#files-list .files-row.selected")?.dataset.path ?? null');
+        const closePreview = async () => {
+            if ((await previewState(wrapper)).active) await wrapper.locator('#files-close-btn').click();
+        };
+        const pick = async (open, files) => {
+            const [chooser] = await Promise.all([page.waitForEvent('filechooser'), open()]);
+            await chooser.setFiles(files);
+        };
+        const menuButton = (name) => list.locator('.files-row-wrap').filter({
+            has: wrapper.locator('.files-name', { hasText: new RegExp(`^${name.replace(/\./g, '\\.')}$`) }),
+        }).locator('.files-menu-btn');
+        const uploadHere = wrapper.locator('#files-menu .files-menu-item', { hasText: 'Upload here' });
+        const promptShown = () => wrapper.evaluate('!document.getElementById("files-prompt").hidden');
+        const uploadButton = () => wrapper.locator('#files-upload-btn').click();
+
+        // The Upload button: the inbox, made on first use. Revealed and
+        // previewed, never typed into the terminal.
+        const inboxFile = 'ctp up $1.txt';
+        const promptBefore = dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop();
+        await uploadBudget(1);
+        await pick(uploadButton, local(inboxFile, 'hello inbox\n'));
+        check('Upload puts the file in the inbox, made on first use',
+            await waitFor(() => read(`${INBOX_DIR}/${inboxFile}`) === 'hello inbox\n'), true);
+        check('a new file is written 0644', mode(`${INBOX_DIR}/${inboxFile}`), '644');
+        check('the notice says where it went',
+            await waitFor(async () => (await notice()).text === `Uploaded ${inboxFile} to ${INBOX_DIR}.`), true);
+        check('the new file is revealed in the tree',
+            await waitFor(async () => (await selected()) === `${INBOX_DIR}/${inboxFile}`), true);
+        check('and its preview opens',
+            await waitFor(async () => (await previewText(wrapper)) === 'hello inbox\n'), true);
+        check('a sidebar upload types nothing at the prompt',
+            dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop(), promptBefore);
+        await closePreview();
+        await uploadBudget(1);
+        await pick(uploadButton, local(inboxFile, 'second\n'));
+        check('the inbox numbers a taken name instead of asking',
+            await waitFor(() => read(`${INBOX_DIR}/ctp up $1 (1).txt`) === 'second\n'), true);
+        check('and never shows the collision prompt', await promptShown(), false);
+        await waitFor(async () => (await previewText(wrapper)) === 'second\n');
+        await closePreview();
+
+        // Upload here, onto a name that is taken: the inline prompt.
+        await menuButton(fixtureName).click();
+        check('a folder\'s ⋯ menu offers Upload here', await uploadHere.count(), 1);
+        await pick(() => uploadHere.click(), local(COLLIDE, 'new: 2\n'));
+        check('a taken name asks: Replace, Keep both or Cancel', await waitFor(promptShown), true);
+        check('the prompt names the file and folder, and puts focus on Replace',
+            await wrapper.evaluate(`JSON.stringify({
+                text: document.getElementById('files-prompt-text').textContent,
+                replace: !document.getElementById('files-prompt-replace').hidden,
+                focus: document.activeElement && document.activeElement.id,
+            })`).then(JSON.parse),
+            (v) => v.text === `${COLLIDE} already exists in ${SIDEBAR_DIR}.` && v.replace && v.focus === 'files-prompt-replace');
+        await wrapper.locator('#files-prompt-cancel').click();
+        check('Cancel uploads nothing, and says so',
+            await waitFor(async () => (await notice()).text === `Not uploaded: ${COLLIDE}.`), true);
+        check('the file is untouched', read(`${SIDEBAR_DIR}/${COLLIDE}`), 'old: 1\n');
+        await menuButton(fixtureName).click();
+        await pick(() => uploadHere.click(), local(COLLIDE, 'new: 2\n'));
+        await waitFor(promptShown);
+        await page.keyboard.press('Escape');
+        check('Escape answers Cancel', await waitFor(async () => !(await promptShown())), true);
+        await menuButton(fixtureName).click();
+        await pick(() => uploadHere.click(), local(COLLIDE, 'kept: 3\n'));
+        await waitFor(promptShown);
+        await uploadBudget(1);
+        await wrapper.locator('#files-prompt-keep').click();
+        check('Keep both numbers the new file',
+            await waitFor(() => read(`${SIDEBAR_DIR}/collide (1).yaml`) === 'kept: 3\n'), true);
+        check('and reveals it in its folder',
+            await waitFor(async () => (await selected()) === `${SIDEBAR_DIR}/collide (1).yaml`), true);
+        await waitFor(async () => (await previewText(wrapper)) === 'kept: 3\n');
+        await closePreview();
+        await menuButton(fixtureName).click();
+        await pick(() => uploadHere.click(), local(COLLIDE, 'replaced: 4\n'));
+        await waitFor(promptShown);
+        await uploadBudget(1);
+        await wrapper.locator('#files-prompt-replace').click();
+        check('Replace swaps in the new content',
+            await waitFor(() => read(`${SIDEBAR_DIR}/${COLLIDE}`) === 'replaced: 4\n'), true);
+        check('and keeps the old file\'s mode', mode(`${SIDEBAR_DIR}/${COLLIDE}`), '600');
+        check('the notice says it replaced it',
+            await waitFor(async () => (await notice()).text === `Replaced ${COLLIDE} in ${SIDEBAR_DIR}.`), true);
+        await waitFor(async () => (await previewText(wrapper)) === 'replaced: 4\n');
+        await closePreview();
+
+        // Drops. Synthetic, with a real DataTransfer: dragenter and dragover,
+        // then the overlay is read, then the drop. A target is a selector,
+        // or { folder } for that folder's row.
+        const dropOn = (target, name, body) => wrapper.evaluate(`(() => {
+            const t = ${JSON.stringify(target)};
+            const n = ${JSON.stringify(name)};
+            const el = typeof t === 'string' ? document.querySelector(t)
+                : [...document.querySelectorAll('#files-list .files-row-wrap')]
+                    .find((w) => w.querySelector('.files-name')?.textContent === t.folder);
+            const dt = new DataTransfer();
+            dt.items.add(new File([${JSON.stringify(body)}], n, { type: n.endsWith('.png') ? 'image/png' : 'text/plain' }));
+            const fire = (type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+            fire('dragenter');
+            fire('dragover');
+            const overlay = document.getElementById('drop-zone').classList.contains('active');
+            fire('drop');
+            return JSON.stringify({ overlay });
+        })()`).then(JSON.parse);
+        // Positive control: an image dropped on the terminal goes to the
+        // terminal's image upload, which is what a sidebar drop must not do.
+        await dropOn('#terminal-container', 'control.png', 'png');
+        check('fixture: an image dropped on the terminal reaches its image upload',
+            await waitFor(() => imageUploads === 1), true);
+        await uploadBudget(1);
+        const overFolder = await dropOn({ folder: fixtureName }, 'pic.png', 'png');
+        check('an image dropped on a folder row uploads into that folder',
+            await waitFor(() => read(`${SIDEBAR_DIR}/pic.png`) === 'png'), true);
+        check('and never also goes to the terminal', imageUploads, 1);
+        check('the terminal\'s drop overlay stays off over the sidebar', overFolder.overlay, false);
+        await closePreview();
+        await uploadBudget(1);
+        await dropOn('#files-footer', 'loose.txt', 'loose\n');
+        check('a drop elsewhere on the sidebar goes to the inbox',
+            await waitFor(() => read(`${INBOX_DIR}/loose.txt`) === 'loose\n'), true);
+        await waitFor(async () => (await previewText(wrapper)) === 'loose\n');
+        await closePreview();
+
+        // Never into a protected folder or through a symlinked one.
+        await menuButton(LOCKED).click();
+        check('a protected folder\'s Upload here is disabled, with the reason',
+            await wrapper.evaluate(`JSON.stringify((() => {
+                const item = [...document.querySelectorAll('#files-menu .files-menu-item')]
+                    .find((i) => i.textContent.startsWith('Upload here'));
+                return item && { disabled: item.getAttribute('aria-disabled'), text: item.textContent };
+            })())`).then(JSON.parse),
+            (v) => v && v.disabled === 'true' && /never upload targets/.test(v.text));
+        await page.keyboard.press('Escape');
+        await menuButton(LINK).click();
+        check('a symlinked folder offers no Upload here', await uploadHere.count(), 0);
+        check('fixture: its menu is open', await wrapper.evaluate('!document.getElementById("files-menu").hidden'), true);
+        await page.keyboard.press('Escape');
+        const bodiesBefore = bodies.length;
+        await dropOn({ folder: LOCKED }, 'x.txt', 'x');
+        check('a drop on a protected folder is refused in the notice, with no upload',
+            { said: await waitFor(async () => /secrets/.test((await notice()).text)), sent: bodies.length - bodiesBefore },
+            (v) => v.said && v.sent === 0);
+        check('the server refuses a protected folder too',
+            await wrapper.evaluate(`fetch(${JSON.stringify(`api/files/upload?name=x.txt&dest=${encodeURIComponent(`${SIDEBAR_DIR}/${LOCKED}`)}&check=1&size=1`)},
+                { method: 'POST' }).then((r) => r.status)`), 403);
+
+        // A secret-shaped name uploads (certificates belong in /config), and
+        // is revealed, but not opened while Show protected files is off.
+        await menuButton(fixtureName).click();
+        await uploadBudget(1);
+        await pick(() => uploadHere.click(), local('cert.pem', 'CERT\n'));
+        check('a certificate uploads like any file', await waitFor(() => read(`${SIDEBAR_DIR}/cert.pem`) === 'CERT\n'), true);
+        check('it is revealed, and the notice says it is protected',
+            await waitFor(async () => (await selected()) === `${SIDEBAR_DIR}/cert.pem`
+                && /cert\.pem is protected: turn on Show protected files/.test((await notice()).text)), true);
+        check('its preview does not open', (await previewState(wrapper)).active, false);
+
+        // Over upload_max_mb (25 MB by default): refused by the check, so
+        // not a byte of the body goes out.
+        const before = bodies.length;
+        await pick(uploadButton, local('big.bin', Buffer.alloc(26 * 1024 * 1024)));
+        check('a file over the limit is refused, naming the limit and its option',
+            await waitFor(async () => /26\.0 MB, over the 25 MB upload limit \(the add-on's upload_max_mb option\)/.test((await notice()).text)), true);
+        check('and its body is never sent', bodies.length - before, 0);
+
+        // The progress bar, while a body is held back.
+        let held = 0;
+        const gate = new Promise((r) => { release = r; });
+        const isBody = (u) => u.pathname.endsWith('/api/files/upload') && !u.searchParams.has('check');
+        await context.route(isBody, async (route) => {
+            held++;
+            await gate;
+            await route.continue().catch(() => {});
+        });
+        await uploadBudget(1);
+        await pick(uploadButton, local('slow.bin', Buffer.alloc(512 * 1024, 7)));
+        check('fixture: the upload is held', await waitFor(() => held === 1), true);
+        check('an upload shows its line and a progress bar',
+            await waitFor(async () => {
+                const n = await notice();
+                return n.text === 'Uploading slow.bin…' && n.bar;
+            }), true);
+        release();
+        check('the bar goes when it is done',
+            await waitFor(async () => {
+                const n = await notice();
+                return n.text === `Uploaded slow.bin to ${INBOX_DIR}.` && !n.bar;
+            }), true);
+        await context.unroute(isBody);
+        await closePreview();
+
+        // Two files in one pick: one after another, then one line.
+        await uploadBudget(2);
+        await pick(uploadButton, [local('m1.txt', '1'), local('m2.txt', '2')]);
+        check('two files picked together both upload, under one line',
+            await waitFor(async () => (await notice()).text === `Uploaded 2 files to ${INBOX_DIR}.`
+                && read(`${INBOX_DIR}/m1.txt`) === '1' && read(`${INBOX_DIR}/m2.txt`) === '2'), true);
+        await closePreview();
+        // (UPLOAD_PART is the download checks' stand-in, not a real one.)
+        check('no upload part is left anywhere',
+            dexec(['find', '/config', '-maxdepth', '3', '-name', '.ctp-upload-*.part', '!', '-name', UPLOAD_PART]).trim(), '');
+        // uploadBudget must have seen every body that reached the server.
+        check('fixture: every real upload body was budgeted', bodies.length, 10);
+    } finally {
+        release();
+        await context.close();
+        rmSync(pickDir, { recursive: true, force: true });
+        dexec(['rm', '-rf', INBOX_DIR]);
+    }
+}
+
 async function run(engine, mode, url) {
     console.log(`\n=== ${engine.name()} / ${mode} ===`);
     const failuresBefore = failures;
@@ -1565,6 +1852,7 @@ async function run(engine, mode, url) {
     await checkPreviewRequests(browser, url);
     await checkStaleListingPreview(browser, url);
     await checkSidebarScriptMissing(browser, url);
+    await checkUploads(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {
@@ -1584,10 +1872,12 @@ try {
     ingress.close();
     cancelCopyMode();
     rmSync(PICK_DIR, { recursive: true, force: true });
-    try { dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]); } catch { /* container gone */ }
+    try { dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR, INBOX_DIR]); } catch { /* container gone */ }
 }
 
 console.log(`\nzip budget: peak ${zipStats.peak}/${ZIP_LIMIT} limiter requests in any ${ZIP_WINDOW_MS / 1000} s, `
     + `waited ${(zipStats.waitedMs / 1000).toFixed(1)} s in all`);
+console.log(`upload budget: peak ${uploadStats.peak}/${UPLOAD_LIMIT} uploads in any ${ZIP_WINDOW_MS / 1000} s, `
+    + `waited ${(uploadStats.waitedMs / 1000).toFixed(1)} s in all`);
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
