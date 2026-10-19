@@ -584,7 +584,9 @@ browser and download it from there.
 - **Upload here** in a folder's **⋯** menu puts them in that folder. If a file
   of that name is already there, the sidebar asks: **Replace**, **Keep both**
   (the new one gets a number) or **Cancel** (Escape cancels too, while the question has focus).
-  When the question takes focus, it is on **Keep both**, so Enter loses nothing. Nothing is
+  When the question takes focus, it is on **Keep both**, so Enter loses nothing. If you hide
+  the sidebar while a question waits, a dot on the **🗂️** button (and on the rail) shows that
+  one is waiting, and the upload waits for your answer; open the sidebar to answer it. Nothing is
   ever overwritten without that question. Replace swaps in the whole new file at once and keeps
   the old file's permissions, so a private key stays private; Replace is not
   offered when the name belongs to a folder or a link.

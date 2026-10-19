@@ -1734,6 +1734,108 @@ async function checkUploads(browser, url) {
     }
 }
 
+// 8b. A collision question left waiting in a hidden sidebar. The question
+//     lives in the sidebar, so hidden it held up the batch unseen until the
+//     sidebar came back. Now a dot on the 🗂️ button and on the rail's 📁,
+//     the button's name and a live region outside the sidebar say one is
+//     waiting, and opening the sidebar puts focus on Keep both. Covered: the
+//     sidebar hidden while a question waits, and a question that arrives
+//     while it is hidden (the check held until then). Every question is
+//     cancelled, so nothing is uploaded and no uploadBudget is spent. Its
+//     own context with service workers blocked, so context.route sees the
+//     check it holds.
+async function checkWaitingQuestion(browser, url) {
+    const NAME = 'ctp-waiting.yaml';
+    dexec(['sh', '-c', 'printf "old\\n" > "$1"', 'sh', `${SIDEBAR_DIR}/${NAME}`]);
+    const pickDir = mkdtempSync(join(tmpdir(), 'ctp-waiting-'));
+    const local = join(pickDir, NAME);
+    writeFileSync(local, 'new\n');
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    let release = () => {};
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const list = await openSidebarFixture(wrapper);
+        const fixtureName = SIDEBAR_DIR.split('/').pop();
+        const menuButton = list.locator('.files-row-wrap').filter({
+            has: wrapper.locator('.files-name', { hasText: new RegExp(`^${fixtureName}$`) }),
+        }).locator('.files-menu-btn');
+        const uploadHere = wrapper.locator('#files-menu .files-menu-item', { hasText: 'Upload here' });
+        const askAbout = async () => {
+            await menuButton.click();
+            const [chooser] = await Promise.all([page.waitForEvent('filechooser'), uploadHere.click()]);
+            await chooser.setFiles(local);
+        };
+        const promptShown = () => wrapper.evaluate('!document.getElementById("files-prompt").hidden');
+        const collapsed = () => wrapper.evaluate('document.getElementById("files-sidebar").classList.contains("collapsed")');
+        const focusedId = () => wrapper.evaluate('document.activeElement && document.activeElement.id');
+        const waiting = () => wrapper.evaluate(`(() => {
+            const shown = (sel) => {
+                const el = document.querySelector(sel);
+                return !!el && getComputedStyle(el).display !== 'none';
+            };
+            return JSON.stringify({
+                header: shown('#files-btn .files-question-badge'),
+                rail: shown('#files-rail [data-open-tab="files"] .files-question-badge'),
+                label: document.getElementById('files-btn').getAttribute('aria-label'),
+                said: document.getElementById('files-question-announcer')?.textContent ?? null,
+            });
+        })()`);
+        const NONE = JSON.stringify({ header: false, rail: false, label: 'Files sidebar', said: '' });
+        const WAITING = JSON.stringify({ header: true, rail: true,
+            label: 'Files sidebar: an upload is waiting for your answer',
+            said: 'An upload is waiting for your answer in the Files sidebar.' });
+        const cancel = async () => {
+            await wrapper.locator('#files-prompt-cancel').click();
+            await waitFor(async () => !(await promptShown()));
+        };
+
+        // Hidden while the question waits.
+        await askAbout();
+        check('fixture: the question is asked', await waitFor(promptShown), true);
+        check('no dot while the sidebar is open', await waiting(), NONE);
+        await wrapper.locator('#files-hide').click();
+        check('hiding the sidebar while a question waits puts a dot on 🗂️ and the rail, and says so',
+            await waitFor(async () => (await waiting()) === WAITING), true);
+        await wrapper.locator('#files-btn').click();
+        check('opening it again shows the question, with focus on Keep both',
+            await waitFor(async () => !(await collapsed()) && (await promptShown())
+                && (await focusedId()) === 'files-prompt-keep'), true);
+        check('and the dot goes', await waiting(), NONE);
+        await cancel();
+
+        // Asked while hidden: the check is held until the sidebar is closed.
+        const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
+        let held = 0;
+        const gate = new Promise((r) => { release = r; });
+        await context.route(isAsk, async (route) => {
+            held++;
+            await gate;
+            await route.continue().catch(() => {});
+        });
+        await askAbout();
+        check('fixture: the check is held', await waitFor(() => held === 1), true);
+        await wrapper.locator('#files-hide').click();
+        release();
+        check('a question that comes while the sidebar is hidden puts the dot up',
+            await waitFor(async () => (await waiting()) === WAITING), true);
+        check('and leaves the sidebar hidden', await collapsed(), true);
+        await context.unroute(isAsk);
+        await wrapper.locator('#files-rail [data-open-tab="files"]').click();
+        check('the rail\'s 📁 opens it on the question, with focus on Keep both',
+            await waitFor(async () => !(await collapsed()) && (await focusedId()) === 'files-prompt-keep'), true);
+        check('and the dot goes there too', await waiting(), NONE);
+        await cancel();
+        check('nothing was uploaded', dexec(['cat', `${SIDEBAR_DIR}/${NAME}`]), 'old\n');
+    } finally {
+        release();
+        await context.close();
+        rmSync(pickDir, { recursive: true, force: true });
+        dexec(['rm', '-f', `${SIDEBAR_DIR}/${NAME}`]);
+    }
+}
+
 // 9. The terminal's own ways in: the paperclip, a paste and a drop take any
 //    file. Small images (PNG, JPEG, GIF, WebP, SVG, at most 10 MB) still go
 //    to the image upload, faked here so section 5 keeps the image limiter's
@@ -2689,6 +2791,7 @@ async function run(engine, mode, url) {
     await checkSidebarScriptMissing(browser, url);
     await checkNoResizeObserver(browser, url);
     await checkUploads(browser, url);
+    await checkWaitingQuestion(browser, url);
     await checkTerminalUploads(browser, url);
     await checkUploadClientMissing(browser, url);
     await checkKeyboardViewport(browser, engine, mode, url);

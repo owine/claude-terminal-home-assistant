@@ -77,6 +77,8 @@
         const promptReplace = document.getElementById('files-prompt-replace');
         const promptKeep = document.getElementById('files-prompt-keep');
         const promptCancel = document.getElementById('files-prompt-cancel');
+        const railFiles = document.querySelector('#files-rail [data-open-tab="files"]');
+        const questionAnnouncer = document.getElementById('files-question-announcer');
 
         const PHONE = window.matchMedia('(max-width: 700px)');
         const STORE = { open: 'filesSidebar.open', width: 'filesSidebar.width', tab: 'filesSidebar.tab' };
@@ -595,6 +597,35 @@
         // preview open Escape would answer it instead of closing the
         // preview. Otherwise the notice, a live region, asks for the answer.
         let answerPrompt = null;
+
+        // The question lives in the sidebar, so with the sidebar hidden it
+        // would wait unseen and hold up every file behind it. While both
+        // hold, a dot on the Files button and on the rail's Files button
+        // says one is waiting, the button's name says it too, and a live
+        // region outside the sidebar announces it (the notice, a live region
+        // itself, is hidden with the sidebar). Recomputed where either
+        // changes: a question asked (askCollision) and the sidebar shown or
+        // hidden (setOpen). An answer needs no call: it can only be given
+        // with the sidebar open, where the dot is already off.
+        const QUESTION_WAITING = 'an upload is waiting for your answer';
+        const filesLabel = filesBtn.getAttribute('aria-label');
+        const filesTitle = filesBtn.title;
+        const railTitle = railFiles ? railFiles.title : '';
+        function syncQuestionBadge() {
+            const on = Boolean(answerPrompt) && sidebar.classList.contains('collapsed');
+            if (filesBtn.classList.contains('has-question') === on) return;
+            filesBtn.classList.toggle('has-question', on);
+            filesBtn.setAttribute('aria-label', on ? filesLabel + ': ' + QUESTION_WAITING : filesLabel);
+            filesBtn.title = on ? 'Files: ' + QUESTION_WAITING : filesTitle;
+            if (railFiles) {
+                railFiles.classList.toggle('has-question', on);
+                railFiles.title = on ? 'Files: ' + QUESTION_WAITING : railTitle;
+            }
+            if (questionAnnouncer) {
+                questionAnnouncer.textContent = on ? 'An upload is waiting for your answer in the Files sidebar.' : '';
+            }
+        }
+
         function askCollision(text, replaceable) {
             return new Promise((resolve) => {
                 const returnTo = document.activeElement;
@@ -621,6 +652,7 @@
                     }
                     resolve(choice);
                 };
+                syncQuestionBadge();
                 if (takeFocus) promptKeep.focus({ preventScroll: true });
             });
         }
@@ -826,6 +858,9 @@
             filesBtn.setAttribute('aria-expanded', String(open));
             if (persist) save(STORE.open, open ? '1' : '0');
             if (open && !list.childElementCount) refresh();
+            syncQuestionBadge();
+            // Opened with a question waiting: that is what the user came for.
+            if (open && answerPrompt) promptKeep.focus({ preventScroll: true });
         }
 
         function switchTab(tab) {
