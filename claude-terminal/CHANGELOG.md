@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.11.0...v2.11.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* rebuild the image's Alpine packages on every release ([#449](https://github.com/owine/claude-terminal-home-assistant/issues/449)) ([6c19fcc](https://github.com/owine/claude-terminal-home-assistant/commit/6c19fcc98347afcfb182a426bd1ee1694b138957))
+
 ## [2.11.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.10.2...v2.11.0) (2026-10-19)
 
 
