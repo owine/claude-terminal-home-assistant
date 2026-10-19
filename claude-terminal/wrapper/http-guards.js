@@ -33,8 +33,8 @@ function refuse(req, res, status, body) {
  * its body (a browser does, straight after the headers) can lose the answer
  * it has not read yet: the reset throws it away. So the socket lingers
  * first: the answer and a FIN go out, the body is left unread, and only
- * LINGER_MS later is the socket destroyed, by when the client has read its
- * answer and, if it is well behaved, stopped sending.
+ * LINGER_MS after they are written is the socket destroyed, by when the
+ * client has read its answer and, if it is well behaved, stopped sending.
  *
  * Unread, not discarded: `req.read(0)` marks the request as one its handler
  * reads, so Node does not dump the body once the answer is out, and the
@@ -53,9 +53,15 @@ function closeAfterAnswer(req, res) {
         if (socket && typeof socket.destroySoon === 'function') {
             socket.destroySoon = function lingerThenDestroy() {
                 if (this.writable) this.end();
-                const timer = setTimeout(() => this.destroy(), LINGER_MS);
-                timer.unref();
-                this.once('close', () => clearTimeout(timer));
+                // From when the answer is all written, as Node's own
+                // destroySoon waits for 'finish' before it destroys.
+                const arm = () => {
+                    const timer = setTimeout(() => this.destroy(), LINGER_MS);
+                    timer.unref();
+                    this.once('close', () => clearTimeout(timer));
+                };
+                if (this.writableFinished) arm();
+                else this.once('finish', arm);
             };
         }
     } catch {
