@@ -150,7 +150,17 @@ const inside = (root, p) => p === root || p.startsWith(root + path.sep);
 // deleted since the open reads as "<path> (deleted)", and is judged by its
 // path. No /proc, or a non-absolute answer, is "unknown" (null), and
 // preview() then relies on its path checks alone.
+//
+// The suffix alone does not mean deleted: "x.key (deleted)" is a legal live
+// name, and stripping it would judge that file as x.key. So the suffix is
+// kept when the path as read still names this very file (same device and
+// inode), and stripped otherwise. That covers an unlinked file (nlink 0),
+// and one unlinked from the name it was opened by while a hard link
+// elsewhere keeps it alive, which the kernel marks the same way.
 const DELETED_SUFFIX = ' (deleted)';
+const fstat = (fd) => new Promise((resolve, reject) => {
+    fs.fstat(fd, (err, st) => (err ? reject(err) : resolve(st)));
+});
 async function procFdPath(fd) {
     let target;
     try {
@@ -158,8 +168,23 @@ async function procFdPath(fd) {
     } catch {
         return null;
     }
-    if (target.endsWith(DELETED_SUFFIX)) target = target.slice(0, -DELETED_SUFFIX.length);
+    if (target.endsWith(DELETED_SUFFIX) && !(await namesOpenFile(target, fd))) {
+        target = target.slice(0, -DELETED_SUFFIX.length);
+    }
     return path.isAbsolute(target) ? target : null;
+}
+
+// Whether `target` is, right now, the file open on `fd`. Any failure is
+// "no", which strips the suffix: the old reading, and the stricter one for a
+// secret-shaped name hiding behind it.
+async function namesOpenFile(target, fd) {
+    try {
+        const [open, named] = await Promise.all([fstat(fd), fsp.lstat(target)]);
+        // No nlink test needed: no name resolves to an unlinked inode.
+        return open.dev === named.dev && open.ino === named.ino;
+    } catch {
+        return false;
+    }
 }
 
 // An error the routes turn into a status code and a message for the UI.

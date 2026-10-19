@@ -287,6 +287,75 @@ test('procFdPath names the open file on Linux, and is null elsewhere', async () 
     }
 });
 
+// The kernel marks an unlinked file by appending " (deleted)" to the path it
+// reports, but a live file may carry that suffix in its real name. Only an
+// unlinked file loses the suffix; a live one keeps its name, and is judged
+// by it.
+test('procFdPath strips " (deleted)" only from a file that is really gone',
+    { skip: !hasProcFd && 'needs /proc/self/fd (Linux)' }, async () => {
+        const dir = path.join(root, 'del-suffix');
+        fs.mkdirSync(dir);
+        const at = (name) => path.join(dir, name);
+        const opened = async (name, before = () => {}) => {
+            const handle = await fs.promises.open(at(name), 'r');
+            try {
+                before();
+                return await procFdPath(handle.fd);
+            } finally {
+                await handle.close();
+            }
+        };
+        try {
+            for (const name of ['x.key (deleted)', 'repo.git (deleted)', 'a (deleted) (deleted)']) {
+                fs.writeFileSync(at(name), 'live');
+                assert.strictEqual(await opened(name), at(name), `live ${name}`);
+            }
+            // Unlinked: the kernel's suffix goes, the real name stays.
+            fs.writeFileSync(at('gone.key'), 'x');
+            assert.strictEqual(await opened('gone.key', () => fs.unlinkSync(at('gone.key'))), at('gone.key'));
+            fs.writeFileSync(at('b (deleted)'), 'x');
+            assert.strictEqual(await opened('b (deleted)', () => fs.unlinkSync(at('b (deleted)'))), at('b (deleted)'));
+            // Unlinked while another file now holds the suffixed name.
+            fs.writeFileSync(at('c.key'), 'x');
+            assert.strictEqual(await opened('c.key', () => {
+                fs.unlinkSync(at('c.key'));
+                fs.writeFileSync(at('c.key (deleted)'), 'impostor');
+            }), at('c.key'));
+            // Unlinked here but still linked elsewhere (nlink 1): still gone
+            // from the name it was opened by.
+            fs.writeFileSync(at('d.key'), 'x');
+            assert.strictEqual(await opened('d.key', () => {
+                fs.linkSync(at('d.key'), at('d-other'));
+                fs.unlinkSync(at('d.key'));
+            }), at('d.key'));
+            // ...and with another file at the suffixed name: still gone.
+            fs.writeFileSync(at('e.key'), 'x');
+            assert.strictEqual(await opened('e.key', () => {
+                fs.linkSync(at('e.key'), at('e-other'));
+                fs.unlinkSync(at('e.key'));
+                fs.writeFileSync(at('e.key (deleted)'), 'impostor');
+            }), at('e.key'));
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+test('a live file named "... (deleted)" previews by its own name',
+    { skip: !hasProcFd && 'needs /proc/self/fd (Linux)' }, async () => {
+        const dir = path.join(root, 'del-preview');
+        try {
+            write('del-preview/x.key (deleted)', 'not a key\n');
+            write('del-preview/repo.git (deleted)', 'not a repo\n');
+            assert.strictEqual((await api.preview('del-preview/x.key (deleted)')).content, 'not a key\n');
+            assert.strictEqual((await api.preview('del-preview/repo.git (deleted)')).content, 'not a repo\n');
+            // A name that IS secret-shaped stays refused.
+            write('del-preview/x (deleted).key', 'KEY\n');
+            await refused(api.preview('del-preview/x (deleted).key'), 403);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
 // --- preview ---
 
 test('preview returns text as a string with size and mtime', async () => {
