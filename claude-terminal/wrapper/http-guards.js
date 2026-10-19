@@ -183,6 +183,13 @@ function createOriginGuard({ log = console.warn } = {}) {
  * HA-ingress one whatever its Origin, where Sec-Fetch-Site still says what the
  * browser saw. `message` words the refusal for the route.
  *
+ * `allowSameSite: false` refuses `same-site` too, for uploads: they write into
+ * /config, and a page on another port or subdomain of the same site (another
+ * add-on, a router's admin page) can send one - a no-cors POST of a raw body
+ * needs no preflight. Only same-origin, none and an absent header pass then;
+ * the sidebar's own requests are same-origin, ingress included. A download
+ * leaks nothing to such a page, so it keeps the default.
+ *
  * Its log line is capped, because what it refuses is what a hostile page can
  * send in a loop (an <img> per frame): at most CROSS_SITE_LOG_MAX lines a
  * minute per guard (each router builds its own), the last of them saying so.
@@ -198,6 +205,7 @@ const CROSS_SITE_LOG_WINDOW_MS = 60000;
 function createCrossSiteGuard({
     log = console.warn,
     message = 'Downloads cannot be started from another site. Use the Files sidebar.',
+    allowSameSite = true,
     now = () => performance.now(),
 } = {}) {
     let windowStart = -Infinity;
@@ -222,9 +230,9 @@ function createCrossSiteGuard({
 
     return (req, res, next) => {
         const site = String(req.get('sec-fetch-site') || '').toLowerCase();
-        if (site !== 'cross-site') return next();
+        if (site !== 'cross-site' && (allowSameSite || site !== 'same-site')) return next();
 
-        report(`Blocked cross-site request for ${JSON.stringify(`${req.baseUrl || ''}${req.path || ''}`)}`);
+        report(`Blocked ${site} request for ${JSON.stringify(`${req.baseUrl || ''}${req.path || ''}`)}`);
         return refuse(req, res, 403, { error: message });
     };
 }

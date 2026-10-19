@@ -260,6 +260,44 @@ test('words its refusal as the route asks, and downloads by default', () => {
     assert.match(crossSite({ 'Sec-Fetch-Site': 'cross-site' }).res.body.error, /^Downloads cannot be started/);
 });
 
+// An upload writes into /config, and a same-site page (another port or
+// subdomain of the same registrable domain: another add-on, a router's admin
+// page) can send one: a no-cors POST of a raw body needs no preflight. The
+// upload route refuses same-site as well; the sidebar's own requests are
+// same-origin, ingress included. Downloads keep allowing it.
+function uploadGuard(headers) {
+    const res = makeRes();
+    let passedOn = false;
+    createCrossSiteGuard({ log: () => {}, allowSameSite: false, message: 'Uploads cannot come from another site.' })(
+        makeReq({ method: 'POST', headers }), res, () => { passedOn = true; });
+    return { passedOn, res };
+}
+
+test('allowSameSite: false refuses a same-site request too, with the route\'s 403', () => {
+    for (const site of ['same-site', 'Same-Site', 'cross-site']) {
+        const { passedOn, res } = uploadGuard({ 'Sec-Fetch-Site': site });
+        assert.strictEqual(passedOn, false, site);
+        assert.strictEqual(res.statusCode, 403, site);
+        assert.deepStrictEqual(res.body, { error: 'Uploads cannot come from another site.' }, site);
+    }
+});
+
+test('allowSameSite: false still lets same-origin, none and a missing header through', () => {
+    for (const headers of [{ 'Sec-Fetch-Site': 'same-origin' }, { 'Sec-Fetch-Site': 'none' }, {}]) {
+        const { passedOn, res } = uploadGuard(headers);
+        assert.strictEqual(passedOn, true, JSON.stringify(headers));
+        assert.strictEqual(res.statusCode, null, JSON.stringify(headers));
+    }
+});
+
+test('logs a refused same-site request as such', () => {
+    const lines = [];
+    createCrossSiteGuard({ log: (line) => lines.push(line), allowSameSite: false })(
+        makeReq({ method: 'POST', headers: { 'Sec-Fetch-Site': 'same-site' } }), makeRes(), () => {});
+    assert.strictEqual(lines.length, 1);
+    assert.match(lines[0], /^Blocked same-site request for /);
+});
+
 test('logs a refused cross-site request', () => {
     const lines = [];
     crossSite({ 'Sec-Fetch-Site': 'cross-site' }, (line) => lines.push(line));

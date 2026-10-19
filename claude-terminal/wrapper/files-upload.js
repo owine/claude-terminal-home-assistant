@@ -658,8 +658,10 @@ function asFilesError(err, log) {
  * POST, so the app-wide origin guard (createOriginGuard) has already run.
  * The cross-site guard runs too: the origin guard passes a request with no
  * Origin and no Referer, and an ingress one whatever its Origin, while
- * Sec-Fetch-Site still says whether the browser was on another site. Both
- * before the limiters, so a refused request costs no one's budget.
+ * Sec-Fetch-Site still says whether the browser was on another site. It
+ * refuses same-site as well (allowSameSite: false): an upload writes into
+ * /config, and the sidebar's own requests are same-origin. Both before the
+ * limiters, so a refused request costs no one's budget.
  *
  * check=1 (no body) goes to `checkLimiter`, the upload itself to
  * `uploadLimiter`, so asking first does not halve the uploads a minute. But
@@ -682,6 +684,7 @@ function createUploadRouter({ uploads, uploadLimiter, checkLimiter, log = consol
     const sameSite = createCrossSiteGuard({
         log,
         message: 'Uploads cannot be started from another site. Use the Files sidebar.',
+        allowSameSite: false,
     });
     if (typeof uploadLimiter?.peek !== 'function') {
         throw new TypeError('uploadLimiter must have a peek (a createRateLimiter limiter), for check=1');

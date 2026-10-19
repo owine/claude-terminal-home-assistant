@@ -621,17 +621,21 @@ test('upload: refusals are JSON with the right status, and write nothing', async
     assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'a.txt')), false);
 });
 
-test('upload: a cross-site request is refused before anything else, and costs no budget', async () => {
+test('upload: a cross-site or same-site request is refused before anything else, and costs no budget', async () => {
     await withServer({
         uploadLimiter: createRateLimiter({ max: 1 }),
         checkLimiter: createRateLimiter({ max: 1 }),
     }, async (url) => {
-        for (const params of [{ name: 'x.txt', dest: 'blueprints' }, { name: 'x.txt', dest: 'blueprints', check: '1', size: '1' }]) {
-            const res = await fetch(`${url}/upload?${q(params)}`, {
-                method: 'POST', body: 'x', headers: { 'Sec-Fetch-Site': 'cross-site' },
-            });
-            assert.strictEqual(res.status, 403);
-            assert.match((await res.json()).error, /^Uploads cannot be started from another site/);
+        // Same-site too: an upload writes into /config, and another port or
+        // subdomain of the same site can send one without a preflight.
+        for (const site of ['cross-site', 'same-site']) {
+            for (const params of [{ name: 'x.txt', dest: 'blueprints' }, { name: 'x.txt', dest: 'blueprints', check: '1', size: '1' }]) {
+                const res = await fetch(`${url}/upload?${q(params)}`, {
+                    method: 'POST', body: 'x', headers: { 'Sec-Fetch-Site': site },
+                });
+                assert.strictEqual(res.status, 403, site);
+                assert.match((await res.json()).error, /^Uploads cannot be started from another site/, site);
+            }
         }
         assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'x.txt')), false);
         // Each limiter's one request is still there.
