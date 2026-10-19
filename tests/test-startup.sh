@@ -29,8 +29,9 @@ record() { printf '%s\n' "$1" >> "$order_file"; }
 
 # Replace every step main() calls with a recorder. The real ones touch /data,
 # the Supervisor and the network.
-steps="init_environment export_oauth_token prune_uploaded_images run_health_check setup_session_picker
-setup_persistent_packages init_docker setup_ha_mcp start_wrapper_service start_web_terminal"
+steps="init_environment export_oauth_token export_upload_max_mb prune_uploaded_images prune_upload_inbox
+run_health_check setup_session_picker setup_persistent_packages init_docker setup_ha_mcp start_wrapper_service
+start_web_terminal"
 for step in $steps; do
     eval "$step() { record $step; }"
 done
@@ -45,6 +46,11 @@ for slow in setup_persistent_packages init_docker setup_ha_mcp; do
     assert_status "the wrapper is serving before $slow" 0 test "${wrapper:-999}" -lt "$(position "$slow")"
 done
 assert_eq "the terminal still starts last" "start_web_terminal" "$(tail -1 "$order_file")"
+# The wrapper reads UPLOAD_MAX_MB when it starts, and the inbox is swept while
+# no upload can be in flight.
+for early in export_upload_max_mb prune_upload_inbox; do
+    assert_status "$early runs before the wrapper starts" 0 test "$(position "$early")" -lt "${wrapper:-0}"
+done
 
 # The eval'd recorders above replace main()'s steps for the rest of this file,
 # so re-source run.sh to get the real functions back.
@@ -128,12 +134,131 @@ dir=$(new_uploads)
 # shellcheck disable=SC2016  # expanded by the inner shell
 assert_status "survives bashio's shell options" 0 bash -c '
     set -o errexit -o errtrace -o nounset -o pipefail
+    shopt -s inherit_errexit 2>/dev/null || true
     bashio::log.info() { :; }
     bashio::log.warning() { :; }
     bashio::config() { printf "%s\\n" "${2:-}"; }
     . "$1/claude-terminal/run.sh"
     prune_uploaded_images "$2"
     prune_uploaded_images "$2/missing"
+' _ "$REPO_ROOT" "$dir"
+reset_config
+
+# ---------------------------------------------------------------------------
+# prune_upload_inbox
+# ---------------------------------------------------------------------------
+# The Files sidebar's inbox (/config/uploads) is disposable by contract: every
+# regular file at its top level goes once it is older than
+# upload_retention_days, whatever its name. Never a subfolder or anything in
+# one, never a symlink, never anything outside, and never an inbox that is
+# itself a symlink or a file.
+printf '\n%s\n' "prune_upload_inbox"
+
+# Fixture: an inbox with old files of any name (a dotfile among them), a new
+# one, a subfolder holding an old file, and an old symlink to an old file
+# outside the inbox. Prints the inbox; the outside folder is beside it.
+new_inbox() {
+    local base dir
+    base=$(new_tmpdir)
+    dir="$base/uploads"
+    mkdir -p "$dir/sub" "$base/outside"
+    touch -t 202001010000 "$dir/report.pdf" "$dir/.hidden-old" "$dir/sub/old-inside.txt" "$base/outside/target.txt"
+    touch "$dir/fresh.txt"
+    ln -s "$base/outside/target.txt" "$dir/old-link"
+    touch -h -t 202001010000 "$dir/old-link"
+    printf '%s\n' "$dir"
+}
+
+reset_config
+dir=$(new_inbox)
+set_config upload_retention_days 30
+out=$(prune_upload_inbox "$dir" 2>&1 >/dev/null)
+assert_eq "removes an old file of any name" "no" "$(present "$dir/report.pdf")"
+assert_eq "removes an old dotfile too" "no" "$(present "$dir/.hidden-old")"
+assert_eq "keeps a new file" "yes" "$(present "$dir/fresh.txt")"
+assert_eq "keeps a subfolder's files" "yes" "$(present "$dir/sub/old-inside.txt")"
+assert_eq "keeps a symlink" "yes" "$([ -L "$dir/old-link" ] && echo yes || echo no)"
+assert_eq "keeps the symlink's target" "yes" "$(present "$dir/../outside/target.txt")"
+assert_contains "logs how many it removed" "$out" "removed 2"
+
+reset_config
+dir=$(new_inbox)
+prune_upload_inbox "$dir" 2>/dev/null
+assert_eq "sweeps by default when the option is unset" "no" "$(present "$dir/report.pdf")"
+
+reset_config
+dir=$(new_inbox)
+set_config upload_retention_days 0
+prune_upload_inbox "$dir" 2>/dev/null
+assert_eq "0 keeps every file" "yes" "$(present "$dir/report.pdf")"
+
+reset_config
+dir=$(new_inbox)
+set_config upload_retention_days ""
+out=$(prune_upload_inbox "$dir" 2>&1 >/dev/null)
+assert_eq "an unreadable (empty) value deletes nothing" "yes" "$(present "$dir/report.pdf")"
+assert_contains "and says why" "$out" "upload_retention_days could not be read"
+
+# A symlinked inbox is never swept, and says so. find would not descend into
+# it today (-P is find's default), so the log line is what proves the guard:
+# without it, this case is silent.
+reset_config
+dir=$(new_inbox)
+link_base=$(new_tmpdir)
+ln -s "$dir" "$link_base/uploads"
+out=$(prune_upload_inbox "$link_base/uploads" 2>&1 >/dev/null)
+assert_contains "a symlinked inbox is skipped, with a log line" "$out" "is a symlink"
+assert_eq "and its target is untouched" "yes" "$(present "$dir/report.pdf")"
+
+reset_config
+file_base=$(new_tmpdir)
+touch "$file_base/uploads"
+out=$(prune_upload_inbox "$file_base/uploads" 2>&1 >/dev/null)
+assert_contains "an inbox that is a file is skipped, with a log line" "$out" "is not a folder"
+assert_eq "and the file is untouched" "yes" "$(present "$file_base/uploads")"
+
+# A sweep that fails (here, an inbox find cannot read) must not stop startup:
+# bashio runs run.sh with errexit and pipefail, and the add-on would never come
+# up. Root reads anything, so this case needs a non-root run (CI, a Mac).
+if [ "$(id -u)" -ne 0 ]; then
+    dir=$(new_inbox)
+    chmod 000 "$dir"
+    # shellcheck disable=SC2016  # expanded by the inner shell
+    out=$(bash -c '
+        set -o errexit -o errtrace -o nounset -o pipefail
+        shopt -s inherit_errexit 2>/dev/null || true
+        bashio::log.info() { :; }
+        bashio::log.warning() { printf "WARNING: %s\n" "$*" >&2; }
+        bashio::config() { printf "%s\n" "${2:-}"; }
+        . "$1/claude-terminal/run.sh"
+        prune_upload_inbox "$2"
+        echo "startup goes on"
+    ' _ "$REPO_ROOT" "$dir" 2>&1)
+    chmod 755 "$dir"
+    assert_contains "a sweep that fails does not stop startup" "$out" "startup goes on"
+    assert_contains "and says it could not sweep" "$out" "could not sweep all of"
+    assert_eq "and deletes nothing" "yes" "$(present "$dir/report.pdf")"
+else
+    printf '  skip a failing sweep (running as root, which reads anything)\n'
+fi
+
+reset_config
+assert_status "succeeds when the inbox does not exist yet" 0 prune_upload_inbox "$(new_tmpdir)/uploads"
+assert_eq "and says nothing then" "" "$(prune_upload_inbox "$(new_tmpdir)/uploads" 2>&1)"
+
+dir=$(new_inbox)
+# shellcheck disable=SC2016  # expanded by the inner shell
+assert_status "survives bashio's shell options" 0 bash -c '
+    set -o errexit -o errtrace -o nounset -o pipefail
+    shopt -s inherit_errexit 2>/dev/null || true
+    bashio::log.info() { :; }
+    bashio::log.warning() { :; }
+    bashio::config() { printf "%s\\n" "${2:-}"; }
+    . "$1/claude-terminal/run.sh"
+    prune_upload_inbox "$2"
+    prune_upload_inbox "$2/missing"
+    ln -s "$2" "$2-link"
+    prune_upload_inbox "$2-link"
 ' _ "$REPO_ROOT" "$dir"
 reset_config
 

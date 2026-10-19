@@ -110,6 +110,30 @@ async function zipBudget(n) {
     zipStats.waitedMs += Date.now() - start;
 }
 
+// The server's Files upload limiter, budgeted the same way: 60 uploads per
+// sliding minute, one bucket for all four runs. Every REAL upload body takes
+// its share first, and routed fakes never reach the server. A check=1
+// preflight counts against the read limiter, but is also refused (429) while
+// this bucket is full, which it asks without spending. So the budget keeps
+// one upload's room free: a preflight never meets a full bucket, even one
+// made for an upload that is then refused or cancelled and so took no share.
+// Must match filesUploadLimiter's max in server.js; if that changes, change this.
+const UPLOAD_LIMIT = 60;
+const UPLOAD_BUDGET = UPLOAD_LIMIT - 1;   // one upload's room kept free for preflights
+const uploadHits = [];
+const uploadStats = { peak: 0, waitedMs: 0 };
+async function uploadBudget(n) {
+    const start = Date.now();
+    for (;;) {
+        while (uploadHits.length && uploadHits[0] <= Date.now() - ZIP_WINDOW_MS) uploadHits.shift();
+        if (uploadHits.length + n <= UPLOAD_BUDGET) break;
+        await sleep(250);
+    }
+    for (let i = 0; i < n; i++) uploadHits.push(Date.now());
+    uploadStats.peak = Math.max(uploadStats.peak, uploadHits.length);
+    uploadStats.waitedMs += Date.now() - start;
+}
+
 // Starts a download and returns it, or null when none began. A download that
 // never starts must be a failed check, not a timeout that ends the run.
 async function expectDownload(page, start, { timeout = 10000 } = {}) {
@@ -168,6 +192,9 @@ const SIDEBAR_FILE = 'with space.yaml';
 const PROTECTED_FILE = '.env';
 const UPLOAD_PART = '.ctp-upload-0a1b2c.part';
 const ZIP_CAP_DIR = '/config/ctp-zip-cap-fixture';
+// The Files sidebar's upload inbox. The suite runs against a throwaway
+// container, so checkUploads empties it before and after.
+const INBOX_DIR = '/config/uploads';
 
 // Leave the pane at a plain shell prompt with plenty of scrollback.
 //
@@ -531,8 +558,8 @@ async function checkDownloads(browser, url) {
             } catch (e) {
                 listing = `(unreadable: ${e.message})`;
             }
-            check('the zip holds the fixture files',
-                [SIDEBAR_FILE, 'secrets.yaml'].every((n) => listing.includes(`${fixtureName}/${n}`)), true);
+            check('the zip holds the fixture files, a user\'s own *.part among them',
+                [SIDEBAR_FILE, 'secrets.yaml', 'download.part'].every((n) => listing.includes(`${fixtureName}/${n}`)), true);
             check('the zip leaves out protected files, .git and upload parts',
                 [PROTECTED_FILE, '.git/', UPLOAD_PART].filter((n) => listing.includes(`${fixtureName}/${n}`)), (v) => v.length === 0);
         }
@@ -821,6 +848,37 @@ async function checkZipMenu(browser, url) {
         await context.unroute(isFixturePreflight);
         await context.unroute(isOtherPreflight);
 
+        // Nor may an older zip's late refusal hide a newer zip's good news.
+        // Only progress lines ("Preparing …") move the notice on; a refusal
+        // used to as well, so the newer zip's "Downloading …", arriving
+        // after it, was dropped while its download started with no word.
+        // The older one is faked; the newer one is real, held, then let go.
+        const [refusalGate, releaseRefusal] = gateOf();
+        const [planGate, releasePlan] = gateOf();
+        await context.route(isFixturePreflight, async (route) => {
+            await refusalGate;
+            await route.fulfill({ status: 413, contentType: 'application/json',
+                body: JSON.stringify({ error: 'This folder holds 300 MB, over the 200 MB zip limit. Largest: late.bin (300 MB)' }) });
+        });
+        await context.route(isOtherPreflight, async (route) => {
+            await planGate;
+            await route.continue().catch(() => {});
+        });
+        await menuButton(fixtureName).click();
+        await zipItem.click();
+        await menuButton(OTHER).click();
+        await zipBudget(2);
+        await zipItem.click();
+        releaseRefusal();
+        check('fixture: the older zip\'s late refusal shows',
+            await waitFor(async () => /late\.bin/.test((await notice()).text)), true);
+        const newer = await expectDownload(page, async () => { releasePlan(); });
+        check('fixture: the newer zip downloads', newer && newer.suggestedFilename(), `${OTHER}.zip`);
+        check('an older zip\'s late refusal does not hide a newer zip\'s Downloading line',
+            await waitFor(async () => /^Downloading ctp-other\.zip/.test((await notice()).text)), true);
+        await context.unroute(isFixturePreflight);
+        await context.unroute(isOtherPreflight);
+
         // Positive control for every refusal above, driven by the keyboard
         // alone, with its preflight held back so that more can happen while
         // it is out:
@@ -871,8 +929,9 @@ async function checkZipMenu(browser, url) {
             preflightsOf(SIDEBAR_DIR) - fixturePreflights, 1);
         check('a late answer does not overwrite a newer zip\'s notice', (await notice()).text,
             (v) => /^Downloading ctp-other\.zip/.test(v));
+        // ctp-other twice: once behind the late refusal, once by keyboard.
         check('no refusal (404, protected, 429, network, not a plan) started a download, nor a second zip',
-            zipPaths(since).sort(), (v) => JSON.stringify(v) === JSON.stringify([SIDEBAR_DIR, `${SIDEBAR_DIR}/${OTHER}`]));
+            zipPaths(since).sort(), (v) => JSON.stringify(v) === JSON.stringify([SIDEBAR_DIR, `${SIDEBAR_DIR}/${OTHER}`, `${SIDEBAR_DIR}/${OTHER}`]));
         check('the notice can be dismissed', await (async () => {
             await wrapper.locator('#files-notice-close').click();
             return (await notice()).text;
@@ -1060,6 +1119,542 @@ async function checkSidebarScriptMissing(browser, url) {
             })`), JSON.stringify({ button: 'none', ui: 'undefined' }));
     } finally {
         await context.close();
+    }
+}
+
+// 7b. A browser without ResizeObserver (iOS WebViews before 13.4): the
+//     sidebar is still wired, and a notice too long for its box is still a
+//     tab stop, from the check made whenever its text changes. Removed in
+//     every frame before any script runs.
+async function checkNoResizeObserver(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    await context.addInitScript('delete window.ResizeObserver;');
+    const page = await context.newPage();
+    const pickDir = mkdtempSync(join(tmpdir(), 'ctp-no-ro-'));
+    const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
+    const LONG = 'This refusal is long enough to scroll. '.repeat(30).trim();
+    await context.route(isAsk, (route) => route.fulfill({ status: 403, contentType: 'application/json',
+        body: JSON.stringify({ error: LONG }) }));
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        check('fixture: the page has no ResizeObserver', await wrapper.evaluate('typeof window.ResizeObserver'), 'undefined');
+        await wrapper.locator('#files-btn').click();
+        check('without ResizeObserver the Files button still opens the sidebar',
+            await waitFor(() => wrapper.evaluate('!document.getElementById("files-sidebar").classList.contains("collapsed")')), true);
+        check('and lists the tree',
+            await waitFor(async () => (await wrapper.locator('#files-list .files-row').count()) > 0), true);
+        const file = join(pickDir, 'long.txt');
+        writeFileSync(file, 'x');
+        const chooser = await Promise.all([
+            page.waitForEvent('filechooser', { timeout: 5000 }),
+            wrapper.locator('#files-upload-btn').click(),
+        ]).then(([c]) => c, () => null);
+        check('and Upload opens the file picker', chooser !== null, true);
+        if (chooser) {
+            await chooser.setFiles(file);
+            check('and a notice too long for its box is still a tab stop',
+                await waitFor(() => wrapper.evaluate('document.getElementById("files-notice-text").getAttribute("tabindex") === "0"')), true);
+        }
+    } finally {
+        await context.close();
+        rmSync(pickDir, { recursive: true, force: true });
+    }
+}
+
+// 8. Uploads from the Files sidebar: the Upload button (the inbox, made on
+//    first use, numbering a taken name), Upload here with the collision
+//    prompt (Cancel, Escape, Keep both, Replace keeping the old mode), drops
+//    on a folder row and elsewhere on the sidebar (never also the terminal's
+//    drop), protected and symlinked folders, a secret-shaped name, the size
+//    limit, the progress bar, and two files in one pick. What landed is read
+//    from the container, never from the page. Its own context with service
+//    workers blocked, so context.route sees the requests it holds or fakes.
+//    Every real upload body takes its share of uploadBudget first.
+async function checkUploads(browser, url) {
+    const LOCKED = '.ssh';
+    const LINK = 'ctp-up-link';
+    const COLLIDE = 'collide.yaml';
+    const TAKEN = 'taken.txt';   // a folder: its name is taken by something Replace cannot replace
+    dexec(['sh', '-c', 'rm -rf "$1"; mkdir -p "$2/$3" "$2/ctp-up-link-target" "$2/$6"; ln -sfn "$2/ctp-up-link-target" "$2/$4"; '
+        + 'printf "old: 1\\n" > "$2/$5"; chmod 600 "$2/$5"', 'sh', INBOX_DIR, SIDEBAR_DIR, LOCKED, LINK, COLLIDE, TAKEN]);
+    const exists = (p) => dexec(['sh', '-c', '[ -e "$1" ] && echo yes || echo no', 'sh', p]).trim() === 'yes';
+    const read = (p) => (exists(p) ? dexec(['cat', p]) : null);
+    const mode = (p) => dexec(['stat', '-c', '%a', p]).trim();
+    const pickDir = mkdtempSync(join(tmpdir(), 'ctp-sidebar-upload-'));
+    const local = (name, body) => {
+        const p = join(pickDir, name);
+        writeFileSync(p, body);
+        return p;
+    };
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    const bodies = [];
+    context.on('request', (r) => {
+        const u = new URL(r.url());
+        if (r.method() === 'POST' && u.pathname.endsWith('/api/files/upload') && !u.searchParams.has('check')) bodies.push(u);
+    });
+    // The terminal's image upload, faked: counted, never sent, so the image
+    // limiter's 10 a minute stays section 5's.
+    let imageUploads = 0;
+    await context.route((u) => /\/upload$/.test(u.pathname) && !u.pathname.endsWith('/api/files/upload'), (route) => {
+        imageUploads++;
+        return route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ success: true, path: '/data/images/pasted-0-00000000.png', filename: 'pasted-0-00000000.png', size: 3 }) });
+    });
+    let release = () => {};
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const list = await openSidebarFixture(wrapper);
+        const hasUpload = (await wrapper.locator('#files-upload-btn').count()) === 1;
+        check('the sidebar has an Upload button', hasUpload, true);
+        if (!hasUpload) return;   // everything below would only time out
+        const fixtureName = SIDEBAR_DIR.split('/').pop();
+        const notice = () => wrapper.evaluate(`JSON.stringify({
+            text: document.getElementById('files-notice').hidden ? '' : document.getElementById('files-notice-text').textContent,
+            kind: document.getElementById('files-notice').className,
+            bar: !document.getElementById('files-notice-progress').hidden,
+            close: !document.getElementById('files-notice-close').hidden,
+        })`).then(JSON.parse);
+        const selected = () => wrapper.evaluate('document.querySelector("#files-list .files-row.selected")?.dataset.path ?? null');
+        const closePreview = async () => {
+            if ((await previewState(wrapper)).active) await wrapper.locator('#files-close-btn').click();
+        };
+        const pick = async (open, files) => {
+            const [chooser] = await Promise.all([page.waitForEvent('filechooser'), open()]);
+            await chooser.setFiles(files);
+        };
+        const menuButton = (name) => list.locator('.files-row-wrap').filter({
+            has: wrapper.locator('.files-name', { hasText: new RegExp(`^${name.replace(/\./g, '\\.')}$`) }),
+        }).locator('.files-menu-btn');
+        const uploadHere = wrapper.locator('#files-menu .files-menu-item', { hasText: 'Upload here' });
+        const promptShown = () => wrapper.evaluate('!document.getElementById("files-prompt").hidden');
+        const promptState = () => wrapper.evaluate(`JSON.stringify({
+            text: document.getElementById('files-prompt-text').textContent,
+            replace: !document.getElementById('files-prompt-replace').hidden,
+            focus: document.activeElement && document.activeElement.id,
+        })`).then(JSON.parse);
+        const asking = (text) => `${text} Answer in the Files sidebar.`;
+        const uploadButton = () => wrapper.locator('#files-upload-btn').click();
+        // Drops are synthetic, with a real DataTransfer: dragenter and dragover,
+        // then the overlay is read, then the drop. A target is a selector,
+        // or { folder } for that folder's row.
+        const dropOn = (target, name, body) => wrapper.evaluate(`(() => {
+            const t = ${JSON.stringify(target)};
+            const n = ${JSON.stringify(name)};
+            const el = typeof t === 'string' ? document.querySelector(t)
+                : [...document.querySelectorAll('#files-list .files-row-wrap')]
+                    .find((w) => w.querySelector('.files-name')?.textContent === t.folder);
+            const dt = new DataTransfer();
+            dt.items.add(new File([${JSON.stringify(body)}], n, { type: n.endsWith('.png') ? 'image/png' : 'text/plain' }));
+            const fire = (type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+            fire('dragenter');
+            fire('dragover');
+            const overlay = document.getElementById('drop-zone').classList.contains('active');
+            fire('drop');
+            return JSON.stringify({ overlay });
+        })()`).then(JSON.parse);
+
+        // The Upload button: the inbox, made on first use. Revealed and
+        // previewed, never typed into the terminal.
+        const inboxFile = 'ctp up $1.txt';
+        const promptBefore = dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop();
+        await uploadBudget(1);
+        await pick(uploadButton, local(inboxFile, 'hello inbox\n'));
+        check('Upload puts the file in the inbox, made on first use',
+            await waitFor(() => read(`${INBOX_DIR}/${inboxFile}`) === 'hello inbox\n'), true);
+        check('a new file is written 0644', mode(`${INBOX_DIR}/${inboxFile}`), '644');
+        check('the notice says where it went',
+            await waitFor(async () => (await notice()).text === `Uploaded ${inboxFile} to ${INBOX_DIR}.`), true);
+        check('the new file is revealed in the tree',
+            await waitFor(async () => (await selected()) === `${INBOX_DIR}/${inboxFile}`), true);
+        check('and its preview opens',
+            await waitFor(async () => (await previewText(wrapper)) === 'hello inbox\n'), true);
+        check('a sidebar upload types nothing at the prompt',
+            dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop(), promptBefore);
+        await closePreview();
+        await uploadBudget(1);
+        await pick(uploadButton, local(inboxFile, 'second\n'));
+        check('the inbox numbers a taken name instead of asking',
+            await waitFor(() => read(`${INBOX_DIR}/ctp up $1 (1).txt`) === 'second\n'), true);
+        check('and never shows the collision prompt', await promptShown(), false);
+        await waitFor(async () => (await previewText(wrapper)) === 'second\n');
+        await closePreview();
+
+        // Upload here, onto a name that is taken: the inline prompt.
+        await menuButton(fixtureName).click();
+        check('a folder\'s ⋯ menu offers Upload here', await uploadHere.count(), 1);
+        await pick(() => uploadHere.click(), local(COLLIDE, 'new: 2\n'));
+        check('a taken name asks: Replace, Keep both or Cancel', await waitFor(promptShown), true);
+        // Focus on Keep both, the answer that loses nothing: a key pressed
+        // without reading the question must never replace a file.
+        check('the prompt names the file and folder, and puts focus on Keep both',
+            await promptState(),
+            (v) => v.text === `${COLLIDE} already exists in ${SIDEBAR_DIR}.` && v.replace && v.focus === 'files-prompt-keep');
+        check('while it waits, the notice asks for an answer instead of still saying Checking',
+            (await notice()).text, asking(`${COLLIDE} already exists in ${SIDEBAR_DIR}.`));
+        await wrapper.locator('#files-prompt-cancel').click();
+        check('Cancel uploads nothing, and says so',
+            await waitFor(async () => (await notice()).text === `Not uploaded: ${COLLIDE}.`), true);
+        check('the file is untouched', read(`${SIDEBAR_DIR}/${COLLIDE}`), 'old: 1\n');
+        await menuButton(fixtureName).click();
+        await pick(() => uploadHere.click(), local(COLLIDE, 'new: 2\n'));
+        await waitFor(promptShown);
+        await page.keyboard.press('Escape');
+        check('Escape answers Cancel', await waitFor(async () => !(await promptShown())), true);
+
+        // Two taken names in one pick: one question at a time, the notice
+        // counting the files behind it. TAKEN is a folder, which Replace
+        // cannot replace.
+        await menuButton(fixtureName).click();
+        await pick(() => uploadHere.click(), [local(COLLIDE, 'new: 2\n'), local(TAKEN, 'never\n')]);
+        check('while a question waits, the notice counts the files behind it',
+            await waitFor(async () => (await notice()).text
+                === `${asking(`${COLLIDE} already exists in ${SIDEBAR_DIR}.`)} 1 more waiting.`), true);
+        await wrapper.locator('#files-prompt-cancel').click();
+        check('a name taken by a folder offers only Keep both and Cancel, with focus on Keep both',
+            await waitFor(async () => {
+                const v = await promptState();
+                return v.text.startsWith(`${TAKEN} already exists in ${SIDEBAR_DIR} and is not a regular file`)
+                    && !v.replace && v.focus === 'files-prompt-keep';
+            }), true);
+        await wrapper.locator('#files-prompt-cancel').click();
+        check('both are left out, under one line',
+            await waitFor(async () => (await notice()).text === `Not uploaded: ${COLLIDE}, ${TAKEN}.`), true);
+        check('and the folder is untouched', dexec(['sh', '-c', '[ -d "$1" ] && ls -A "$1" | wc -l', 'sh', `${SIDEBAR_DIR}/${TAKEN}`]).trim(), '0');
+        await menuButton(fixtureName).click();
+        await pick(() => uploadHere.click(), local(COLLIDE, 'kept: 3\n'));
+        await waitFor(promptShown);
+        await uploadBudget(1);
+        await wrapper.locator('#files-prompt-keep').click();
+        check('Keep both numbers the new file',
+            await waitFor(() => read(`${SIDEBAR_DIR}/collide (1).yaml`) === 'kept: 3\n'), true);
+        check('and reveals it in its folder',
+            await waitFor(async () => (await selected()) === `${SIDEBAR_DIR}/collide (1).yaml`), true);
+        await waitFor(async () => (await previewText(wrapper)) === 'kept: 3\n');
+        await closePreview();
+        await menuButton(fixtureName).click();
+        await pick(() => uploadHere.click(), local(COLLIDE, 'replaced: 4\n'));
+        await waitFor(promptShown);
+        await uploadBudget(1);
+        await wrapper.locator('#files-prompt-replace').click();
+        check('Replace swaps in the new content',
+            await waitFor(() => read(`${SIDEBAR_DIR}/${COLLIDE}`) === 'replaced: 4\n'), true);
+        check('and keeps the old file\'s mode', mode(`${SIDEBAR_DIR}/${COLLIDE}`), '600');
+        check('the notice says it replaced it',
+            await waitFor(async () => (await notice()).text === `Replaced ${COLLIDE} in ${SIDEBAR_DIR}.`), true);
+        await waitFor(async () => (await previewText(wrapper)) === 'replaced: 4\n');
+        await closePreview();
+
+        // A question that comes while the user is typing in the terminal
+        // (a drop, or a batch that reached a taken name minutes later) must
+        // not take focus: their next Enter would answer it unseen. It waits
+        // in the sidebar, and the notice says so.
+        await wrapper.evaluate(`${TERM}.focus()`);
+        check('fixture: focus is in the terminal',
+            await wrapper.evaluate('document.activeElement && document.activeElement.id'), 'terminal-frame');
+        sendKeys('C-u');   // an empty command line, so the Enter below runs nothing
+        await dropOn({ folder: fixtureName }, COLLIDE, 'dropped: 5\n');
+        check('a taken name dropped while typing in the terminal still asks', await waitFor(promptShown), true);
+        check('but focus stays in the terminal, and the notice asks for an answer',
+            { focus: (await promptState()).focus, text: (await notice()).text },
+            (v) => v.focus === 'terminal-frame' && v.text === asking(`${COLLIDE} already exists in ${SIDEBAR_DIR}.`));
+        const paneBefore = tmux('#{history_size} #{cursor_y}');
+        await page.keyboard.press('Enter');
+        check('fixture: the Enter reached the terminal',
+            await waitFor(() => tmux('#{history_size} #{cursor_y}') !== paneBefore), true);
+        check('and did not answer the question',
+            { shown: await promptShown(), content: read(`${SIDEBAR_DIR}/${COLLIDE}`) },
+            (v) => v.shown && v.content === 'replaced: 4\n');
+        if (await promptShown()) await wrapper.locator('#files-prompt-cancel').click();
+        await waitFor(async () => (await notice()).text === `Not uploaded: ${COLLIDE}.`);
+        await closePreview();   // only there if a key did answer, but then in the way
+        // Nor with the preview open, even with focus on the page itself:
+        // Escape there closes the preview, and must not answer instead.
+        await list.locator('.files-row', { hasText: SIDEBAR_FILE }).click();
+        await waitFor(async () => (await previewText(wrapper)) === 'sidebar: ok\n');
+        await wrapper.evaluate('document.activeElement && document.activeElement.blur()');
+        await dropOn({ folder: fixtureName }, COLLIDE, 'dropped: 6\n');
+        await waitFor(promptShown);
+        check('with the preview open, a question takes no focus', (await promptState()).focus, (v) => v !== 'files-prompt-keep');
+        await page.keyboard.press('Escape');
+        check('and Escape closes the preview, leaving the question',
+            await waitFor(async () => !(await previewState(wrapper)).active && await promptShown()), true);
+        if (await promptShown()) await wrapper.locator('#files-prompt-cancel').click();
+        check('the file is still the replaced one', read(`${SIDEBAR_DIR}/${COLLIDE}`), 'replaced: 4\n');
+
+        // Answered, the question gives focus back where it took it from.
+        // From nowhere (the page body), or from something gone meanwhile
+        // (a row the tree drew again), that is Upload: never the page,
+        // where the next Tab would start from the top.
+        const focusedId = () => wrapper.evaluate('document.activeElement ? document.activeElement.id || document.activeElement.tagName : null');
+        await wrapper.evaluate('document.activeElement && document.activeElement.blur()');
+        await dropOn({ folder: fixtureName }, COLLIDE, 'dropped: 7\n');
+        await waitFor(promptShown);
+        check('fixture: a question asked from nowhere takes focus', (await promptState()).focus, 'files-prompt-keep');
+        await page.keyboard.press('Escape');
+        check('answered, a question asked from nowhere gives focus to Upload, not the page',
+            await waitFor(async () => !(await promptShown()) && (await focusedId()) === 'files-upload-btn'), true);
+        await menuButton(fixtureName).focus();
+        await wrapper.evaluate('document.activeElement.dataset.ctpOld = "1"');
+        await dropOn({ folder: fixtureName }, COLLIDE, 'dropped: 8\n');
+        await waitFor(promptShown);
+        check('fixture: a question asked from a row\'s ⋯ takes focus', (await promptState()).focus, 'files-prompt-keep');
+        // A refresh draws every row again: the ⋯ focus came from is gone.
+        // Clicked from script, so focus stays on the question.
+        await wrapper.evaluate('document.getElementById("files-refresh").click()');
+        check('fixture: the ⋯ focus came from is gone, and the row is back',
+            await waitFor(async () => await wrapper.evaluate('!document.querySelector("[data-ctp-old]")')
+                && await menuButton(fixtureName).count() === 1), true);
+        await page.keyboard.press('Escape');
+        check('answered after the tree was drawn again, it gives focus to Upload, not the page',
+            await waitFor(async () => !(await promptShown()) && (await focusedId()) === 'files-upload-btn'), true);
+        // From something still there but hidden meanwhile, where focus()
+        // does not take: Upload too.
+        await menuButton(fixtureName).focus();
+        await wrapper.evaluate('document.activeElement.dataset.ctpHide = "1"');
+        await dropOn({ folder: fixtureName }, COLLIDE, 'dropped: 9\n');
+        await waitFor(promptShown);
+        check('fixture: the question took focus from the ⋯ about to be hidden', (await promptState()).focus, 'files-prompt-keep');
+        await wrapper.evaluate('document.querySelector("[data-ctp-hide]").style.display = "none"');
+        await page.keyboard.press('Escape');
+        check('answered after the ⋯ it came from was hidden, it gives focus to Upload, not the page',
+            await waitFor(async () => !(await promptShown()) && (await focusedId()) === 'files-upload-btn'), true);
+        await wrapper.evaluate(`(() => {
+            const b = document.querySelector('[data-ctp-hide]');
+            if (b) { b.style.display = ''; delete b.dataset.ctpHide; }
+        })()`);
+        check('and the file is still the replaced one', read(`${SIDEBAR_DIR}/${COLLIDE}`), 'replaced: 4\n');
+
+        // Drops (synthetic, see dropOn above).
+        // Positive control: an image dropped on the terminal shows its
+        // overlay and goes to the terminal's image upload, which is what a
+        // sidebar drop must not do.
+        const onTerminal = await dropOn('#terminal-container', 'control.png', 'png');
+        check('fixture: the terminal\'s drop overlay shows over the terminal', onTerminal.overlay, true);
+        check('fixture: an image dropped on the terminal reaches its image upload',
+            await waitFor(() => imageUploads === 1), true);
+        await uploadBudget(1);
+        const overFolder = await dropOn({ folder: fixtureName }, 'pic.png', 'png');
+        check('an image dropped on a folder row uploads into that folder',
+            await waitFor(() => read(`${SIDEBAR_DIR}/pic.png`) === 'png'), true);
+        check('and never also goes to the terminal', imageUploads, 1);
+        check('the terminal\'s drop overlay stays off over the sidebar', overFolder.overlay, false);
+        await closePreview();
+        await uploadBudget(1);
+        await dropOn('#files-footer', 'loose.txt', 'loose\n');
+        check('a drop elsewhere on the sidebar goes to the inbox',
+            await waitFor(() => read(`${INBOX_DIR}/loose.txt`) === 'loose\n'), true);
+        // The preview covers the whole page, sidebar and terminal alike. A
+        // drop on it has no target the user can see, so it is refused: it
+        // must not fall through to the terminal's drop, which sends an
+        // image to /data/images and types its path.
+        check('fixture: the uploaded file\'s preview is open',
+            await waitFor(async () => (await previewText(wrapper)) === 'loose\n'), true);
+        const paneBeforeDrop = dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop();
+        const overPreview = await dropOn('#files-preview', 'onpreview.png', 'png');
+        check('a drop on the preview is refused in the notice',
+            await waitFor(async () => /close the preview/.test((await notice()).text)), true);
+        check('and never reaches the terminal: no overlay, no image upload, nothing typed',
+            { overlay: overPreview.overlay, images: imageUploads,
+                typed: dexec(['tmux', 'capture-pane', '-p']).trimEnd().split('\n').pop() !== paneBeforeDrop },
+            (v) => !v.overlay && v.images === 1 && !v.typed);
+        await closePreview();
+
+        // Never into a protected folder or through a symlinked one.
+        await menuButton(LOCKED).click();
+        check('a protected folder\'s Upload here is disabled, with the reason',
+            await wrapper.evaluate(`JSON.stringify((() => {
+                const item = [...document.querySelectorAll('#files-menu .files-menu-item')]
+                    .find((i) => i.textContent.startsWith('Upload here'));
+                return item && { disabled: item.getAttribute('aria-disabled'), text: item.textContent };
+            })())`).then(JSON.parse),
+            (v) => v && v.disabled === 'true' && /never upload targets/.test(v.text));
+        await page.keyboard.press('Escape');
+        await menuButton(LINK).click();
+        check('a symlinked folder offers no Upload here', await uploadHere.count(), 0);
+        check('fixture: its menu is open', await wrapper.evaluate('!document.getElementById("files-menu").hidden'), true);
+        await page.keyboard.press('Escape');
+        const bodiesBefore = bodies.length;
+        await dropOn({ folder: LOCKED }, 'x.txt', 'x');
+        check('a drop on a protected folder is refused in the notice, with no upload',
+            { said: await waitFor(async () => /secrets/.test((await notice()).text)), sent: bodies.length - bodiesBefore },
+            (v) => v.said && v.sent === 0);
+        check('the server refuses a protected folder too',
+            await wrapper.evaluate(`fetch(${JSON.stringify(`api/files/upload?name=x.txt&dest=${encodeURIComponent(`${SIDEBAR_DIR}/${LOCKED}`)}&check=1&size=1`)},
+                { method: 'POST' }).then((r) => r.status)`), 403);
+
+        // A secret-shaped name uploads (certificates belong in /config), and
+        // is revealed, but not opened while Show protected files is off.
+        await menuButton(fixtureName).click();
+        await uploadBudget(1);
+        await pick(() => uploadHere.click(), local('cert.pem', 'CERT\n'));
+        check('a certificate uploads like any file', await waitFor(() => read(`${SIDEBAR_DIR}/cert.pem`) === 'CERT\n'), true);
+        check('it is revealed, and the notice says it is protected',
+            await waitFor(async () => (await selected()) === `${SIDEBAR_DIR}/cert.pem`
+                && /cert\.pem is protected: turn on Show protected files/.test((await notice()).text)), true);
+        check('its preview does not open', (await previewState(wrapper)).active, false);
+
+        // Over upload_max_mb (25 MB by default): refused by the check, so
+        // not a byte of the body goes out.
+        const before = bodies.length;
+        await pick(uploadButton, local('big.bin', Buffer.alloc(26 * 1024 * 1024)));
+        check('a file over the limit is refused, naming the limit and its option',
+            await waitFor(async () => /26\.0 MB, over the 25 MB upload limit \(the add-on's upload_max_mb option\)/.test((await notice()).text)), true);
+        check('and its body is never sent', bodies.length - before, 0);
+
+        // The progress bar, while a body is held back.
+        let held = 0;
+        const gate = new Promise((r) => { release = r; });
+        const isBody = (u) => u.pathname.endsWith('/api/files/upload') && !u.searchParams.has('check');
+        await context.route(isBody, async (route) => {
+            held++;
+            await gate;
+            await route.continue().catch(() => {});
+        });
+        // The bar's highest value while it shows, recorded as it changes:
+        // it must move, not sit at 0 until it goes.
+        await wrapper.evaluate(`(() => {
+            const bar = document.getElementById('files-notice-progress');
+            window.ctpBarMax = 0;
+            new MutationObserver(() => {
+                if (!bar.hidden) window.ctpBarMax = Math.max(window.ctpBarMax, bar.value);
+            }).observe(bar, { attributes: true, attributeFilter: ['value', 'hidden'] });
+        })()`);
+        await uploadBudget(1);
+        await pick(uploadButton, local('slow.bin', Buffer.alloc(512 * 1024, 7)));
+        check('fixture: the upload is held', await waitFor(() => held === 1), true);
+        check('an upload shows its line and a progress bar',
+            await waitFor(async () => {
+                const n = await notice();
+                return n.text === 'Uploading slow.bin…' && n.bar;
+            }), true);
+        // Dismissing cannot cancel an upload, so it is not offered then.
+        check('and no dismiss button while it runs, which would look like cancel', (await notice()).close, false);
+        // Meanwhile the user goes back to the terminal: the file is
+        // revealed when it is in, but no preview springs up over the
+        // terminal they are typing in.
+        await wrapper.evaluate(`${TERM}.focus()`);
+        release();
+        check('the bar goes when it is done',
+            await waitFor(async () => {
+                const n = await notice();
+                return n.text === `Uploaded slow.bin to ${INBOX_DIR}.` && !n.bar;
+            }), true);
+        check('the bar moved before it went', await wrapper.evaluate('window.ctpBarMax'), (v) => v > 0);
+        check('and the result can be dismissed again', await waitFor(async () => (await notice()).close), true);
+        check('with focus back in the terminal, the file is revealed but not previewed',
+            { selected: await selected(), preview: (await previewState(wrapper)).active,
+                focus: await wrapper.evaluate('document.activeElement && document.activeElement.id') },
+            (v) => v.selected === `${INBOX_DIR}/slow.bin` && !v.preview && v.focus === 'terminal-frame');
+        await closePreview();
+        // Nor with the sidebar closed by the time it is in.
+        await uploadBudget(1);
+        const gate2 = new Promise((r) => { release = r; });
+        held = 0;
+        await context.unroute(isBody);
+        await context.route(isBody, async (route) => {
+            held++;
+            await gate2;
+            await route.continue().catch(() => {});
+        });
+        await pick(uploadButton, local('closed.txt', 'closed\n'));
+        await waitFor(() => held === 1);
+        await wrapper.locator('#files-hide').click();
+        release();
+        check('with the sidebar closed meanwhile, it uploads and nothing opens',
+            await waitFor(async () => read(`${INBOX_DIR}/closed.txt`) === 'closed\n'
+                && (await selected()) === `${INBOX_DIR}/closed.txt`
+                && !(await previewState(wrapper)).active), true);
+        await context.unroute(isBody);
+        await closePreview();
+        await wrapper.locator('#files-btn').click();
+
+        // Two files in one pick: one after another, then one line.
+        await uploadBudget(2);
+        await pick(uploadButton, [local('m1.txt', '1'), local('m2.txt', '2')]);
+        check('two files picked together both upload, under one line',
+            await waitFor(async () => (await notice()).text === `Uploaded 2 files to ${INBOX_DIR}.`
+                && read(`${INBOX_DIR}/m1.txt`) === '1' && read(`${INBOX_DIR}/m2.txt`) === '2'), true);
+        await closePreview();
+        // A notice too long for its box scrolls, and Safari puts a scrolling
+        // box in the Tab order only with a tabindex: it gets one while it
+        // overflows, and only then.
+        const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
+        // A function of its own, so its unroute leaves the 429 route alone.
+        const isAskLong = (u) => isAsk(u);
+        const noticeTabindex = () => wrapper.evaluate('document.getElementById("files-notice-text").getAttribute("tabindex")');
+        check('a short notice is no tab stop', await noticeTabindex(), null);
+        const LONG = 'This refusal is long enough to scroll. '.repeat(30).trim();
+        await context.route(isAskLong, (route) => route.fulfill({ status: 403, contentType: 'application/json',
+            body: JSON.stringify({ error: LONG }) }));
+        await pick(uploadButton, local('long.txt', 'x'));
+        check('fixture: the long refusal is in the notice',
+            await waitFor(async () => (await notice()).text.includes(LONG)), true);
+        check('a notice that overflows its box is a tab stop, so the keyboard can scroll it', await noticeTabindex(), '0');
+        // Focus on it when it stops scrolling (the next file's short
+        // "Checking" line) stays there: moved, it would lose the reader's
+        // place. It keeps its tab stop while it has focus, and loses it on
+        // blur if it still fits. The refusal is held back until released,
+        // and then (for the next one too) half a second more, so it lands
+        // after the sidebar below is closed.
+        await context.unroute(isAskLong);
+        const longHeld = new Promise((r) => { release = r; });
+        await context.route(isAskLong, async (route) => {
+            await longHeld;
+            await sleep(500);
+            await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: LONG }) });
+        });
+        await wrapper.evaluate('document.getElementById("files-notice-text").focus()');
+        check('fixture: the scrolling notice has focus', await focusedId(), 'files-notice-text');
+        await dropOn('#files-footer', 'long2.txt', 'x');
+        check('fixture: the short "Checking" line replaced the long one',
+            await waitFor(async () => (await notice()).text.startsWith('Checking long2.txt')), true);
+        check('a notice that stops scrolling with focus on it keeps focus, and its tab stop',
+            JSON.stringify({ focus: await focusedId(), tabindex: await noticeTabindex() }),
+            JSON.stringify({ focus: 'files-notice-text', tabindex: '0' }));
+        await wrapper.locator('#files-upload-btn').focus();
+        check('and loses the tab stop once focus leaves it, since it fits',
+            await waitFor(async () => (await noticeTabindex()) === null), true);
+        release();
+        await waitFor(async () => (await notice()).text.includes(LONG));
+        // Arriving while the sidebar is closed, it has nothing to scroll;
+        // the sidebar reopened, it does again.
+        await dropOn('#files-footer', 'long3.txt', 'x');
+        await wrapper.locator('#files-hide').click();
+        check('fixture: the long refusal arrives while the sidebar is closed',
+            await waitFor(async () => (await notice()).text.includes(LONG)), true);
+        check('a notice in the closed sidebar is no tab stop', await noticeTabindex(), null);
+        await wrapper.locator('#files-btn').click();
+        check('the sidebar reopened, the long notice is a tab stop again',
+            await waitFor(async () => (await noticeTabindex()) === '0'), true);
+        await context.unroute(isAskLong);
+        // Too many uploads (429, faked): the batch stops at the first one,
+        // and one line covers every file it left, instead of a refusal per
+        // file each spending another request.
+        let busyChecks = 0;
+        await context.route(isAsk, (route) => {
+            busyChecks++;
+            return route.fulfill({ status: 429, contentType: 'application/json',
+                body: JSON.stringify({ error: 'Too many uploads. Try again in a minute.' }) });
+        });
+        await pick(uploadButton, [local('b1.txt', '1'), local('b2.txt', '2'), local('b3.txt', '3')]);
+        check('a batch stops at the first 429, under one line for all it left',
+            await waitFor(async () => (await notice()).text === '⏳ 3 not uploaded: too many uploads, try again in a minute.'), true);
+        check('and asks nothing more after it', busyChecks, 1);
+        check('a notice that fits again is no tab stop again', await noticeTabindex(), null);
+        await context.unroute(isAsk);
+        // (UPLOAD_PART is the download checks' stand-in, not a real one.)
+        check('no upload part is left anywhere',
+            dexec(['find', '/config', '-maxdepth', '3', '-name', '.ctp-upload-*.part', '!', '-name', UPLOAD_PART]).trim(), '');
+        // uploadBudget must have seen every body that reached the server.
+        check('fixture: every real upload body was budgeted', bodies.length, 11);
+    } finally {
+        release();
+        await context.close();
+        rmSync(pickDir, { recursive: true, force: true });
+        dexec(['rm', '-rf', INBOX_DIR]);
     }
 }
 
@@ -1364,9 +1959,9 @@ async function run(engine, mode, url) {
     dexec(['rm', '-rf', SIDEBAR_DIR]);
     dexec(['mkdir', '-p', SIDEBAR_DIR]);
     dexec(['sh', '-c', 'printf "sidebar: ok\\n" > "$1"; printf "k: v\\n" > "$2"; '
-        + 'mkdir "$3"; printf "ref: x\\n" > "$3/HEAD"; printf partial > "$4"', 'sh',
+        + 'mkdir "$3"; printf "ref: x\\n" > "$3/HEAD"; printf partial > "$4"; printf partial > "$5"', 'sh',
         `${SIDEBAR_DIR}/${SIDEBAR_FILE}`, `${SIDEBAR_DIR}/secrets.yaml`,
-        `${SIDEBAR_DIR}/.git`, `${SIDEBAR_DIR}/download.part`]);
+        `${SIDEBAR_DIR}/.git`, `${SIDEBAR_DIR}/download.part`, `${SIDEBAR_DIR}/${UPLOAD_PART}`]);
 
     const cols = () => wrapper.evaluate(`${TERM}.cols`);
     const windowWidth = () => Number(tmux('#{window_width}'));
@@ -1391,9 +1986,12 @@ async function run(engine, mode, url) {
     const fileRow = list.locator('.files-row', { hasText: SIDEBAR_FILE });
     check('a folder expands to its files', await waitFor(async () => (await fileRow.count()) === 1), true);
     const names = await list.locator('.files-name').allTextContents();
-    check('the tree hides .git and *.part, and shows secrets.yaml',
-        { git: names.includes('.git'), part: names.includes('download.part'), secrets: names.includes('secrets.yaml') },
-        (v) => !v.git && !v.part && v.secrets);
+    // Only the wrapper's own upload parts are hidden: a user's download.part
+    // is an ordinary file.
+    check('the tree hides .git and upload parts, and shows secrets.yaml and other *.part files',
+        { git: names.includes('.git'), part: names.includes(UPLOAD_PART), mine: names.includes('download.part'),
+            secrets: names.includes('secrets.yaml') },
+        (v) => !v.git && !v.part && v.mine && v.secrets);
 
     // The list's roles must match how it behaves. It was a role="tree" with
     // each folder's ⋯ button inside it, but only treeitems belong in a tree
@@ -1530,6 +2128,8 @@ async function run(engine, mode, url) {
     await checkPreviewRequests(browser, url);
     await checkStaleListingPreview(browser, url);
     await checkSidebarScriptMissing(browser, url);
+    await checkNoResizeObserver(browser, url);
+    await checkUploads(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {
@@ -1549,10 +2149,12 @@ try {
     ingress.close();
     cancelCopyMode();
     rmSync(PICK_DIR, { recursive: true, force: true });
-    try { dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]); } catch { /* container gone */ }
+    try { dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR, INBOX_DIR]); } catch { /* container gone */ }
 }
 
 console.log(`\nzip budget: peak ${zipStats.peak}/${ZIP_LIMIT} limiter requests in any ${ZIP_WINDOW_MS / 1000} s, `
     + `waited ${(zipStats.waitedMs / 1000).toFixed(1)} s in all`);
+console.log(`upload budget: peak ${uploadStats.peak}/${UPLOAD_BUDGET} uploads (limit ${UPLOAD_LIMIT}, one kept free) in any ${ZIP_WINDOW_MS / 1000} s, `
+    + `waited ${(uploadStats.waitedMs / 1000).toFixed(1)} s in all`);
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

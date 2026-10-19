@@ -49,7 +49,9 @@ write('.env', 'TOKEN=1\n');
 write('certs/server.key', 'KEY\n');
 write('claude-config/.credentials.json', '{"token": "t"}\n');
 write('with space.yaml', 'a: 1\n');
-write('backup.tar.part', 'partial');
+write('backup.tar.part', 'a user file');                   // an ordinary name
+write('x.ctp-upload-1.part', 'a user file');               // only ends like a part
+write('.ctp-upload-0a1b2c3d4e5f6a7b.part', 'partial');      // an upload in flight
 write('.credentials.json', 'login\n', outside);
 write('home/.claude/.credentials.json', 'login\n', outside);
 fs.symlinkSync(outside, path.join(root, 'data-link'));
@@ -172,12 +174,14 @@ test('a symlink is locked if its name OR its target is secret-shaped', async () 
     await refused(api.preview('notes.txt'), 403);
 });
 
-test('listing leaves out .git, *.part and escaping or hidden symlinks', async () => {
+test('listing leaves out .git, upload parts and escaping or hidden symlinks', async () => {
     const names = (await api.list('')).entries.map((e) => e.name);
-    for (const gone of ['.git', 'backup.tar.part', 'data-link', 'creds-link', 'repo-meta', 'dangling']) {
+    for (const gone of ['.git', '.ctp-upload-0a1b2c3d4e5f6a7b.part', 'data-link', 'creds-link', 'repo-meta', 'dangling']) {
         assert.ok(!names.includes(gone), `${gone} listed`);
     }
-    for (const kept of ['autos-link.yaml', 'innocent.yaml', 'secrets.yaml']) {
+    // Only the wrapper's own .ctp-upload-*.part is a partial file: any other
+    // *.part is somebody's file, and is listed.
+    for (const kept of ['autos-link.yaml', 'innocent.yaml', 'secrets.yaml', 'backup.tar.part', 'x.ctp-upload-1.part']) {
         assert.ok(names.includes(kept), `${kept} not listed`);
     }
     const nested = (await api.list('packages')).entries.map((e) => e.name);
@@ -374,8 +378,9 @@ test('recent changes: newest first, inside the window, noise and secret-shaped f
     touch('scripts.yaml', 30);
     touch('old.yaml', 24 * 10);
     touch('secrets.yaml', 0.2);
+    touch('backup.part', 0.3);   // a user's own *.part is an ordinary file
     // left out whatever their age
-    touch('download.part', 0.1);
+    touch('.ctp-upload-0a1b2c3d4e5f6a7b.part', 0.1);
     touch('.storage/core.config_entries', 0.1);
     touch('.cloud/x', 0.1);
     touch('.git/index', 0.1);
@@ -403,15 +408,15 @@ test('recent changes: newest first, inside the window, noise and secret-shaped f
     const recentApi = createFilesApi({ root: recentRoot, now: () => NOW });
     const day = await recentApi.recent(24);
     assert.deepStrictEqual(day.entries.map((e) => e.relative),
-        ['secrets.yaml', 'automations.yaml', path.join('www', 'build', 'card.js'), path.join('packages', 'climate.yaml')]);
+        ['secrets.yaml', 'backup.part', 'automations.yaml', path.join('www', 'build', 'card.js'), path.join('packages', 'climate.yaml')]);
     assert.strictEqual(day.hours, 24);
 
     const hour = await recentApi.recent(1);
-    assert.deepStrictEqual(hour.entries.map((e) => e.relative), ['secrets.yaml', 'automations.yaml']);
+    assert.deepStrictEqual(hour.entries.map((e) => e.relative), ['secrets.yaml', 'backup.part', 'automations.yaml']);
 
     const week = await recentApi.recent(168);
     assert.deepStrictEqual(week.entries.map((e) => e.relative),
-        ['secrets.yaml', 'automations.yaml', path.join('www', 'build', 'card.js'), path.join('packages', 'climate.yaml'), 'scripts.yaml']);
+        ['secrets.yaml', 'backup.part', 'automations.yaml', path.join('www', 'build', 'card.js'), path.join('packages', 'climate.yaml'), 'scripts.yaml']);
 });
 
 test('recent changes clamps the window', async () => {
@@ -725,14 +730,15 @@ test('openFile normalises its input: a ../ path out of the root is refused witho
 
 // --- one visibility rule for the listing, recent changes and zips ---
 
-test('a *.part folder is hidden from the listing and from recent changes alike', async () => {
+test('an upload-part folder is hidden from the listing and from recent changes alike', async () => {
     const partRoot = path.join(base, 'parts');
     write('kept/a.txt', 'x', partRoot);
-    write('upload.part/inner.txt', 'x', partRoot);
+    write('.ctp-upload-0a1b2c3d4e5f6a7b.part/inner.txt', 'x', partRoot);
+    write('mine.part/b.txt', 'x', partRoot);   // positive control: not ours, so shown
     const partApi = createFilesApi({ root: partRoot });
-    assert.deepStrictEqual((await partApi.list('')).entries.map((e) => e.name), ['kept']);
-    const found = (await partApi.recent(24)).entries.map((e) => e.relative);
-    assert.deepStrictEqual(found, [path.join('kept', 'a.txt')]);
+    assert.deepStrictEqual((await partApi.list('')).entries.map((e) => e.name), ['kept', 'mine.part']);
+    const found = (await partApi.recent(24)).entries.map((e) => e.relative).sort();
+    assert.deepStrictEqual(found, [path.join('kept', 'a.txt'), path.join('mine.part', 'b.txt')]);
 });
 
 test('the api exposes the root it was configured with', () => {
@@ -752,5 +758,69 @@ test('openFile limit: without /proc a symlinked parent folder is NOT caught', as
         await handle.close();
     } finally {
         fs.unlinkSync(path.join(root, 'escape-dir'));
+    }
+});
+
+// --- for uploads (files-upload.js) ---
+
+test('locate maps a path under the root without following it', async () => {
+    const at = await api.locate('packages');
+    assert.deepStrictEqual(at, { asked: path.join(root, 'packages'), relative: 'packages', kind: 'ok', root });
+    // a symlink is located by its own name: where it points is not looked at
+    assert.strictEqual((await api.locate('data-link')).asked, path.join(root, 'data-link'));
+    // nor a path through one: `asked` runs through the link, and only its
+    // realpath (outside the root) would show it
+    assert.strictEqual((await api.locate('data-link/x')).asked, path.join(root, 'data-link', 'x'));
+    assert.strictEqual((await api.locate('not-there-yet')).relative, 'not-there-yet');
+    assert.strictEqual((await api.locate('.storage')).kind, 'sensitive');
+    assert.strictEqual((await api.locate('')).relative, '');
+    await refused(api.locate('.git'), 404);
+    await refused(api.locate('../data'), 404);
+    await refused(api.locate(['a', 'b']), 400);
+    await refused(api.locate('a\0b'), 400);
+});
+
+test('locate accepts the root as configured when it is a symlink', async () => {
+    const linked = path.join(base, 'config-link');
+    fs.symlinkSync(root, linked);
+    try {
+        const viaLink = createFilesApi({ root: linked });
+        const at = await viaLink.locate(path.join(linked, 'packages'));
+        assert.strictEqual(at.asked, path.join(root, 'packages'));
+        assert.strictEqual(at.root, root);
+    } finally {
+        fs.unlinkSync(linked);
+    }
+});
+
+test('a listing marks symlinked entries, and only those', async () => {
+    fs.symlinkSync(path.join(root, 'packages'), path.join(root, 'packages-link'));
+    try {
+        const entries = (await api.list('')).entries;
+        const byName = (n) => entries.find((e) => e.name === n);
+        assert.strictEqual(byName('packages-link').symlink, true);
+        assert.strictEqual(byName('packages-link').type, 'dir');
+        assert.strictEqual(byName('autos-link.yaml').symlink, true);
+        assert.strictEqual(byName('packages').symlink, undefined);
+        assert.strictEqual(byName('configuration.yaml').symlink, undefined);
+    } finally {
+        fs.unlinkSync(path.join(root, 'packages-link'));
+    }
+});
+
+test('sendError adds a FilesError\'s details to the JSON body, under its own error', () => {
+    let status;
+    let body;
+    const res = { headersSent: false, status(s) { status = s; return this; }, json(b) { body = b; } };
+    sendError(res, new FilesError(409, 'a.yaml already exists', { reason: 'exists', replaceable: true, error: 'ignored' }));
+    assert.strictEqual(status, 409);
+    assert.deepStrictEqual(body, { reason: 'exists', replaceable: true, error: 'a.yaml already exists' });
+    sendError(res, new FilesError(404, 'gone'));
+    assert.deepStrictEqual(body, { error: 'gone' });
+    // Details that are not a plain object add nothing: spread, a string or
+    // an array would add its characters or items as "0", "1", ...
+    for (const details of ['ab', ['a', 'b']]) {
+        sendError(res, new FilesError(409, 'odd details', details));
+        assert.deepStrictEqual(body, { error: 'odd details' }, JSON.stringify(details));
     }
 });

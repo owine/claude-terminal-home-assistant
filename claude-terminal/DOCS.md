@@ -209,6 +209,8 @@ mapping cannot be disabled without forking the add-on.
 | `tmux_mouse_mode` | `true` | Mouse reporting: the wheel scrolls and a drag selects. Set `false` to disable it entirely (the wheel then sends arrow keys to full-screen apps). Flip it live with **Prefix + m**. **Changed in 2.7.3** — this defaulted to `false` before, so if you never set it, the mouse became active on upgrade |
 | `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
 | `image_retention_days` | `30` | Pasted and dropped images older than this many days are deleted at startup. Only the add-on's own uploads (`pasted-*` in `/data/images`) are touched. `0` keeps them forever. `/data` is included in every Home Assistant backup, so this also bounds backup growth. Caches and the Claude binary are always left out of backups; after a restore the add-on reinstalls the Claude version bundled with the image, and Claude updates itself again from there |
+| `upload_max_mb` | `25` | Largest file, in megabytes, that the Files sidebar uploads into `/config`, from 1 to at most 1024. Pasted and dropped images keep their own 10 MB limit. See Uploads under Files Sidebar |
+| `upload_retention_days` | `30` | Files in the sidebar's upload inbox, `/config/uploads`, last modified more than this many days ago are deleted at startup: every file at the inbox's top level, whatever its name and whoever put it there. Folders and symlinks in it are never removed. From 0 to at most 36500 (100 years); `0` keeps them forever. A folder you chose with **Upload here** is never swept. See Uploads under Files Sidebar |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |
 | `init_commands` | `[]` | Shell commands run as root on every start, 120 seconds each. See Init Commands above |
@@ -528,8 +530,9 @@ entirely when closed.
   path** types its path at the prompt (quoted if it has spaces, never followed
   by Enter) so you can hand it to Claude. **Copy path** puts it on the
   clipboard, and **Download** saves the file to your device. Each folder row
-  has a **⋯** button with **Download as zip**. Dotfiles appear when you tick
-  **Hidden files**.
+  has a **⋯** button with **Download as zip** and **Upload here**, and
+  **⬆️ Upload** puts files in `/config/uploads` (see Uploads below). Dotfiles
+  appear when you tick **Hidden files**.
 - **Recent changes** lists the files in `/config` changed in the last hour,
   day or week, newest first, so you can see what Claude just edited. What Home
   Assistant rewrites by itself is left out: `.storage`, `deps`, `tts`,
@@ -539,7 +542,7 @@ entirely when closed.
 - **✓ Check HA configuration** runs `ha core check` and shows the result, so
   you can validate an edit before restarting Home Assistant.
 
-The sidebar never changes anything, and it is limited to `/config`. Paths are resolved through
+Apart from uploads, the sidebar changes nothing, and it is limited to `/config`. Paths are resolved through
 symlinks and must stay inside it, so `/data`, where your Claude login lives, is
 not reachable. Which files it shows follows Studio Code Server's defaults:
 
@@ -555,7 +558,8 @@ not reachable. Which files it shows follows Studio Code Server's defaults:
   friends), `.git-credentials`, `.gitconfig`, `.netrc`, `.npmrc`, `.pypirc`,
   and Claude Code's own `.credentials.json` and `.claude.json`. A symlink to
   one of these gets the 🔒 too.
-- Unfinished downloads (`*.part`) are not listed.
+- An upload still being written (`.ctp-upload-*.part`) is not listed. Any
+  other `*.part` file is an ordinary file, listed and zipped like the rest.
 
 Previews show at most the first 256 KB of a file, as plain text; binary files
 are recognised and not shown. A folder lists at most 1000 entries.
@@ -574,8 +578,8 @@ reached through a symlink is saved under the name you clicked, not the name of
 its target. **Download as zip** in a folder's **⋯** menu packs the folder and
 everything below it, by these rules:
 
-- Protected files and folders, `.git`, symlinks and unfinished downloads are
-  never put in a zip, even with **Show protected files** on, and a protected
+- Protected files and folders, `.git`, symlinks and uploads still being
+  written are never put in a zip, even with **Show protected files** on, and a protected
   folder's **Download as zip** is disabled. A symlinked folder zipped from its
   own **⋯** packs the folder it points to, under the name you clicked; it is
   only symlinks *inside* the folder being zipped that are left out.
@@ -604,6 +608,76 @@ the add-on: such a request is refused.
 In the Home Assistant Companion app, the app's web view may preview a download
 instead of saving it. If a download does not save, open Home Assistant in a
 browser and download it from there.
+
+**Uploads.** Files go into `/config` from your device in three ways:
+
+- **⬆️ Upload** in the sidebar's toolbar puts them in the inbox,
+  `/config/uploads`, which is made the first time it is needed. A name that is
+  taken there gets a number instead (`photo (1).jpg`).
+- **Upload here** in a folder's **⋯** menu puts them in that folder. If a file
+  of that name is already there, the sidebar asks: **Replace**, **Keep both**
+  (the new one gets a number) or **Cancel** (Escape cancels too, while the question has focus).
+  When the question takes focus, it is on **Keep both**, so Enter loses nothing. Nothing is
+  ever overwritten without that question. Replace swaps in the whole new file at once and keeps
+  the old file's permissions, so a private key stays private; Replace is not
+  offered when the name belongs to a folder or a link.
+- **Dropping files** on a folder row means Upload here; dropping them anywhere
+  else on the sidebar sends them to the inbox. Folders themselves cannot be
+  dropped: drop the files inside them.
+
+You can pick or drop several files at once; they upload one after another, a
+progress bar shows how far each has got, and a question about a taken name
+comes up for each in turn. The question takes focus only if you are working
+in the sidebar; if you are typing in the terminal, or have a preview open, it
+waits in the sidebar and the notice asks you to answer there, so a keystroke
+meant for the terminal never answers it. Once they are in, the last file is
+shown in the tree. Its preview opens only if you are still in the sidebar, and
+not when any file in the batch was refused. Nothing is typed into the
+terminal. A file whose name marks it as protected (a certificate such as
+`fullchain.pem`, say) is shown in the tree but not opened unless **Show
+protected files** is on.
+
+Any type of file can be uploaded, up to `upload_max_mb` (25 MB unless you
+change it; at most 1024 MB); a bigger one is refused before any of it is
+sent, and the message names the limit. Names are cleaned: folders in the
+name, control characters, invisible text-direction marks (which can make a
+name read backwards) and leading dots are taken out (`.env` arrives as
+`env`), and a very long name is shortened. New files can be read by everyone
+and run by no one (`0644`). Certificates and keys can be uploaded like any
+other file. `secrets.yaml` is an ordinary name; replacing one goes through the
+same question. An upload has 30 minutes to arrive, or longer if you raise
+`upload_max_mb` (enough for a file at the limit over a 128 kbit/s link), but
+never more than 12 hours.
+
+If the add-on has to refuse a write, the message says why: the file system is
+read-only, the add-on is not allowed to write there, the name is too long for
+the file system, or the disk is full. Uploads are limited in rate: when the
+add-on answers "too many uploads", the batch stops at that file, and one line
+says how many were not uploaded (or names the one). Wait a minute and pick
+the rest again.
+
+Some folders are never upload targets: protected ones (their **Upload here**
+is disabled and says why), `deps` (Home Assistant's own Python packages),
+`.git`, anything outside `/config`, and a symlinked folder, which has no
+**Upload here** at all. Upload into the folder it points to instead. The
+folders inside a symlinked folder are listed at their real location, and do
+have **Upload here**.
+
+**The inbox is disposable.** At every start, the add-on deletes each file at
+the top level of `/config/uploads` that was last modified more than
+`upload_retention_days` days ago (30 unless you change it; `0` keeps them
+forever), whoever put it there, Claude included. Folders inside the inbox,
+and anything in them, are left alone, as are symlinks at its top level, and
+so is every folder you chose with **Upload here**, except `/config/uploads`
+itself: Upload here on it puts files in the swept folder, and its menu says
+so. Keep files you want to last somewhere else. If `/config/uploads` is a
+symlink or a file rather than a folder, it is never swept, and uploads to the
+inbox are refused until it is a plain folder again.
+
+An unfinished upload never leaves a partial file: if the connection drops,
+the browser stops sending, the disk fills up, or the add-on restarts mid-way,
+what had arrived is deleted (at the next start, in the last case). A page on
+another site cannot upload into your `/config`: such a request is refused.
 
 #### Persistent Package Management
 - **System packages**: Install APK packages that survive restarts

@@ -12,6 +12,7 @@
  * - Image uploads via POST /upload (paste/drag-drop)
  * - Read-only /config browser and HA config check for the Files sidebar (/api/files)
  * - File and folder (zip) downloads from /config for the Files sidebar
+ * - File uploads into /config for the Files sidebar (inbox or a chosen folder)
  * - ARM-compatible (no native dependencies)
  */
 
@@ -34,6 +35,8 @@ const { uploadFilename, isAllowedImageMime } = require('./upload-naming');
 const { loginNotifierFromEnv } = require('./login-notifier');
 const { createFilesApi, createFilesRouter, createHaCheck } = require('./files-api');
 const { createDownloads, createDownloadRouter } = require('./files-download');
+const { createUploads, createUploadRouter, uploadMaxBytes, uploadRequestTimeoutMs } = require('./files-upload');
+const { createPartRecord } = require('./upload-parts');
 
 const app = express();
 const PORT = process.env.WRAPPER_PORT || 7680;
@@ -56,6 +59,12 @@ const haCheckLimiter = createRateLimiter({ windowMs: 60000, max: 6, message: 'To
 // its requests against this max (ZIP_LIMIT in
 // test/integration/mouse-and-clipboard.mjs); change both together.
 const zipLimiter = createRateLimiter({ windowMs: 60000, max: 20, message: 'Too many zip downloads, try again in a minute' });
+// Files sidebar uploads, one file per request: a dropped handful must not meet
+// the image limiter's 10. Their check=1 preflights count against filesLimiter,
+// and answer this limiter's 429 (asked without spending) once it is used up.
+// The integration test budgets its uploads against this max (UPLOAD_LIMIT in
+// test/integration/mouse-and-clipboard.mjs); change both together.
+const filesUploadLimiter = createRateLimiter({ windowMs: 60000, max: 60, message: 'Too many uploads, try again in a minute' });
 
 // Ensure upload directory exists
 if (!fs.existsSync(UPLOAD_DIR)) {
@@ -159,6 +168,21 @@ app.use('/api/files', createDownloadRouter({
     fileLimiter: filesLimiter,
     zipLimiter,
 }));
+// Uploads (files-upload.js): the same api instance again. The part record
+// lives in /data, beside the add-on's other state; UPLOAD_PARTS_FILE is a test
+// seam. start() deletes the parts a crash left, before any upload can begin
+// (every record change queues behind it), and never rejects.
+const partRecord = createPartRecord({
+    file: process.env.UPLOAD_PARTS_FILE || '/data/upload-parts',
+    root: filesApi.root,
+});
+partRecord.start();
+const uploadLimit = uploadMaxBytes(process.env.UPLOAD_MAX_MB);
+app.use('/api/files', createUploadRouter({
+    uploads: createUploads({ api: filesApi, record: partRecord, maxBytes: uploadLimit }),
+    uploadLimiter: filesUploadLimiter,
+    checkLimiter: filesLimiter,
+}));
 
 // Proxy endpoint for ttyd terminal
 // This allows ttyd to work through Home Assistant ingress
@@ -207,6 +231,17 @@ app.use((err, req, res, next) => {
 
 // Create HTTP server and start listening
 const server = http.createServer(app);
+// Node cuts off a request whose body has not all arrived within
+// requestTimeout (default 5 minutes) with a 408. A 25 MB upload on a slow
+// mobile link can take longer, and upload_max_mb can be raised, so it is 30
+// minutes, or as long as a file at the cap takes at 128 kbit/s, but never
+// over 12 hours (uploadRequestTimeoutMs, MAX_REQUEST_TIMEOUT_MS): it is
+// server-wide, since Node has no per-route setting, so no request of any
+// kind may hold a connection open for longer. headersTimeout (60 s) is
+// deliberately left alone, so a client that never finishes its headers is
+// still cut off quickly, and uploads have their own idle timeout for a body
+// that stops arriving (files-upload.js).
+server.requestTimeout = uploadRequestTimeoutMs(uploadLimit);
 
 // http-proxy-middleware does not auto-bind WS upgrades; without this the terminal won't connect.
 // Upgrades bypass Express entirely, so the origin check has to happen here: the
@@ -219,6 +254,7 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Claude Terminal Wrapper Service running on port ${PORT}`);
     console.log(`Upload directory: ${UPLOAD_DIR}`);
+    console.log(`Files sidebar upload limit: ${uploadLimit / 1024 / 1024} MB`);
     console.log(`ttyd terminal on port: ${TTYD_PORT}`);
     console.log(`Terminal proxy available at /terminal/`);
     console.log(`WebSocket upgrade handler registered`);

@@ -167,6 +167,51 @@ assert_contains "turning it off is logged" "$logged" "disabled"
 unset LOGIN_NOTIFICATION
 
 # ---------------------------------------------------------------------------
+# export_upload_max_mb
+# ---------------------------------------------------------------------------
+# Passed to the wrapper as read; the wrapper owns the fallback to 25
+# (files-upload.js, uploadMaxBytes), so an unreadable value must arrive as
+# the empty string, not as a guess.
+printf '\n%s\n' "export_upload_max_mb"
+
+reset_config
+unset UPLOAD_MAX_MB
+export_upload_max_mb 2>/dev/null
+assert_eq "unset defaults to 25" "25" "${UPLOAD_MAX_MB:-}"
+
+reset_config
+set_config upload_max_mb "100"
+export_upload_max_mb 2>/dev/null
+assert_eq "a set value is exported" "100" "${UPLOAD_MAX_MB:-}"
+assert_eq "and reaches a child process" "100" "$(bash -c 'printf %s "$UPLOAD_MAX_MB"')"
+
+reset_config
+set_config upload_max_mb ""
+export_upload_max_mb 2>/dev/null
+assert_eq "an unreadable value is passed on empty" "set:" "${UPLOAD_MAX_MB+set}:${UPLOAD_MAX_MB:-}"
+unset UPLOAD_MAX_MB
+reset_config
+
+# The schema is the cap: the Supervisor refuses to save a bigger value, so
+# the wrapper never sees one (its own parse of up to 7 digits stays as
+# defence). DOCS.md's options table states the same maximum.
+assert_eq "config.yaml's schema caps upload_max_mb at 1024 MB" "  upload_max_mb: int(1,1024)?" \
+    "$(grep -E '^  upload_max_mb: int' "$REPO_ROOT/claude-terminal/config.yaml")"
+# shellcheck disable=SC2016  # the backticks are Markdown, matched literally
+assert_contains "DOCS.md states the 1024 MB maximum" \
+    "$(grep -E '^\| `upload_max_mb`' "$REPO_ROOT/claude-terminal/DOCS.md")" "1024"
+
+# upload_retention_days likewise: prune_old_files (run.sh) finds files older
+# than $((days * 1440)) minutes, and shell arithmetic wraps past 2^63, so an
+# unbounded value could come out small or negative and sweep the inbox.
+# 36500 days (100 years) is far from that.
+assert_eq "config.yaml's schema caps upload_retention_days at 36500 days" "  upload_retention_days: int(0,36500)?" \
+    "$(grep -E '^  upload_retention_days: int' "$REPO_ROOT/claude-terminal/config.yaml")"
+# shellcheck disable=SC2016  # the backticks are Markdown, matched literally
+assert_contains "DOCS.md states the 36500-day maximum" \
+    "$(grep -E '^\| `upload_retention_days`' "$REPO_ROOT/claude-terminal/DOCS.md")" "36500"
+
+# ---------------------------------------------------------------------------
 # prune_claude_versions
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "prune_claude_versions"

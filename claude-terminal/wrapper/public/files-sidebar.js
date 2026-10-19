@@ -84,7 +84,118 @@
         return url;
     }
 
-    const api = { shellQuote, formatSize, formatAgo, clampWidth, relativeTo, downloadUrl, DEFAULT_WIDTH };
+    /**
+     * URL of an upload, or of its check=1 preflight (`check`, with the file's
+     * `size`, and no body). Relative, like downloadUrl. No `dest` means the
+     * inbox. Every value is encoded: names come from the user's device.
+     */
+    function uploadUrl({ name, dest, onConflict, check = false, size } = {}) {
+        let url = 'api/files/upload?name=' + encodeURIComponent(name);
+        if (dest !== undefined && dest !== null) url += '&dest=' + encodeURIComponent(dest);
+        if (onConflict) url += '&onConflict=' + encodeURIComponent(onConflict);
+        if (check) url += '&check=1&size=' + encodeURIComponent(String(size));
+        return url;
+    }
+
+    // The inbox, below the root. Its sweep is run.sh's (upload_retention_days).
+    const INBOX = 'uploads';
+
+    /**
+     * What a folder row's "Upload here" looks like, from its listing entry:
+     * null when it is not offered at all (a symlinked folder, which the
+     * server refuses), else { disabled, hint, title }. The server makes the
+     * same checks; this only keeps the UI from offering what it would refuse.
+     */
+    function uploadTarget(entry, rootPath) {
+        if (!entry || entry.type !== 'dir' || entry.symlink) return null;
+        if (entry.sensitive) {
+            return {
+                disabled: true,
+                hint: 'Protected folders are never upload targets',
+                title: 'This folder may hold secrets, so nothing is uploaded into it.',
+            };
+        }
+        const rel = relativeTo(rootPath, entry.path);
+        if (rel.split('/')[0].toLowerCase() === 'deps') {
+            return {
+                disabled: true,
+                hint: 'Home Assistant manages this folder',
+                title: 'deps holds the Python packages Home Assistant installs, so nothing is uploaded into it.',
+            };
+        }
+        if (rel === INBOX) {
+            return {
+                disabled: false,
+                hint: 'Cleared after upload_retention_days',
+                title: 'Files here are deleted once they are older than the upload_retention_days option (30 days unless changed).',
+            };
+        }
+        return { disabled: false, hint: '', title: 'Upload files into this folder' };
+    }
+
+    // Control characters, and the invisible marks that reorder or hide
+    // text (bidirectional marks, embeddings, overrides and isolates, and
+    // the byte-order mark): the same ranges files-upload.js strips from
+    // upload names, so `photo<U+202E>gpj.exe` cannot read as `photoexe.jpg`
+    // in the notice either.
+    // eslint-disable-next-line no-control-regex
+    const INVISIBLE = /[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+
+    /** A file name from the user's device, as the sidebar shows it. */
+    function displayName(name) {
+        return String(name).replace(INVISIBLE, '');
+    }
+
+    /**
+     * The sidebar's line for a failed upload request: the server's own
+     * message when it sent one (it names the limit, the folder, the reason),
+     * prefixed with the file's name unless it names the file already, else
+     * one for the status. Status 0 is a request that never got an answer.
+     */
+    function uploadErrorText(status, data, name) {
+        const shown = displayName(name);
+        if (status === 0) return 'Could not reach the add-on to upload ' + shown + '. Check the connection and try again.';
+        const said = data && typeof data.error === 'string' ? data.error : '';
+        if (said) return said.includes(shown) ? said : shown + ': ' + said;
+        if (status === 413) return shown + ' is over the upload limit (the add-on\'s upload_max_mb option).';
+        return shown + ': upload failed (HTTP ' + status + ').';
+    }
+
+    /**
+     * The notice's lines after a batch, and its kind ('', 'busy', 'error'):
+     * what was uploaded (`results`, the server's answers), what the user
+     * cancelled (`skipped`), the folders a drop left out (`folders`), every
+     * refusal (`problems`, uploadErrorText lines), and what a 429 left
+     * untried (`busy`: the batch stops at the first one, so they get one
+     * line together rather than a refusal each).
+     */
+    function uploadSummary({ results = [], skipped = [], folders = [], problems = [], busy = [] } = {}) {
+        const lines = [];
+        const last = results[results.length - 1];
+        if (results.length > 1) {
+            lines.push('Uploaded ' + results.length + ' files to ' + last.dir + '.');
+        } else if (last) {
+            lines.push((last.replaced ? 'Replaced ' : 'Uploaded ') + displayName(last.name)
+                + (last.replaced ? ' in ' : ' to ') + last.dir + '.');
+        }
+        if (skipped.length) lines.push('Not uploaded: ' + skipped.map(displayName).join(', ') + '.');
+        if (folders.length) {
+            lines.push('Folders are not uploaded: ' + folders.map(displayName).join(', ')
+                + '. Drop the files inside them instead.');
+        }
+        lines.push(...problems.map((p) => '⚠️ ' + p));
+        if (busy.length) {
+            lines.push('⏳ ' + (busy.length === 1 ? displayName(busy[0]) : String(busy.length))
+                + ' not uploaded: too many uploads, try again in a minute.');
+        }
+        const kind = problems.length ? 'error' : busy.length ? 'busy' : '';
+        return { lines, kind };
+    }
+
+    const api = {
+        shellQuote, formatSize, formatAgo, clampWidth, relativeTo, downloadUrl,
+        uploadUrl, uploadTarget, uploadErrorText, displayName, uploadSummary, INBOX, DEFAULT_WIDTH,
+    };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.FilesSidebar = api;
 })(typeof self !== 'undefined' ? self : this);

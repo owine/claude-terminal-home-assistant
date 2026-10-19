@@ -280,12 +280,15 @@ test('a bound refusal names the largest files found so far', async () => {
     });
 });
 
-test('a *.part folder is not zipped', async () => {
-    write('blueprints/upload.part/inner.txt', 'inner');
+test('an upload-part folder is not zipped; another *.part folder is', async () => {
+    write('blueprints/.ctp-upload-0a1b2c3d4e5f6a7b.part/inner.txt', 'inner');
+    write('blueprints/mine.part/inner.txt', 'inner');
     try {
-        assert.deepStrictEqual(names(await downloads.planZip('blueprints')), BLUEPRINT_NAMES);
+        assert.deepStrictEqual(names(await downloads.planZip('blueprints')),
+            [...BLUEPRINT_NAMES, 'blueprints/mine.part/inner.txt'].sort());
     } finally {
-        fs.rmSync(path.join(root, 'blueprints', 'upload.part'), { recursive: true });
+        fs.rmSync(path.join(root, 'blueprints', '.ctp-upload-0a1b2c3d4e5f6a7b.part'), { recursive: true });
+        fs.rmSync(path.join(root, 'blueprints', 'mine.part'), { recursive: true });
     }
 });
 

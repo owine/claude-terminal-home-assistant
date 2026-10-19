@@ -1,7 +1,8 @@
 // Files sidebar UI: the /config tree, the file preview with Insert path and
-// Download, the protected toggle, the folder ⋯ menu and its zip download,
-// the notice line, Recent changes, the HA configuration check, and the
-// sidebar's open state, tabs and resizable width. The pure helpers it uses
+// Download, the protected toggle, the folder ⋯ menu with its zip download
+// and Upload here, uploads (the Upload button, drops, the collision prompt,
+// progress), the notice line, Recent changes, the HA configuration check,
+// and the sidebar's open state, tabs and resizable width. The pure helpers it uses
 // (quoting, sizes, URLs) are files-sidebar.js, which loads before this.
 //
 // Browser only, no module system: this attaches window.FilesSidebarUI and
@@ -61,6 +62,15 @@
         const menu = document.getElementById('files-menu');
         const notice = document.getElementById('files-notice');
         const noticeText = document.getElementById('files-notice-text');
+        const noticeProgress = document.getElementById('files-notice-progress');
+        const noticeClose = document.getElementById('files-notice-close');
+        const uploadBtn = document.getElementById('files-upload-btn');
+        const uploadInput = document.getElementById('files-upload-input');
+        const prompt = document.getElementById('files-prompt');
+        const promptText = document.getElementById('files-prompt-text');
+        const promptReplace = document.getElementById('files-prompt-replace');
+        const promptKeep = document.getElementById('files-prompt-keep');
+        const promptCancel = document.getElementById('files-prompt-cancel');
 
         const PHONE = window.matchMedia('(max-width: 700px)');
         const STORE = { open: 'filesSidebar.open', width: 'filesSidebar.width', tab: 'filesSidebar.tab' };
@@ -84,6 +94,12 @@
         // has the same path as a stale reply still in flight.
         let previewGen = 0;
         let selectedRow = null;
+        // Per row, for reveal() and drops: the listing entry a row shows, a
+        // folder row's opener, and a folder's wrap as a drop target.
+        const rowEntries = new WeakMap();
+        const folderOpeners = new WeakMap();
+        const dropFolders = new WeakMap();
+        let rootRender = null;   // the Files tree's top level, while it loads
 
         // A refusal throws with its HTTP status and the server's own
         // message (when it sent one) attached. A network failure is
@@ -113,6 +129,7 @@
             const row = document.createElement('button');
             row.type = 'button';
             row.className = 'files-row' + (entry.sensitive ? ' sensitive' : '');
+            row.dataset.path = entry.path;
             row.style.paddingLeft = (8 + depth * 14) + 'px';
             if (!entry.sensitive) row.title = entry.path;
             else if (entry.type === 'dir') row.title = entry.path + ' (protected: its files open only with Show protected files on; never zipped)';
@@ -179,10 +196,12 @@
                 // contents a group named after it. Not a role="tree": only
                 // treeitems may sit in one, so the ⋯ could not, and a tree
                 // promises arrow-key navigation this list never had.
+                rowEntries.set(row, entry);
                 if (entry.type === 'dir') {
                     const wrap = document.createElement('div');
                     wrap.className = 'files-row-wrap';
                     wrap.append(row, makeMenuButton(entry));
+                    dropFolders.set(wrap, entry);
                     container.append(wrap);
                 } else {
                     container.append(row);
@@ -194,17 +213,25 @@
                     children.hidden = true;
                     container.append(children);
                     row.setAttribute('aria-expanded', 'false');
-                    let loaded = false;
-                    row.addEventListener('click', () => {
-                        select(row);
-                        const open = children.hidden;
+                    const expand = (open) => {
                         children.hidden = !open;
                         row.setAttribute('aria-expanded', String(open));
                         row.firstChild.textContent = open ? '▾' : '▸';
-                        if (open && !loaded) {
-                            loaded = true;
-                            renderFolder(entry.path, children, depth + 1);
-                        }
+                    };
+                    // Opens the folder, listing it the first time, or again
+                    // with `reload` (reveal(), after an upload into it).
+                    // Resolves once its listing is in.
+                    let loading = null;
+                    const open = ({ reload = false } = {}) => {
+                        expand(true);
+                        if (!loading || reload) loading = renderFolder(entry.path, children, depth + 1);
+                        return loading;
+                    };
+                    folderOpeners.set(row, open);
+                    row.addEventListener('click', () => {
+                        select(row);
+                        if (children.hidden) open();
+                        else expand(false);
                     });
                 } else {
                     row.addEventListener('click', () => { select(row); openPreview(entry.path, entry.sensitive); });
@@ -243,25 +270,72 @@
             recentHours.hidden = currentTab !== 'recent';
             selectedRow = null;
             const gen = ++viewGen;
-            if (currentTab === 'files') renderFolder(rootPath, list, 0, gen);
-            else renderRecent(gen);
+            if (currentTab === 'files') {
+                rootRender = renderFolder(rootPath, list, 0, gen);
+            } else {
+                rootRender = null;
+                renderRecent(gen);
+            }
         }
 
         // kind: '' (news), 'busy' (try again shortly) or 'error'.
-        // Returns the notice's generation, bumped by every showNotice
-        // (a dismissal included), for showNoticeIf.
-        let noticeGen = 0;
-        function showNotice(text, kind = '') {
-            noticeText.textContent = text;
+        // `fraction` (0 to 1) shows the progress bar; null hides it. The
+        // text is only replaced when it changes: the notice is a live
+        // region, and an upload's progress must not be read out at every
+        // step (the bar carries it).
+        function setNotice(text, kind, fraction) {
+            const changed = noticeText.textContent !== text || notice.hidden !== !text;
+            if (noticeText.textContent !== text) noticeText.textContent = text;
             notice.className = kind;
             notice.hidden = !text;
+            noticeProgress.hidden = fraction === null;
+            if (fraction !== null) noticeProgress.value = fraction;
+            if (changed) fitNoticeScroll();
+        }
+        // A long notice scrolls (its max-height, in index.html). Safari puts
+        // a scrolling box in the Tab order only with a tabindex, so without
+        // one the keyboard cannot read what is below. It gets one while it
+        // overflows, and only then: a tab stop on a line that fits would be
+        // one for nothing. Checked when the text changes (at once: a
+        // ResizeObserver can run frames later), and when the box changes
+        // size for any other reason: the sidebar reopened (closed, nothing
+        // scrolls), resized, or the window. With focus on it when it stops
+        // scrolling, it keeps the tab stop until focus leaves: moving focus
+        // would lose the reader's place.
+        function fitNotice(focused) {
+            if (noticeText.scrollHeight > noticeText.clientHeight) {
+                noticeText.setAttribute('tabindex', '0');
+            } else if (noticeText.hasAttribute('tabindex') && !focused) {
+                noticeText.removeAttribute('tabindex');
+            }
+        }
+        const fitNoticeScroll = () => fitNotice(document.activeElement === noticeText);
+        noticeText.addEventListener('blur', () => fitNotice(false));
+        // Old iOS WebViews (before 13.4) have no ResizeObserver: there the
+        // check on every text change (setNotice) is the only one.
+        if (typeof ResizeObserver === 'function') new ResizeObserver(fitNoticeScroll).observe(noticeText);
+        // The notice's generation. Only what starts something new advances
+        // it: a progress line ("Preparing …", "Uploading …") and a
+        // dismissal. An operation's later lines go through showNoticeIf
+        // with the generation its progress line got, so an older zip's or
+        // upload's news cannot overwrite a newer one's.
+        let noticeGen = 0;
+        function showProgress(text, fraction = null) {
+            setNotice(text, '', fraction);
             return ++noticeGen;
         }
-        // Only if nothing has replaced notice `gen` since: an older zip's
-        // good news must not overwrite a newer one's. Refusals do not
-        // use it; they always show.
-        function showNoticeIf(gen, text, kind = '') {
-            if (gen === noticeGen) showNotice(text, kind);
+        // Refusals and results always show, and leave the generation alone:
+        // an older zip's late refusal used to take it, and with it the
+        // newer zip's "Downloading …" line that came after.
+        function showNotice(text, kind = '') {
+            setNotice(text, kind, null);
+        }
+        function showNoticeIf(gen, text, kind = '', fraction = null) {
+            if (gen === noticeGen) setNotice(text, kind, fraction);
+        }
+        function dismissNotice() {
+            setNotice('', '', null);
+            ++noticeGen;
         }
 
         // What a refused zip preflight says in the notice. 429 is the
@@ -304,7 +378,7 @@
             if (zipsPreparing.has(entry.path)) return;
             zipsPreparing.add(entry.path);
             const zipName = entry.name + '.zip';
-            const gen = showNotice('Preparing ' + zipName + '…');
+            const gen = showProgress('Preparing ' + zipName + '…');
             let plan;
             try {
                 plan = await getJson(helpers.downloadUrl(entry.path, { zip: true, check: true }));
@@ -327,12 +401,13 @@
         }
 
         // Folder actions, behind the always-visible ⋯ on each folder row
-        // (hover-only controls do not exist on a touch screen). A list,
-        // so another action (the upload PR's "Upload here") is one more
-        // entry. `hint` is shown under a disabled action, since a tooltip
-        // is out of reach on touch.
+        // (hover-only controls do not exist on a touch screen). `hint` is
+        // shown under the action, since a tooltip is out of reach on touch:
+        // why it is disabled, or what to know before using it. Upload here
+        // is not offered at all on a symlinked folder (uploads into one are
+        // refused); helpers.uploadTarget decides, as the server does.
         function folderActions(entry) {
-            return [{
+            const actions = [{
                 label: 'Download as zip',
                 disabled: !!entry.sensitive,
                 hint: entry.sensitive ? 'Protected folders are never zipped' : '',
@@ -341,6 +416,17 @@
                     : 'Download this folder as a .zip; protected files are left out',
                 run: () => downloadZip(entry),
             }];
+            const target = helpers.uploadTarget(entry, rootPath);
+            if (target) {
+                actions.push({
+                    label: 'Upload here',
+                    disabled: target.disabled,
+                    hint: target.hint,
+                    title: target.title,
+                    run: () => pickFiles(entry.path),
+                });
+            }
+            return actions;
         }
 
         let menuOwner = null;   // the ⋯ button whose menu is open
@@ -378,19 +464,17 @@
                 item.tabIndex = -1;
                 item.textContent = action.label;
                 item.title = action.title || '';
-                if (action.disabled) {
-                    item.setAttribute('aria-disabled', 'true');
-                    // On screen inside the item, but read as its
-                    // description, not as part of its name.
-                    if (action.hint) {
-                        const hint = document.createElement('span');
-                        hint.className = 'files-menu-hint';
-                        hint.id = 'files-menu-hint-' + menu.childElementCount;
-                        hint.setAttribute('aria-hidden', 'true');
-                        hint.textContent = action.hint;
-                        item.append(hint);
-                        item.setAttribute('aria-describedby', hint.id);
-                    }
+                if (action.disabled) item.setAttribute('aria-disabled', 'true');
+                // On screen inside the item, but read as its description,
+                // not as part of its name.
+                if (action.hint) {
+                    const hint = document.createElement('span');
+                    hint.className = 'files-menu-hint';
+                    hint.id = 'files-menu-hint-' + menu.childElementCount;
+                    hint.setAttribute('aria-hidden', 'true');
+                    hint.textContent = action.hint;
+                    item.append(hint);
+                    item.setAttribute('aria-describedby', hint.id);
                 }
                 item.addEventListener('click', () => {
                     if (action.disabled) return;   // stays open, its reason showing
@@ -451,6 +535,262 @@
             a.hidden = true;
             document.body.append(a);
             try { a.click(); } finally { a.remove(); }
+        }
+
+        // --- Uploads ---
+        //
+        // One file per request, one after another, each asked about first
+        // (check=1, no body), so a refusal - a name already taken, the size
+        // limit, a protected folder - comes back as an answer: one sent
+        // before a big body has been read is often lost behind ingress, and
+        // the browser shows only a network error. A sidebar upload never
+        // types into the terminal: it reveals the new file and, while the
+        // user is still in the sidebar, opens its preview (a protected one
+        // only with Show protected files on).
+
+        let pickDest;   // where the next pick goes; undefined is the inbox
+        let uploadChain = Promise.resolve();
+        // Files picked or dropped and not yet started, in the running batch
+        // and in those queued behind it: a waiting question counts them.
+        let filesWaiting = 0;
+
+        // The same input for the Upload button and every Upload here, so
+        // pickDest says which it was. Emptied first: holding its last
+        // selection, a pick of the same file again would fire no change.
+        function pickFiles(dest) {
+            pickDest = dest;
+            uploadInput.value = '';
+            uploadInput.click();
+        }
+
+        // The check=1 question: { status, data }, status 0 when no answer
+        // came.
+        async function askUpload(url) {
+            try {
+                const res = await fetch(url, { method: 'POST', cache: 'no-store' });
+                return { status: res.status, data: await res.json().catch(() => ({})) };
+            } catch (err) {
+                return { status: 0, data: { error: err.message } };
+            }
+        }
+
+        // The upload itself, by XHR: fetch reports no upload progress. The
+        // body is the file's bytes as they are.
+        function sendFile(url, file, onProgress) {
+            return new Promise((resolve) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', url);
+                xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable && e.total) onProgress(e.loaded / e.total);
+                };
+                xhr.onload = () => {
+                    let data = {};
+                    try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+                    resolve({ status: xhr.status, data });
+                };
+                xhr.onerror = () => resolve({ status: 0, data: {} });
+                xhr.onabort = () => resolve({ status: 0, data: {} });
+                xhr.send(file);
+            });
+        }
+
+        // The inline Replace / Keep both / Cancel question for a name that
+        // is taken. Never confirm(), which would block the page and the
+        // terminal with it. Resolves to 'replace', 'keep-both' or null
+        // (Cancel, Escape). Replace is offered only for a regular file.
+        //
+        // It can come minutes after the pick, mid-batch, or from a drop
+        // made while typing in the terminal. So it takes focus only from
+        // the sidebar itself (or from nowhere), and then puts it on Keep
+        // both, which loses nothing: focus pulled out of the terminal would
+        // let the next Enter answer a question nobody saw, and with the
+        // preview open Escape would answer it instead of closing the
+        // preview. Otherwise the notice, a live region, asks for the answer.
+        let answerPrompt = null;
+        function askCollision(text, replaceable) {
+            return new Promise((resolve) => {
+                const returnTo = document.activeElement;
+                const takeFocus = !preview.classList.contains('active')
+                    && (!returnTo || returnTo === document.body || sidebar.contains(returnTo));
+                showProgress(text + ' Answer in the Files sidebar.'
+                    + (filesWaiting ? ' ' + filesWaiting + ' more waiting.' : ''));
+                promptText.textContent = text;
+                promptReplace.hidden = !replaceable;
+                prompt.hidden = false;
+                answerPrompt = (choice) => {
+                    answerPrompt = null;
+                    const hadFocus = prompt.contains(document.activeElement);
+                    prompt.hidden = true;
+                    promptText.textContent = '';
+                    // Back where it came from; from nowhere (the page
+                    // body), from something gone since (a row the tree
+                    // drew again), or from something hidden since, where
+                    // focus() does not take, to Upload rather than the page.
+                    if (hadFocus) {
+                        const back = returnTo && returnTo !== document.body && returnTo.isConnected ? returnTo : uploadBtn;
+                        back.focus({ preventScroll: true });
+                        if (document.activeElement !== back) uploadBtn.focus({ preventScroll: true });
+                    }
+                    resolve(choice);
+                };
+                if (takeFocus) promptKeep.focus({ preventScroll: true });
+            });
+        }
+
+        // One file: { result } once it is in /config, { problem, status }
+        // when it was refused or failed, { skipped } when the user cancelled.
+        // The name goes to the server as it is (which cleans it); the notice
+        // shows it without invisible marks.
+        async function uploadOne(file, dest, counter) {
+            const name = file.name;
+            const shown = helpers.displayName(name);
+            showProgress('Checking ' + shown + counter + '…');
+            const asked = await askUpload(helpers.uploadUrl({ name, dest, check: true, size: file.size }));
+            let onConflict;
+            if (asked.status === 409 && asked.data.reason === 'exists') {
+                onConflict = await askCollision(asked.data.error || shown + ' already exists.', asked.data.replaceable === true);
+                if (!onConflict) return { skipped: name };
+            } else if (asked.status !== 200) {
+                return { problem: helpers.uploadErrorText(asked.status, asked.data, name), status: asked.status };
+            }
+            const line = 'Uploading ' + shown + counter + '…';
+            const gen = showProgress(line, 0);
+            const sent = await sendFile(helpers.uploadUrl({ name, dest, onConflict }), file,
+                (fraction) => showNoticeIf(gen, line, '', fraction));
+            if (sent.status !== 200 || typeof sent.data.path !== 'string') {
+                return { problem: helpers.uploadErrorText(sent.status, sent.data, name), status: sent.status };
+            }
+            return { result: sent.data };
+        }
+
+        // The listed row for a path, if one is on screen.
+        const rowFor = (p) => Array.from(list.querySelectorAll('.files-row')).find((r) => r.dataset.path === p) || null;
+
+        // Show a file in the tree: the Files tab, each folder down to it
+        // opened, and the folder it is in listed afresh, since the file is
+        // new. Resolves to its row, or null when it cannot be shown (a
+        // dotfolder with Hidden files off, say).
+        async function reveal(filePath) {
+            const rel = helpers.relativeTo(rootPath, filePath);
+            if (rel === filePath) return null;   // not below the root
+            if (currentTab !== 'files') switchTab('files');
+            if (rootRender) await rootRender;
+            const folders = rel.split('/').slice(0, -1);
+            // Lists again whatever holds the next folder: the root (a
+            // refresh) or the folder above (its opener).
+            let relist = () => { refresh(); return rootRender; };
+            if (!folders.length) {
+                await relist();
+                return rowFor(filePath);
+            }
+            let dir = rootPath;
+            for (let i = 0; i < folders.length; i++) {
+                dir += '/' + folders[i];
+                let row = rowFor(dir);
+                if (!row) {   // made since it was listed: the inbox, the first time
+                    await relist();
+                    row = rowFor(dir);
+                }
+                const open = row && folderOpeners.get(row);
+                if (!open) return null;
+                relist = () => open({ reload: true });
+                await open({ reload: i === folders.length - 1 });
+            }
+            return rowFor(filePath);
+        }
+
+        // Where the user is when a batch ends, which can be minutes after
+        // it began: still in the open sidebar (focus in it, or nowhere), or
+        // gone back to the terminal or elsewhere.
+        function stillInSidebar() {
+            const active = document.activeElement;
+            return !sidebar.classList.contains('collapsed')
+                && (!active || active === document.body || sidebar.contains(active));
+        }
+
+        // After a batch: one line for it, with every refusal, then the last
+        // file uploaded revealed and, if the user is still in the sidebar,
+        // previewed. The preview covers the whole page: sprung on someone
+        // typing in the terminal it would take their keys, and a drop on
+        // it would once have gone to the terminal. A protected file is
+        // revealed but not opened unless Show protected files is on.
+        async function finishBatch(outcome) {
+            const { lines, kind } = helpers.uploadSummary(outcome);
+            const last = outcome.results[outcome.results.length - 1];
+            if (!last) {
+                showNotice(lines.join('\n'), kind);
+                return;
+            }
+            const row = await reveal(last.path);
+            const entry = row && rowEntries.get(row);
+            if (row) {
+                select(row);
+                row.scrollIntoView({ block: 'nearest' });
+            }
+            if (entry && entry.sensitive && !showProtected.checked) {
+                lines.splice(1, 0, helpers.displayName(last.name) + ' is protected: turn on Show protected files to open it.');
+                showNotice(lines.join('\n'), kind);
+                return;
+            }
+            showNotice(lines.join('\n'), kind);
+            const refused = outcome.problems.length || outcome.busy.length;
+            if (entry && !refused && stillInSidebar()) openPreview(entry.path, entry.sensitive);
+        }
+
+        // The notice's dismiss button goes while a batch runs: dismissing
+        // cannot cancel an upload (not offered yet), and an × beside
+        // "Uploading …" reads as one. Focus on it moves to Upload.
+        function setUploading(on) {
+            if (on && document.activeElement === noticeClose) uploadBtn.focus({ preventScroll: true });
+            noticeClose.hidden = on;
+        }
+
+        // `folders`: what a drop left out, named in the batch's line.
+        async function runBatch(files, dest, folders) {
+            const results = [];
+            const problems = [];
+            const skipped = [];
+            let busy = [];
+            let started = 0;
+            setUploading(true);
+            try {
+                try {
+                    for (let i = 0; i < files.length; i++) {
+                        filesWaiting--;
+                        started++;
+                        const counter = files.length > 1 ? ' (' + (i + 1) + ' of ' + files.length + ')' : '';
+                        const done = await uploadOne(files[i], dest, counter);
+                        // Too many uploads: the rest would only be refused
+                        // too, each spending another request. Stop here.
+                        if (done.status === 429) {
+                            busy = files.slice(i).map((f) => f.name);
+                            break;
+                        }
+                        if (done.result) results.push(done.result);
+                        else if (done.problem) problems.push(done.problem);
+                        else skipped.push(done.skipped);
+                    }
+                } finally {
+                    filesWaiting -= files.length - started;   // what a failure left unstarted
+                }
+                await finishBatch({ results, problems, skipped, folders, busy });
+            } finally {
+                setUploading(false);
+            }
+        }
+
+        // Batches queue behind each other, so their prompts come one at a
+        // time and in order. No dest is the inbox.
+        function uploadFiles(files, dest, folders = []) {
+            const batch = Array.from(files);
+            if (!batch.length) return uploadChain;
+            filesWaiting += batch.length;
+            uploadChain = uploadChain.then(() => runBatch(batch, dest, folders)).catch((err) => {
+                console.error('[wrapper] upload failed:', err);
+                showNotice('⚠️ Upload failed: ' + err.message, 'error');
+            });
+            return uploadChain;
         }
 
         async function openPreview(filePath, sensitive) {
@@ -575,9 +915,9 @@
         recentHours.addEventListener('change', refresh);
         refreshBtn.addEventListener('click', refresh);
 
-        // Insert path: types the quoted path at the prompt, no Enter - the
-        // same sendInput() the upload button uses. On a phone the open
-        // sidebar covers the terminal, so it closes first.
+        // Insert path: types the quoted path at the prompt, no Enter,
+        // through the page's injectIntoTerminal (handed to init). On a phone
+        // the open sidebar covers the terminal, so it closes first.
         document.getElementById('files-insert-btn').addEventListener('click', async () => {
             if (!previewPath) return;
             const text = helpers.shellQuote(previewPath);
@@ -644,7 +984,120 @@
             closeMenu();
         });
         window.addEventListener('blur', () => closeMenu({ restoreFocus: false }));
-        document.getElementById('files-notice-close').addEventListener('click', () => showNotice(''));
+        document.getElementById('files-notice-close').addEventListener('click', dismissNotice);
+
+        uploadBtn.addEventListener('click', () => pickFiles(undefined));
+        uploadInput.addEventListener('change', () => {
+            const files = Array.from(uploadInput.files || []);
+            uploadInput.value = '';
+            uploadFiles(files, pickDest);
+        });
+        promptReplace.addEventListener('click', () => answerPrompt?.('replace'));
+        promptKeep.addEventListener('click', () => answerPrompt?.('keep-both'));
+        promptCancel.addEventListener('click', () => answerPrompt?.(null));
+        prompt.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            e.preventDefault();
+            e.stopPropagation();
+            answerPrompt?.(null);
+        });
+
+        // Files dropped on the sidebar: onto a folder row means Upload here,
+        // anywhere else the inbox. Every drag event that carries files stops
+        // here, so the page's terminal drop handler (on document, in
+        // index.html) never also takes a drop meant for the sidebar, and its
+        // overlay never shows while the drag is over the sidebar.
+        const carriesFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+        const dropWrapOf = (e) => {
+            const wrap = e.target instanceof Element ? e.target.closest('.files-row-wrap') : null;
+            return wrap && list.contains(wrap) ? wrap : null;
+        };
+        let dropHighlight = null;
+        function highlightDrop(wrap) {
+            if (dropHighlight === wrap) return;
+            if (dropHighlight) dropHighlight.classList.remove('drop-target');
+            dropHighlight = wrap;
+            if (wrap) wrap.classList.add('drop-target');
+        }
+        function endDropHover() {
+            sidebar.classList.remove('drop-active');
+            highlightDrop(null);
+        }
+        for (const type of ['dragenter', 'dragover']) {
+            sidebar.addEventListener(type, (e) => {
+                if (!carriesFiles(e)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = 'copy';
+                sidebar.classList.add('drop-active');
+                highlightDrop(dropWrapOf(e));
+            });
+        }
+        sidebar.addEventListener('dragleave', (e) => {
+            if (!carriesFiles(e)) return;
+            e.stopPropagation();
+            if (!e.relatedTarget || !sidebar.contains(e.relatedTarget)) endDropHover();
+        });
+        sidebar.addEventListener('drop', (e) => {
+            if (!carriesFiles(e)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const wrap = dropWrapOf(e);
+            endDropHover();
+            // Read now: a drop's data is gone once its event is over. A
+            // dropped folder arrives as a File too; it is left out, and
+            // named in the batch's line.
+            const items = Array.from(e.dataTransfer.items || []).filter((i) => i.kind === 'file');
+            const folders = [];
+            const files = [];
+            if (items.length) {
+                for (const item of items) {
+                    const asEntry = item.webkitGetAsEntry?.();
+                    const file = asEntry?.isDirectory ? null : item.getAsFile();
+                    if (asEntry?.isDirectory) folders.push(asEntry.name);
+                    else if (file) files.push(file);
+                }
+            } else {
+                files.push(...Array.from(e.dataTransfer.files || []));
+            }
+            if (!files.length) {
+                showNotice('⚠️ Folders cannot be uploaded. Drop the files inside them instead.', 'error');
+                return;
+            }
+            if (!wrap) {
+                uploadFiles(files, undefined, folders);
+                return;
+            }
+            const entry = dropFolders.get(wrap);
+            const target = helpers.uploadTarget(entry, rootPath);
+            if (!target || target.disabled) {
+                showNotice('⚠️ Not uploaded: ' + (target ? target.title
+                    : entry.name + ' is a link to a folder. Drop the files onto the folder itself.'), 'error');
+                return;
+            }
+            uploadFiles(files, entry.path, folders);
+        });
+
+        // Files dragged over the open preview. It covers the whole page, so
+        // a drop there has no target the user can see: refused (the cursor
+        // says so during the drag), never uploaded somewhere they did not
+        // pick, and stopped here, so the page's terminal drop handler (on
+        // document) never sends an image to /data/images and types its
+        // path for a sidebar upload, nor shows its overlay.
+        for (const type of ['dragenter', 'dragover', 'dragleave']) {
+            preview.addEventListener(type, (e) => {
+                if (!carriesFiles(e)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (type !== 'dragleave') e.dataTransfer.dropEffect = 'none';
+            });
+        }
+        preview.addEventListener('drop', (e) => {
+            if (!carriesFiles(e)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            showNotice('⚠️ Not uploaded: close the preview first, then drop the files onto the Files sidebar.', 'error');
+        });
 
         // previewPath is read at click time: a blanked preview has none,
         // and a protected file never goes out with the toggle off (by

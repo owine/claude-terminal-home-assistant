@@ -249,6 +249,15 @@ test('reads Sec-Fetch-Site case-insensitively', () => {
     assert.strictEqual(crossSite({ 'Sec-Fetch-Site': 'Cross-Site' }).passedOn, false);
 });
 
+test('words its refusal as the route asks, and downloads by default', () => {
+    const res = makeRes();
+    createCrossSiteGuard({ log: () => {}, message: 'Uploads cannot come from another site.' })(
+        makeReq({ method: 'POST', headers: { 'Sec-Fetch-Site': 'cross-site' } }), res, () => {});
+    assert.strictEqual(res.statusCode, 403);
+    assert.deepStrictEqual(res.body, { error: 'Uploads cannot come from another site.' });
+    assert.match(crossSite({ 'Sec-Fetch-Site': 'cross-site' }).res.body.error, /^Downloads cannot be started/);
+});
+
 test('logs a refused cross-site request', () => {
     const lines = [];
     crossSite({ 'Sec-Fetch-Site': 'cross-site' }, (line) => lines.push(line));
@@ -402,6 +411,23 @@ test('lets a client through again once its window has passed', () => {
 test('uses the caller-supplied message when rejecting', () => {
     const limiter = createRateLimiter({ windowMs: 1000, max: 0, message: 'slow down' });
     assert.deepStrictEqual(run(limiter, makeReq()).body, { error: 'slow down' });
+});
+
+test('peek answers what the limiter would, without spending a request', () => {
+    // check=1 asks whether an upload would go through: it must hear the
+    // upload limiter's 429, but asking must not use up an upload.
+    let clock = 1000;
+    const limiter = createRateLimiter({ windowMs: 1000, max: 2, message: 'Too many uploads', now: () => clock });
+    const req = makeReq();
+    for (let i = 0; i < 5; i++) assert.strictEqual(run(limiter.peek, req).allowed, true, `peek ${i + 1}`);
+    assert.strictEqual(run(limiter, req).allowed, true);
+    assert.strictEqual(run(limiter, req).allowed, true);
+    assert.deepStrictEqual(run(limiter.peek, req), { allowed: false, status: 429, body: { error: 'Too many uploads' } });
+    assert.strictEqual(run(limiter, req).allowed, false);
+    // per client address, and the window slides for it too
+    assert.strictEqual(run(limiter.peek, makeReq({ ip: '10.0.0.2' })).allowed, true);
+    clock += 1001;
+    assert.strictEqual(run(limiter.peek, req).allowed, true);
 });
 
 test('falls back to the socket address when req.ip is unset', () => {

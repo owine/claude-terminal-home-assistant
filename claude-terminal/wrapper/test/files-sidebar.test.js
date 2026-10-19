@@ -15,6 +15,11 @@ const {
     clampWidth,
     relativeTo,
     downloadUrl,
+    uploadUrl,
+    uploadTarget,
+    uploadErrorText,
+    displayName,
+    uploadSummary,
 } = require('../public/files-sidebar.js');
 
 test('plain paths are typed as-is', () => {
@@ -107,4 +112,77 @@ test('downloadUrl: relative and encoded; protected=1 for single files only', () 
         'api/files/download-zip?path=%2Fconfig%2Fblueprints&check=1');
     assert.strictEqual(downloadUrl('/config/x.yaml', { check: true }),
         'api/files/download?path=%2Fconfig%2Fx.yaml');
+});
+
+test('uploadUrl: relative and encoded; no dest is the inbox; check=1 carries the size', () => {
+    assert.strictEqual(uploadUrl({ name: 'a b&c=d#.txt' }),
+        'api/files/upload?name=a%20b%26c%3Dd%23.txt');
+    assert.strictEqual(uploadUrl({ name: 'x.yaml', dest: '/config/with space', onConflict: 'keep-both' }),
+        'api/files/upload?name=x.yaml&dest=%2Fconfig%2Fwith%20space&onConflict=keep-both');
+    assert.strictEqual(uploadUrl({ name: 'x.yaml', dest: '/config/b', check: true, size: 42 }),
+        'api/files/upload?name=x.yaml&dest=%2Fconfig%2Fb&check=1&size=42');
+    assert.strictEqual(uploadUrl({ name: 'x', dest: null }), 'api/files/upload?name=x');
+});
+
+test('uploadTarget: offered on real folders; disabled with a reason on protected ones and deps', () => {
+    const dir = (p, extra = {}) => ({ type: 'dir', path: p, ...extra });
+    assert.deepStrictEqual(uploadTarget(dir('/config/blueprints'), '/config'),
+        { disabled: false, hint: '', title: 'Upload files into this folder' });
+    assert.strictEqual(uploadTarget(dir('/config/bp-link', { symlink: true }), '/config'), null);
+    assert.strictEqual(uploadTarget({ type: 'file', path: '/config/a.yaml' }, '/config'), null);
+    assert.strictEqual(uploadTarget(dir('/config/.storage', { sensitive: true }), '/config').disabled, true);
+    assert.strictEqual(uploadTarget(dir('/config/deps'), '/config').disabled, true);
+    assert.strictEqual(uploadTarget(dir('/config/deps/lib'), '/config').disabled, true);
+    assert.strictEqual(uploadTarget(dir('/config/Deps'), '/config').disabled, true);
+    assert.strictEqual(uploadTarget(dir('/config/www/deps'), '/config').disabled, false);
+    const inbox = uploadTarget(dir('/config/uploads'), '/config');
+    assert.strictEqual(inbox.disabled, false);
+    assert.match(inbox.hint, /upload_retention_days/);
+    assert.strictEqual(uploadTarget(dir('/config/www/uploads'), '/config').hint, '');
+});
+
+test('uploadErrorText: the server\'s message, else one for the status', () => {
+    assert.strictEqual(uploadErrorText(413, { error: 'This file is 30.0 MB, over the 25 MB upload limit.' }, 'big.bin'),
+        'big.bin: This file is 30.0 MB, over the 25 MB upload limit.');
+    assert.match(uploadErrorText(413, {}, 'big.bin'), /upload_max_mb/);
+    assert.match(uploadErrorText(0, {}, 'a.txt'), /Could not reach the add-on to upload a\.txt/);
+    assert.strictEqual(uploadErrorText(502, null, 'a.txt'), 'a.txt: upload failed (HTTP 502).');
+    // A message that already names the file is not prefixed with it again.
+    assert.strictEqual(uploadErrorText(400, { error: 'x.git ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.' }, 'x.git'),
+        'x.git ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.');
+    // A Replace that overwrote the old file and then lost the upload says
+    // so as the server words it, never as "nothing was saved".
+    const overwritten = 'old.txt in /config/dir was overwritten, but what is there now is not the upload: '
+        + 'it was moved or replaced as it was put in place. The previous old.txt is gone.';
+    assert.strictEqual(uploadErrorText(409, { reason: 'changed', replaced: true, error: overwritten }, 'old.txt'), overwritten);
+    // Names from the device are shown without the marks that reorder text.
+    assert.strictEqual(uploadErrorText(502, null, 'photo\u202Egpj.exe'), 'photogpj.exe: upload failed (HTTP 502).');
+});
+
+test('displayName: strips control characters and the bidi marks the server strips', () => {
+    assert.strictEqual(displayName('photo\u202Egpj.exe'), 'photogpj.exe');
+    assert.strictEqual(displayName('a\u200eb\u200fc\u202ad\u202be\u202cf\u202dg\u2066h\u2067i\u2068j\u2069k\ufeffl'), 'abcdefghijkl');
+    assert.strictEqual(displayName('tab\there\nnew\u0085line\u007f'), 'tabherenewline');
+    assert.strictEqual(displayName('café ünï 日本.txt'), 'café ünï 日本.txt');
+});
+
+test('uploadSummary: one line per kind of outcome, in order, and its kind', () => {
+    const r = (name, extra = {}) => ({ name, dir: '/config/uploads', path: '/config/uploads/' + name, ...extra });
+    assert.deepStrictEqual(uploadSummary({ results: [r('a.txt')] }),
+        { lines: ['Uploaded a.txt to /config/uploads.'], kind: '' });
+    assert.deepStrictEqual(uploadSummary({ results: [r('a.txt', { replaced: true, dir: '/config/x' })] }).lines,
+        ['Replaced a.txt in /config/x.']);
+    assert.deepStrictEqual(uploadSummary({ results: [r('a'), r('b')], skipped: ['c', 'd\u202E'] }),
+        { lines: ['Uploaded 2 files to /config/uploads.', 'Not uploaded: c, d.'], kind: '' });
+    // A drop of folders and files: the folders are named, not silently dropped.
+    assert.deepStrictEqual(uploadSummary({ results: [r('a')], folders: ['photos', 'docs'] }).lines,
+        ['Uploaded a to /config/uploads.', 'Folders are not uploaded: photos, docs. Drop the files inside them instead.']);
+    // A 429 stops the batch: one line for everything it left, not one per file.
+    assert.deepStrictEqual(uploadSummary({ results: [r('a')], busy: ['b', 'c', 'd'] }),
+        { lines: ['Uploaded a to /config/uploads.', '⏳ 3 not uploaded: too many uploads, try again in a minute.'], kind: 'busy' });
+    assert.deepStrictEqual(uploadSummary({ busy: ['only.txt'] }).lines,
+        ['⏳ only.txt not uploaded: too many uploads, try again in a minute.']);
+    assert.deepStrictEqual(uploadSummary({ problems: ['x: nope.'], busy: ['b'] }),
+        { lines: ['⚠️ x: nope.', '⏳ b not uploaded: too many uploads, try again in a minute.'], kind: 'error' });
+    assert.deepStrictEqual(uploadSummary({}), { lines: [], kind: '' });
 });
