@@ -85,7 +85,45 @@
         }
     }
 
-    const api = { visibleHeight, outerViewport, MIN_HEIGHT };
+    /**
+     * Call `handler` on the top window's viewport resizes and scrolls (the
+     * keyboard, a pan, a pinch-zoom) until `win` unloads. Returns a teardown;
+     * it and the pagehide that calls it remove the listeners once.
+     *
+     * The top viewport outlives this frame: HA drops the ingress iframe when
+     * the user leaves the panel and makes a new one on return. Listeners left
+     * behind would keep firing, and keep each dead document alive.
+     *
+     * A persisted pagehide (the tab entering the back-forward cache) keeps
+     * them: HA's window is frozen along with this one, so nothing leaks, and
+     * the page could come back without the fit.
+     *
+     * Never throws. `outer.viewport` belongs to another window, which may
+     * have turned cross-origin or be gone, so every call on it is guarded.
+     */
+    function watchOuterViewport(win, outer, handler) {
+        const viewport = outer && outer.viewport;
+        if (!viewport) return () => {};
+        let done = false;
+        const attempt = (fn) => { try { fn(); } catch { /* see above */ } };
+        function teardown() {
+            if (done) return;
+            done = true;
+            attempt(() => viewport.removeEventListener('resize', handler));
+            attempt(() => viewport.removeEventListener('scroll', handler));
+            attempt(() => win.removeEventListener('pagehide', onPageHide));
+        }
+        function onPageHide(event) {
+            if (event && event.persisted) return;
+            teardown();
+        }
+        attempt(() => viewport.addEventListener('resize', handler));
+        attempt(() => viewport.addEventListener('scroll', handler));
+        attempt(() => win.addEventListener('pagehide', onPageHide));
+        return teardown;
+    }
+
+    const api = { visibleHeight, outerViewport, watchOuterViewport, MIN_HEIGHT };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.ViewportFit = api;
 })(typeof self !== 'undefined' ? self : this);

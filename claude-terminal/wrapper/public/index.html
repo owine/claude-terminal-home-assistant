@@ -2120,18 +2120,10 @@
 
             vv.addEventListener('resize', updateHeight);
             // The top window's viewport, when it is reachable: the keyboard
-            // resizes it, and a pan or pinch-zoom scrolls it. outerViewport
-            // already returns null on any cross-origin access, but adding a
-            // listener to another window's object is guarded all the same.
-            const outer = fit && fit.outerViewport(window);
-            if (outer) {
-                try {
-                    outer.viewport.addEventListener('resize', updateHeight);
-                    outer.viewport.addEventListener('scroll', updateHeight);
-                } catch (e) {
-                    console.error('[wrapper] could not follow the outer viewport:', e);
-                }
-            }
+            // resizes it, and a pan or pinch-zoom scrolls it. It outlives
+            // this frame (HA drops the ingress iframe on leaving the panel),
+            // so the watcher takes its listeners off again on pagehide.
+            if (fit) fit.watchOuterViewport(window, fit.outerViewport(window), updateHeight);
             // Set initial value
             updateHeight();
         })();

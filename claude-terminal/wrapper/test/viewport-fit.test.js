@@ -10,7 +10,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { visibleHeight, outerViewport, MIN_HEIGHT } = require('../public/viewport-fit.js');
+const { visibleHeight, outerViewport, watchOuterViewport, MIN_HEIGHT } = require('../public/viewport-fit.js');
 
 // An HA-shaped top window: 844 tall (an iPhone), the panel iframe 56 px down,
 // below HA's header.
@@ -145,4 +145,115 @@ test('a top window without visualViewport gives no outer viewport', () => {
 test('no window at all gives no outer viewport', () => {
     assert.strictEqual(outerViewport(undefined), null);
     assert.strictEqual(outerViewport(null), null);
+});
+
+// --- watchOuterViewport ---
+//
+// The listeners go on HA's top viewport, which outlives this frame: HA drops
+// the ingress iframe when the user leaves the panel and makes a new one on
+// return. Left attached, each visit's listeners keep firing and keep the dead
+// document (wrapper, ttyd frame, xterm buffers) alive.
+
+// An event target that records add/remove calls and can fire its listeners.
+function fakeTarget() {
+    const listeners = new Map();
+    const t = {
+        added: [],
+        removed: [],
+        addEventListener(type, fn) {
+            t.added.push(type);
+            if (!listeners.has(type)) listeners.set(type, new Set());
+            listeners.get(type).add(fn);
+        },
+        removeEventListener(type, fn) {
+            t.removed.push(type);
+            if (listeners.has(type)) listeners.get(type).delete(fn);
+        },
+        fire(type, event = {}) {
+            for (const fn of [...(listeners.get(type) || [])]) fn(event);
+        },
+        count: (type) => (listeners.get(type) || new Set()).size,
+    };
+    return t;
+}
+
+test('the outer viewport gets resize and scroll listeners for the handler', () => {
+    const win = fakeTarget();
+    const viewport = fakeTarget();
+    let calls = 0;
+    watchOuterViewport(win, { viewport }, () => { calls += 1; });
+    assert.deepStrictEqual(viewport.added.sort(), ['resize', 'scroll']);
+    viewport.fire('resize');
+    viewport.fire('scroll');
+    assert.strictEqual(calls, 2);
+});
+
+test('the frame unloading removes both outer listeners, once', () => {
+    const win = fakeTarget();
+    const viewport = fakeTarget();
+    watchOuterViewport(win, { viewport }, () => {});
+    assert.deepStrictEqual(win.added, ['pagehide']);
+    win.fire('pagehide', { persisted: false });
+    assert.deepStrictEqual(viewport.removed.sort(), ['resize', 'scroll']);
+    assert.strictEqual(viewport.count('resize') + viewport.count('scroll'), 0);
+    // A second pagehide (or any later teardown) must not remove again.
+    win.fire('pagehide', { persisted: false });
+    assert.strictEqual(viewport.removed.length, 2);
+    // ...and the pagehide listener took itself off the frame's window.
+    assert.strictEqual(win.count('pagehide'), 0);
+});
+
+test('a page entering the back-forward cache keeps its listeners', () => {
+    // persisted: the whole tab is frozen with HA's top window, nothing leaks,
+    // and the page may come back - it would come back without the fit.
+    const win = fakeTarget();
+    const viewport = fakeTarget();
+    watchOuterViewport(win, { viewport }, () => {});
+    win.fire('pagehide', { persisted: true });
+    assert.deepStrictEqual(viewport.removed, []);
+    win.fire('pagehide', { persisted: false });
+    assert.deepStrictEqual(viewport.removed.sort(), ['resize', 'scroll']);
+});
+
+test('the returned teardown removes the listeners too, once', () => {
+    const win = fakeTarget();
+    const viewport = fakeTarget();
+    const teardown = watchOuterViewport(win, { viewport }, () => {});
+    teardown();
+    assert.deepStrictEqual(viewport.removed.sort(), ['resize', 'scroll']);
+    assert.strictEqual(win.count('pagehide'), 0);
+    teardown();
+    win.fire('pagehide', { persisted: false });
+    assert.strictEqual(viewport.removed.length, 2);
+});
+
+test('a throwing outer viewport never throws out of the watcher', () => {
+    // A parent gone cross-origin, or already torn down.
+    const boom = () => { throw new Error('SecurityError'); };
+    const win = fakeTarget();
+    const teardown = watchOuterViewport(win,
+        { viewport: { addEventListener: boom, removeEventListener: boom } }, () => {});
+    assert.strictEqual(typeof teardown, 'function');
+    assert.doesNotThrow(() => teardown());
+
+    // Adds succeed, removes throw: the pagehide path must swallow it too.
+    const win2 = fakeTarget();
+    const viewport = fakeTarget();
+    viewport.removeEventListener = boom;
+    watchOuterViewport(win2, { viewport }, () => {});
+    assert.doesNotThrow(() => win2.fire('pagehide', { persisted: false }));
+
+    // And a frame window that refuses listeners.
+    const watched = fakeTarget();
+    assert.doesNotThrow(() => watchOuterViewport(
+        { addEventListener: boom, removeEventListener: boom }, { viewport: watched }, () => {})());
+});
+
+test('no outer viewport gives a teardown that does nothing', () => {
+    const win = fakeTarget();
+    for (const outer of [null, undefined, {}]) {
+        const teardown = watchOuterViewport(win, outer, () => {});
+        assert.doesNotThrow(() => teardown());
+    }
+    assert.deepStrictEqual(win.added, []);
 });
