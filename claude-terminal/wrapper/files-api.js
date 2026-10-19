@@ -307,9 +307,13 @@ function createFilesApi({
      * Where a requested path (absolute, or relative to the root) lands,
      * without looking at what is there: { asked, relative, kind, root }, the
      * path mapped under the root's realpath, and its tier by that name. Throws
-     * 400 for an unusable path and 404 for one outside the root or never
-     * shown. resolve() goes on to follow it; uploads (files-upload.js) lstat
-     * it instead, since a destination must not be a symlink at all.
+     * 400 for an unusable path, 404 for one outside the root or never shown,
+     * and 503 when the root is not available. `asked` is absolute and
+     * normalised, but nothing in it is followed: it may run through a
+     * symlinked parent, out of the root. A caller that needs it confined
+     * must realpath it and compare (`realpath(asked) === asked`).
+     * resolve() goes on to follow it; uploads (files-upload.js) lstat it
+     * instead, since a destination must not be a symlink at all.
      */
     async function locate(requested) {
         if (requested === undefined || requested === '') requested = '.';
@@ -635,7 +639,10 @@ function sendError(res, err, log = console.error) {
         return;
     }
     if (err instanceof FilesError) {
-        res.status(err.status).json({ ...err.details, error: err.message });
+        // Only an object's fields (null spreads to none): a string or an
+        // array would spread into "0", "1", ... keys.
+        const details = typeof err.details === 'object' && !Array.isArray(err.details) ? err.details : {};
+        res.status(err.status).json({ ...details, error: err.message });
     } else {
         log(`Files API error: ${err && err.message}`);
         res.status(500).json({ error: 'Internal error' });

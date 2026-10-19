@@ -50,6 +50,7 @@ write('certs/server.key', 'KEY\n');
 write('claude-config/.credentials.json', '{"token": "t"}\n');
 write('with space.yaml', 'a: 1\n');
 write('backup.tar.part', 'a user file');                   // an ordinary name
+write('x.ctp-upload-1.part', 'a user file');               // only ends like a part
 write('.ctp-upload-0a1b2c3d4e5f6a7b.part', 'partial');      // an upload in flight
 write('.credentials.json', 'login\n', outside);
 write('home/.claude/.credentials.json', 'login\n', outside);
@@ -180,7 +181,7 @@ test('listing leaves out .git, upload parts and escaping or hidden symlinks', as
     }
     // Only the wrapper's own .ctp-upload-*.part is a partial file: any other
     // *.part is somebody's file, and is listed.
-    for (const kept of ['autos-link.yaml', 'innocent.yaml', 'secrets.yaml', 'backup.tar.part']) {
+    for (const kept of ['autos-link.yaml', 'innocent.yaml', 'secrets.yaml', 'backup.tar.part', 'x.ctp-upload-1.part']) {
         assert.ok(names.includes(kept), `${kept} not listed`);
     }
     const nested = (await api.list('packages')).entries.map((e) => e.name);
@@ -767,6 +768,9 @@ test('locate maps a path under the root without following it', async () => {
     assert.deepStrictEqual(at, { asked: path.join(root, 'packages'), relative: 'packages', kind: 'ok', root });
     // a symlink is located by its own name: where it points is not looked at
     assert.strictEqual((await api.locate('data-link')).asked, path.join(root, 'data-link'));
+    // nor a path through one: `asked` runs through the link, and only its
+    // realpath (outside the root) would show it
+    assert.strictEqual((await api.locate('data-link/x')).asked, path.join(root, 'data-link', 'x'));
     assert.strictEqual((await api.locate('not-there-yet')).relative, 'not-there-yet');
     assert.strictEqual((await api.locate('.storage')).kind, 'sensitive');
     assert.strictEqual((await api.locate('')).relative, '');
@@ -813,5 +817,10 @@ test('sendError adds a FilesError\'s details to the JSON body, under its own err
     assert.deepStrictEqual(body, { reason: 'exists', replaceable: true, error: 'a.yaml already exists' });
     sendError(res, new FilesError(404, 'gone'));
     assert.deepStrictEqual(body, { error: 'gone' });
+    // Details that are not a plain object add nothing: spread, a string or
+    // an array would add its characters or items as "0", "1", ...
+    for (const details of ['ab', ['a', 'b']]) {
+        sendError(res, new FilesError(409, 'odd details', details));
+        assert.deepStrictEqual(body, { error: 'odd details' }, JSON.stringify(details));
+    }
 });
-
