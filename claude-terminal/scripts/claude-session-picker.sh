@@ -114,7 +114,10 @@ parse_command_line() {
 # this is the pane's application speaking, as Claude Code did when it asked.
 reset_terminal() {
     if [ -t 0 ]; then
-        stty sane 2>/dev/null || true
+        # `sane` turns iutf8 off (BusyBox, GNU and macOS stty alike), and tmux
+        # had it on: without it, Backspace in the menu's `read` erases one
+        # byte of a multibyte character instead of the whole character.
+        stty sane iutf8 2>/dev/null || stty sane 2>/dev/null || true
     fi
     # Kitty keyboard pop, modifyOtherKeys off, bracketed paste, focus events,
     # mouse tracking (X10, normal, button-event, any-event, SGR encoding),

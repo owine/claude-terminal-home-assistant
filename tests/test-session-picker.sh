@@ -207,4 +207,76 @@ assert_contains "and does so before its Press Enter prompt" "$before_prompt" "RE
 
 CLAUDE_BIN="$saved_bin"
 
+# --- in a real tmux pane -----------------------------------------------------
+#
+# What reset_terminal does to a pane is tmux's and the tty driver's business,
+# so these cases run the picker in a pane of a private tmux server and look at
+# the result from outside. Skipped on a laptop without tmux; in CI (test.yml
+# installs tmux) a skip would mean nothing was tested, so there it fails.
+
+printf '\n%s\n' "reset_terminal in a real tmux pane"
+
+if ! command -v tmux >/dev/null 2>&1; then
+    if [ -n "${CI:-}" ]; then
+        _fail "tmux is required in CI (test.yml installs it)"
+    else
+        printf '  skip tmux is not installed; run in the add-on image to exercise these cases\n'
+    fi
+    finish_suite
+    exit $?
+fi
+
+pane_tmp=$(new_tmpdir)
+export TMUX_TMPDIR="$pane_tmp"
+unset TMUX
+
+# in_pane <script> - run <script> (bash source) in a fresh 80x30 pane, with
+# the picker sourced and its pauses stubbed. $OUT is a directory the script
+# and the test share.
+in_pane() {
+    local script="$pane_tmp/pane.sh"
+    {
+        printf '. %q\n' "$REPO_ROOT/claude-terminal/scripts/claude-session-picker.sh"
+        printf 'sleep() { :; }\nOUT=%q\n' "$pane_tmp"
+        printf '%s\n' "$1"
+        printf 'command sleep 30\n'
+    } > "$script"
+    tmux kill-server 2>/dev/null
+    rm -f "$pane_tmp"/out.*
+    tmux -f /dev/null new-session -d -s picker -x 80 -y 30 "bash $script"
+}
+
+# wait_for <file> - up to 5 s
+wait_for() {
+    local i=0
+    while [ ! -e "$1" ] && [ "$i" -lt 50 ]; do
+        command sleep 0.1
+        i=$((i + 1))
+    done
+}
+
+# `stty sane` turns iutf8 off - BusyBox's, GNU's and macOS's alike - and tmux
+# had turned it on. Without it the tty driver's erase removes one byte, not
+# one character, so Backspace over `é` in the menu's canonical-mode `read`
+# left half of it behind: the line read back was \xc3 + what came after.
+# shellcheck disable=SC2016  # expanded in the pane
+in_pane '
+reset_terminal
+stty -a > "$OUT/out.stty"
+IFS= read -r line
+printf "%s" "$line" | od -An -tx1 | tr -d " \n" > "$OUT/out.line"
+'
+wait_for "$pane_tmp/out.stty"
+tmux send-keys -t picker -l 'é'
+tmux send-keys -t picker BSpace
+tmux send-keys -t picker -l 'a'
+tmux send-keys -t picker Enter
+wait_for "$pane_tmp/out.line"
+assert_eq "reset_terminal leaves iutf8 on" "iutf8" \
+    "$(tr ' ' '\n' < "$pane_tmp/out.stty" 2>/dev/null | grep -x -e iutf8 -e -iutf8)"
+assert_eq "so Backspace over a multibyte character erases all of it" "61" \
+    "$(cat "$pane_tmp/out.line" 2>/dev/null)"
+
+tmux kill-server 2>/dev/null
+
 finish_suite
