@@ -1340,9 +1340,11 @@ async function checkUploads(browser, url) {
         check('the file is still the replaced one', read(`${SIDEBAR_DIR}/${COLLIDE}`), 'replaced: 4\n');
 
         // Drops (synthetic, see dropOn above).
-        // Positive control: an image dropped on the terminal goes to the
-        // terminal's image upload, which is what a sidebar drop must not do.
-        await dropOn('#terminal-container', 'control.png', 'png');
+        // Positive control: an image dropped on the terminal shows its
+        // overlay and goes to the terminal's image upload, which is what a
+        // sidebar drop must not do.
+        const onTerminal = await dropOn('#terminal-container', 'control.png', 'png');
+        check('fixture: the terminal\'s drop overlay shows over the terminal', onTerminal.overlay, true);
         check('fixture: an image dropped on the terminal reaches its image upload',
             await waitFor(() => imageUploads === 1), true);
         await uploadBudget(1);
@@ -1423,6 +1425,15 @@ async function checkUploads(browser, url) {
             await gate;
             await route.continue().catch(() => {});
         });
+        // The bar's highest value while it shows, recorded as it changes:
+        // it must move, not sit at 0 until it goes.
+        await wrapper.evaluate(`(() => {
+            const bar = document.getElementById('files-notice-progress');
+            window.ctpBarMax = 0;
+            new MutationObserver(() => {
+                if (!bar.hidden) window.ctpBarMax = Math.max(window.ctpBarMax, bar.value);
+            }).observe(bar, { attributes: true, attributeFilter: ['value', 'hidden'] });
+        })()`);
         await uploadBudget(1);
         await pick(uploadButton, local('slow.bin', Buffer.alloc(512 * 1024, 7)));
         check('fixture: the upload is held', await waitFor(() => held === 1), true);
@@ -1441,6 +1452,7 @@ async function checkUploads(browser, url) {
                 const n = await notice();
                 return n.text === `Uploaded slow.bin to ${INBOX_DIR}.` && !n.bar;
             }), true);
+        check('the bar moved before it went', await wrapper.evaluate('window.ctpBarMax'), (v) => v > 0);
         check('with focus back in the terminal, the file is revealed but not previewed',
             { selected: await selected(), preview: (await previewState(wrapper)).active,
                 focus: await wrapper.evaluate('document.activeElement && document.activeElement.id') },

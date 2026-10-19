@@ -131,6 +131,7 @@ test('uploadTarget: offered on real folders; disabled with a reason on protected
     assert.strictEqual(uploadTarget(dir('/config/.storage', { sensitive: true }), '/config').disabled, true);
     assert.strictEqual(uploadTarget(dir('/config/deps'), '/config').disabled, true);
     assert.strictEqual(uploadTarget(dir('/config/deps/lib'), '/config').disabled, true);
+    assert.strictEqual(uploadTarget(dir('/config/Deps'), '/config').disabled, true);
     assert.strictEqual(uploadTarget(dir('/config/www/deps'), '/config').disabled, false);
     const inbox = uploadTarget(dir('/config/uploads'), '/config');
     assert.strictEqual(inbox.disabled, false);
