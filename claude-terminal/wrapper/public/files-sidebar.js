@@ -194,9 +194,27 @@
         return { lines, kind };
     }
 
+    /**
+     * The tab a key moves focus to in a horizontal tablist of `count` tabs,
+     * focus being on tab `index`: Right and Left wrap around, Home and End go
+     * to the ends. -1 for any other key, or when focus is not on a tab. Only
+     * focus moves: Enter or Space (the tab's own click) switches.
+     */
+    function tabKeyTarget(key, index, count) {
+        if (count < 1 || index < 0 || index >= count) return -1;
+        switch (key) {
+            case 'ArrowRight': return (index + 1) % count;
+            case 'ArrowLeft': return (index - 1 + count) % count;
+            case 'Home': return 0;
+            case 'End': return count - 1;
+            default: return -1;
+        }
+    }
+
     const api = {
         shellQuote, formatSize, formatAgo, clampWidth, relativeTo, downloadUrl,
-        uploadUrl, uploadTarget, uploadErrorText, displayName, uploadSummary, INBOX, DEFAULT_WIDTH,
+        uploadUrl, uploadTarget, uploadErrorText, displayName, uploadSummary, tabKeyTarget,
+        INBOX, DEFAULT_WIDTH,
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.FilesSidebar = api;

@@ -20,6 +20,7 @@ const {
     uploadErrorText,
     displayName,
     uploadSummary,
+    tabKeyTarget,
 } = require('../public/files-sidebar.js');
 
 test('plain paths are typed as-is', () => {
@@ -206,4 +207,20 @@ test('uploadSummary: one line per kind of outcome, in order, and its kind', () =
     assert.deepStrictEqual(uploadSummary({ problems: ['x: nope.'], busy: ['b'] }),
         { lines: ['⚠️ x: nope.', '⏳ b not uploaded: too many uploads, try again in a minute.'], kind: 'error' });
     assert.deepStrictEqual(uploadSummary({}), { lines: [], kind: '' });
+});
+
+test('tabKeyTarget: arrows move and wrap, Home and End go to the ends, other keys do nothing', () => {
+    assert.strictEqual(tabKeyTarget('ArrowRight', 0, 2), 1);
+    assert.strictEqual(tabKeyTarget('ArrowRight', 1, 2), 0);
+    assert.strictEqual(tabKeyTarget('ArrowLeft', 1, 2), 0);
+    assert.strictEqual(tabKeyTarget('ArrowLeft', 0, 2), 1);
+    assert.strictEqual(tabKeyTarget('Home', 2, 3), 0);
+    assert.strictEqual(tabKeyTarget('End', 0, 3), 2);
+    // A horizontal tablist: Up and Down are not its keys, and Enter, Space
+    // and Tab keep their own meaning.
+    for (const key of ['ArrowUp', 'ArrowDown', 'Enter', ' ', 'Tab', 'a']) {
+        assert.strictEqual(tabKeyTarget(key, 0, 2), -1, key);
+    }
+    assert.strictEqual(tabKeyTarget('ArrowRight', -1, 2), -1, 'focus is not on a tab');
+    assert.strictEqual(tabKeyTarget('ArrowRight', 0, 0), -1, 'no tabs');
 });
