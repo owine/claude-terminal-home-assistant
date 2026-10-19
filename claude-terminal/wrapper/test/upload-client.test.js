@@ -325,6 +325,8 @@ test('uploadForTerminal: a small image goes to the image upload, with one line a
     const { fetchImpl, calls } = fakeFetch(
         { status: 200, data: { success: true, path: '/data/images/pasted-1-0a0b0c0d.png' } },
         { status: 429, data: { error: 'Upload rate limit exceeded, try again in a minute' } },
+        { status: 200, text: '<html></html>' },
+        { status: 400, data: { path: '/data/images/pasted-2-0a0b0c0d.png' } },
     );
     const got = await client.uploadForTerminal(file('shot.png', 'image/png'),
         { counter: ' (1 of 2)', onLine: (...a) => lines.push(a), fetchImpl });
@@ -334,6 +336,12 @@ test('uploadForTerminal: a small image goes to the image upload, with one line a
     // A 429 keeps its status, so runBatch stops the batch there.
     assert.deepStrictEqual(await client.uploadForTerminal(file('shot.png', 'image/png'), { fetchImpl }),
         { problem: 'shot.png: Upload rate limit exceeded, try again in a minute', status: 429 });
+    // Only a 200 that names a path is an upload: anything else would type
+    // whatever came back (a proxy's login page, a stray field) at the prompt.
+    assert.deepStrictEqual(await client.uploadForTerminal(file('shot.png', 'image/png'), { fetchImpl }),
+        { problem: 'shot.png: upload failed (HTTP 200).', status: 200 });
+    assert.deepStrictEqual(await client.uploadForTerminal(file('shot.png', 'image/png'), { fetchImpl }),
+        { problem: 'shot.png: upload failed (HTTP 400).', status: 400 });
 });
 
 test('uploadForTerminal: anything else is asked about and sent to the inbox, with progress', async () => {
@@ -376,6 +384,13 @@ test('terminalStatus: nothing to add when the paths were typed; else what happen
     });
     assert.deepStrictEqual(client.terminalStatus({ typed: '/a', count: 1, delivered: 'clipboard', problems: ['b: no'] }),
         { message: 'Copied path: /a — paste in terminal ⚠️ b: no', type: 'error', persistent: true });
+    // A drop of folders alone uploads nothing; the sidebar's line for them
+    // is a refusal, and stays until the next message like any other.
+    assert.deepStrictEqual(client.terminalStatus({ typed: '', count: 0, delivered: 'terminal', folders: ['photos'] }), {
+        message: 'Folders are not uploaded: photos. Drop the files inside them instead.',
+        type: 'error',
+        persistent: true,
+    });
 });
 
 // A clipboard with plain text on it is a text paste: spreadsheet cells come
