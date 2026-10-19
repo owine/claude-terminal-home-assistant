@@ -156,6 +156,36 @@
             display: block;
         }
 
+        /* An upload question waiting in the hidden Files sidebar: a dot on
+           the Files button and on the rail's Files button, in the amber of
+           the question itself. files-sidebar-ui.js sets .has-question only
+           while the sidebar is collapsed. */
+        #files-btn,
+        .files-rail-btn {
+            position: relative;
+        }
+
+        .files-question-badge {
+            display: none;
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ffd27a;
+            box-shadow: 0 0 0 2px #007acc;
+            pointer-events: none;
+        }
+
+        .files-rail-btn .files-question-badge {
+            box-shadow: 0 0 0 2px #252526;
+        }
+
+        .has-question > .files-question-badge {
+            display: block;
+        }
+
         /* One-shot flash on arrival, so a copy is noticeable without stealing
            focus. The class is removed on animationend; the badge is what
            persists. */
@@ -1112,7 +1142,12 @@
                     title="Files: browse /config, recent changes, check the HA configuration"
                     aria-label="Files sidebar" aria-controls="files-sidebar" aria-expanded="false">
                 <span aria-hidden="true">&#128450;&#65039;</span>
+                <span class="files-question-badge" aria-hidden="true"></span>
             </button>
+            <!-- Announces an upload question waiting in the hidden Files
+                 sidebar (files-sidebar-ui.js). Outside the sidebar, whose own
+                 live region is hidden with it; the dot is visual only. -->
+            <span id="files-question-announcer" class="sr-only" role="status" aria-live="polite"></span>
         </div>
         <div id="login-banner" hidden>
             <span id="login-banner-icon">&#128273;</span>
@@ -1141,7 +1176,7 @@
                 <div id="files-resizer" title="Drag to resize"></div>
                 <div id="files-rail">
                     <button type="button" class="files-rail-btn" id="files-expand" title="Show the sidebar">&laquo;</button>
-                    <button type="button" class="files-rail-btn" data-open-tab="files" title="Files">&#128193;</button>
+                    <button type="button" class="files-rail-btn" data-open-tab="files" title="Files">&#128193;<span class="files-question-badge" aria-hidden="true"></span></button>
                     <button type="button" class="files-rail-btn" data-open-tab="recent" title="Recent changes">&#128338;</button>
                 </div>
                 <!-- Two views of one panel, #files-list. Only tabs belong in a
