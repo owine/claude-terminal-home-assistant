@@ -251,6 +251,29 @@ test('a link dismissed because the login completed is still never re-posted', as
     assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
 });
 
+// A link forgotten as gone can still be the one that logs the user in: they
+// switch back to the login window and paste the code before the next poll
+// sees the link again. The next poll finds them logged in - so that link is
+// used, and must not come back once the token expires with it still on
+// screen.
+test('a link forgotten as gone, then used to log in, is never re-posted', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = 'root@ha:/config# '; // another window
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+    w.loginScreen(URL_A);           // back, code pasted before the next poll
+    w.loggedIn();
+    await n.tick();
+    w.loggedIn(NOW - 1);            // hours later: expired, link still there
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
 // --- truncated captures ---
 //
 // capture-pane and the pane-width query are two tmux calls. One that lands

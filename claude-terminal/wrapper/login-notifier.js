@@ -106,9 +106,13 @@ function createLoginNotifier({
     // posting it again would send the user to a login whose code nobody is
     // waiting for. A new login always prints a new URL (fresh state/PKCE
     // challenge), so it is still posted. One dismissed because it left the
-    // capture is forgotten (see dismissShown), since the login may still be
-    // waiting - the capture only sees the session's active window.
+    // capture moves to `abandoned` (see dismissShown) and may be posted
+    // again, since the login may still be waiting - the capture only sees the
+    // session's active window. Any login that completes moves every abandoned
+    // URL back here: the user may have used one without the notifier ever
+    // seeing it on screen again.
     const posted = new Set();
+    const abandoned = new Set();
     let shownUrl = null;  // URL of the notification currently up, if any
     let missing = 0;      // consecutive captures without shownUrl on screen
     let timer = null;
@@ -156,7 +160,10 @@ function createLoginNotifier({
     async function dismissShown(reason, { forget = false } = {}) {
         const url = shownUrl;
         if (await dismiss()) {
-            if (forget) posted.delete(url);
+            if (forget) {
+                posted.delete(url);
+                abandoned.add(url);
+            }
             shownUrl = null;
             missing = 0;
             log.log(`Login notifier: ${reason}, notification dismissed`);
@@ -181,6 +188,8 @@ function createLoginNotifier({
         let unposted = false;
         try {
             if (await isLoggedIn({ readFile, homeDir, now })) {
+                for (const u of abandoned) posted.add(u);
+                abandoned.clear();
                 if (shownUrl) await dismissShown('login complete');
                 return;
             }
@@ -196,6 +205,7 @@ function createLoginNotifier({
                 unposted = true; // retried every poll until the create succeeds
                 if (await callService('create', notificationBody(url))) {
                     posted.add(url);
+                    abandoned.delete(url);
                     shownUrl = url;
                     missing = 0;
                     log.log('Login notifier: login link posted as a Home Assistant notification');
@@ -214,7 +224,8 @@ function createLoginNotifier({
             //
             // Gone from the capture is not proof the login is over, though:
             // the user may only have switched tmux windows. So the link is
-            // forgotten as well, and posted again if it comes back.
+            // set aside as abandoned, not used, and posted again if it comes
+            // back before a login completes.
             if (shownUrl) {
                 const onScreen = url === shownUrl || (url && isTruncationOf(url, shownUrl));
                 missing = onScreen ? 0 : missing + 1;
