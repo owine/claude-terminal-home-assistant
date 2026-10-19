@@ -546,6 +546,14 @@
             flex-shrink: 0;
         }
 
+        /* The tabs share the row with the hide button, as before the
+           tablist held only tabs. */
+        #files-tablist {
+            display: flex;
+            flex: 1;
+            min-width: 0;
+        }
+
         .files-tab {
             flex: 1;
             background: none;
@@ -1136,9 +1144,18 @@
                     <button type="button" class="files-rail-btn" data-open-tab="files" title="Files">&#128193;</button>
                     <button type="button" class="files-rail-btn" data-open-tab="recent" title="Recent changes">&#128338;</button>
                 </div>
-                <div id="files-tabs" role="tablist">
-                    <button type="button" class="files-tab" role="tab" data-tab="files" aria-selected="true">&#128193; Files</button>
-                    <button type="button" class="files-tab" role="tab" data-tab="recent" aria-selected="false">&#128338; Recent changes</button>
+                <!-- Two views of one panel, #files-list. Only tabs belong in a
+                     tablist, so the hide button sits beside it. The icons are
+                     aria-hidden: the tabs are named "Files" and "Recent
+                     changes". files-sidebar-ui.js keeps aria-selected, the one
+                     tab stop and the panel's label on the selected tab. -->
+                <div id="files-tabs">
+                    <div id="files-tablist" role="tablist" aria-label="Sidebar view">
+                        <button type="button" class="files-tab" role="tab" id="files-tab-files" data-tab="files"
+                                aria-selected="true" aria-controls="files-list" tabindex="0"><span aria-hidden="true">&#128193;</span> Files</button>
+                        <button type="button" class="files-tab" role="tab" id="files-tab-recent" data-tab="recent"
+                                aria-selected="false" aria-controls="files-list" tabindex="-1"><span aria-hidden="true">&#128338;</span> Recent changes</button>
+                    </div>
                     <button type="button" id="files-hide" title="Hide the sidebar" aria-label="Hide the sidebar">&raquo;</button>
                 </div>
                 <div id="files-toolbar">
@@ -1170,7 +1187,7 @@
                         <button type="button" id="files-prompt-cancel">Cancel</button>
                     </span>
                 </div>
-                <div id="files-list"></div>
+                <div id="files-list" role="tabpanel" aria-labelledby="files-tab-files"></div>
                 <div id="files-footer">
                     <button type="button" id="ha-check-btn" title="Run Home Assistant's configuration check (ha core check)">&#10003; Check HA configuration</button>
                     <div id="ha-check-result" role="status" aria-live="polite"></div>

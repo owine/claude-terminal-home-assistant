@@ -48,6 +48,7 @@
         }
 
         const list = document.getElementById('files-list');
+        const tablist = document.getElementById('files-tablist');
         const tabs = Array.from(document.querySelectorAll('.files-tab'));
         const showHidden = document.getElementById('files-show-hidden');
         const hiddenToggle = document.getElementById('files-hidden-toggle');
@@ -267,9 +268,20 @@
             if (data.truncated || data.incomplete) list.append(note('… showing the newest found; the search stopped early'));
         }
 
+        // The selected tab: aria-selected, the tablist's one tab stop, and
+        // the name of the panel (#files-list) both tabs show.
+        function syncTabs() {
+            for (const t of tabs) {
+                const on = t.dataset.tab === currentTab;
+                t.setAttribute('aria-selected', String(on));
+                t.tabIndex = on ? 0 : -1;
+            }
+            list.setAttribute('aria-labelledby', 'files-tab-' + currentTab);
+        }
+
         function refresh() {
             closeMenu();
-            tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === currentTab)));
+            syncTabs();
             hiddenToggle.hidden = currentTab !== 'files';
             placeProtectedToggle();
             recentHours.hidden = currentTab !== 'recent';
@@ -836,6 +848,17 @@
             setOpen(true);
         }));
         tabs.forEach((tab) => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
+        // Arrow keys, Home and End move focus between the tabs; Enter or
+        // Space (the button's own click) switches. Manual activation, since
+        // each switch reloads the list and Recent changes walks /config:
+        // arrowing past a tab must not start a walk.
+        tablist.addEventListener('keydown', (e) => {
+            if (e.altKey || e.ctrlKey || e.metaKey) return;
+            const next = helpers.tabKeyTarget(e.key, tabs.indexOf(document.activeElement), tabs.length);
+            if (next < 0) return;
+            e.preventDefault();
+            tabs[next].focus();
+        });
         showHidden.addEventListener('change', refresh);
 
         // "Show protected files" is never remembered: cleared on every
@@ -1134,7 +1157,7 @@
         // Restore. A phone never reopens on load: there the sidebar
         // covers the terminal, which is not what someone opening the
         // add-on expects to see.
-        tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === currentTab)));
+        syncTabs();
         hiddenToggle.hidden = currentTab !== 'files';
         placeProtectedToggle();
         recentHours.hidden = currentTab !== 'recent';

@@ -286,6 +286,82 @@ async function checkStaleView(browser, url) {
     }
 }
 
+// 6b. The sidebar's two views are a tab set, and must be a whole one: a
+//     tablist holding only its tabs (the » that hides the sidebar sits
+//     beside it, not in it), tabs named without their icons, each naming
+//     the panel it shows (#files-list, labelled by the selected tab), one
+//     tab stop for the set, Left/Right (wrapping), Home and End between the
+//     tabs, and Enter or Space to switch. Arrows only move focus: a switch
+//     reloads the list, and Recent changes walks /config. Its own context,
+//     so switching views here leaves the main run's tree and saved tab alone.
+async function checkSidebarTabs(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        await wrapper.locator('#files-btn').click();
+        await waitFor(() => wrapper.evaluate('!document.getElementById("files-sidebar").classList.contains("collapsed")'));
+        const tabState = () => wrapper.evaluate(`(() => {
+            const tablist = document.querySelector('#files-sidebar [role="tablist"]');
+            const tabs = tablist ? [...tablist.children] : [];
+            const panel = document.getElementById('files-list');
+            const labelledBy = document.getElementById(panel.getAttribute('aria-labelledby') || '');
+            const a = document.activeElement;
+            return JSON.stringify({
+                label: tablist && tablist.getAttribute('aria-label'),
+                roles: tabs.map((t) => t.getAttribute('role')),
+                hideInTablist: !!document.getElementById('files-hide').closest('[role="tablist"]'),
+                controls: [...new Set(tabs.map((t) => t.getAttribute('aria-controls')))],
+                selected: tabs.filter((t) => t.getAttribute('aria-selected') === 'true').map((t) => t.dataset.tab),
+                tabStops: tabs.filter((t) => t.tabIndex === 0).map((t) => t.dataset.tab),
+                panelRole: panel.getAttribute('role'),
+                panelLabel: labelledBy ? labelledBy.dataset.tab || null : null,
+                focus: a && a.classList.contains('files-tab') ? a.dataset.tab : null,
+                period: !document.getElementById('files-recent-hours').hidden,
+            });
+        })()`).then(JSON.parse);
+
+        let v = await tabState();
+        check('the sidebar\'s tablist holds only its two tabs, with » beside it',
+            v, (s) => JSON.stringify(s.roles) === '["tab","tab"]' && !s.hideInTablist && s.label === 'Sidebar view');
+        check('both tabs show #files-list, a tabpanel labelled by the selected tab',
+            v, (s) => JSON.stringify(s.controls) === '["files-list"]' && s.panelRole === 'tabpanel'
+                && JSON.stringify(s.selected) === '["files"]' && s.panelLabel === 'files');
+        check('the tabs are named without their icons',
+            { files: await wrapper.getByRole('tab', { name: 'Files', exact: true }).count(),
+                recent: await wrapper.getByRole('tab', { name: 'Recent changes', exact: true }).count() },
+            (n) => n.files === 1 && n.recent === 1);
+        check('the tab set is one tab stop, the selected tab', JSON.stringify(v.tabStops), '["files"]');
+
+        await wrapper.locator('.files-tab[data-tab="files"]').focus();
+        await page.keyboard.press('ArrowRight');
+        v = await tabState();
+        check('ArrowRight moves focus to the next tab without switching to it',
+            { focus: v.focus, selected: v.selected }, (s) => s.focus === 'recent' && JSON.stringify(s.selected) === '["files"]');
+        const moves = [];
+        for (const key of ['ArrowRight', 'End', 'Home', 'ArrowLeft']) {
+            await page.keyboard.press(key);
+            moves.push((await tabState()).focus);
+        }
+        check('Right and Left wrap around, Home and End go to the ends',
+            JSON.stringify(moves), JSON.stringify(['files', 'recent', 'files', 'recent']));
+        await page.keyboard.press('Enter');
+        check('Enter switches to the focused tab; the tab stop and the panel\'s label follow',
+            await waitFor(async () => {
+                const s = await tabState();
+                return JSON.stringify(s.selected) === '["recent"]' && JSON.stringify(s.tabStops) === '["recent"]'
+                    && s.panelLabel === 'recent' && s.period;
+            }), true);
+        await page.keyboard.press('ArrowLeft');
+        await page.keyboard.press('Space');
+        check('Space switches too',
+            await waitFor(async () => JSON.stringify((await tabState()).selected) === '["files"]'), true);
+    } finally {
+        await context.close();
+    }
+}
+
 // Opens the sidebar (it reopens by itself after a reload), lists dotfiles,
 // and expands the fixture folder. Returns the tree.
 async function openSidebarFixture(wrapper) {
@@ -2498,8 +2574,9 @@ async function run(engine, mode, url) {
             group: group ? group.getAttribute('role') + ':' + group.getAttribute('aria-label') : null,
         });
     })()`).then(JSON.parse);
+    // The list itself is the sidebar tabs' panel (checkSidebarTabs).
     check('the file list is plain buttons, not a tree, with each ⋯ beside its folder', listRoles,
-        (v) => v.listRole === null && JSON.stringify(v.roles) === '["group"]'
+        (v) => v.listRole === 'tabpanel' && JSON.stringify(v.roles) === '["group"]'
             && v.buttonsWithRoles === 0 && v.otherFocusable === 0
             && v.folder === 'true' && v.menu === 'menu'
             && v.group === `group:${SIDEBAR_DIR.split('/').pop()}`);
@@ -2603,6 +2680,7 @@ async function run(engine, mode, url) {
         { cols: await cols(), tmux: windowWidth(), colsOpen }, (v) => v.cols > v.colsOpen && v.tmux === v.cols);
 
     await checkStaleView(browser, url);
+    await checkSidebarTabs(browser, url);
     await checkDownloads(browser, url);
     await checkZipMenu(browser, url);
     await checkLateProtectedPreview(browser, url);
