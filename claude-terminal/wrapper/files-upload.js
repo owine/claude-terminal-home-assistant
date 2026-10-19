@@ -32,7 +32,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const express = require('express');
 const {
-    classifyRelative, inside, sendError, FilesError, INBOX, INBOX_MARKER,
+    classifyRelative, inside, sendError, textDirent, FilesError, INBOX, INBOX_MARKER,
 } = require('./files-api');
 const { createCrossSiteGuard } = require('./http-guards');
 
@@ -60,6 +60,11 @@ const MAX_NAME_BYTES = 200;
 const MAX_EXT_BYTES = 20;
 // "name (1).ext" … "name (999).ext", then a 409.
 const MAX_SUFFIX = 999;
+// Names read from a folder to find a look-alike of an upload's name (see
+// lookAlikes). Names only, with no stat each, so ten times the 1000 entries
+// a listing reads (files-api's MAX_ENTRIES). A folder holding more is not
+// read at all, and only the exact name counts as taken there.
+const MAX_LOOKALIKE_SCAN = 10000;
 // link() refusals that mean "no hard links on this filesystem", where a
 // rename after a fresh lstat takes over (see placeNew).
 const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EMLINK']);
@@ -115,11 +120,20 @@ function cutToBytes(s, max) {
  * path segment, without control characters or bidirectional marks (CONTROL),
  * without any run of dots and
  * spaces at its start (so `. .env` cannot come back as `.env`, nor anything
- * as the wrapper's own `.ctp-upload-*.part`) or spaces at its end, cut to
- * MAX_NAME_BYTES keeping a short extension. `upload-<epoch
+ * as the wrapper's own `.ctp-upload-*.part`) or spaces at its end, in NFC,
+ * cut to MAX_NAME_BYTES keeping a short extension. `upload-<epoch
  * ms>` when nothing usable is left. Secret-shaped names (`server.key`) are
  * allowed: putting a certificate into /config is a common Home Assistant
  * task, and the listing marks the file protected once it is there.
+ *
+ * NFC, so `caf\u00e9` as typed (precomposed) and `cafe\u0301` from a macOS
+ * path (e and a combining accent, NFD) are one name, as they are to a reader.
+ * Normalised after the cleaning, since a mark taken out can leave an e next
+ * to its accent, and before the cut, which measures the name as saved: NFC
+ * makes most names shorter in bytes, a few longer. It brings back nothing
+ * the cleaning took out: no character's NFC is a control character, a
+ * slash, a dot or a space unless the character was one too (a test sweeps
+ * every code point).
  */
 function sanitizeUploadName(raw, { now = Date.now } = {}) {
     const segments = String(raw ?? '')
@@ -127,7 +141,7 @@ function sanitizeUploadName(raw, { now = Date.now } = {}) {
         .split(/[\\/]/)
         .map((s) => s.trim())
         .filter((s) => s !== '' && s !== '.' && s !== '..');
-    let name = (segments.pop() || '').replace(/^[.\s]+/, '').trimEnd();
+    let name = (segments.pop() || '').replace(/^[.\s]+/, '').trimEnd().normalize('NFC');
     if (Buffer.byteLength(name) > MAX_NAME_BYTES) {
         const dot = name.lastIndexOf('.');
         const ext = dot > 0 && Buffer.byteLength(name.slice(dot)) <= MAX_EXT_BYTES ? name.slice(dot) : '';
@@ -195,7 +209,9 @@ const sizeText = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
  * { bigint: true } - chmod, write, datasync, truncate and close),
  * `partName` its name, `onPlanned` a hook between the checks and
  * the part's open, and `beforeCommit` one between the last byte and the
- * rename.
+ * rename. `lookAlikeScanLimit` is MAX_LOOKALIKE_SCAN, `classify` files-api's
+ * classifyRelative, and fsOps' `opendir` the read of a folder's names for
+ * look-alikes.
  */
 function createUploads({
     api,
@@ -211,11 +227,15 @@ function createUploads({
     fsOps: ops = {},
     onPlanned = null,
     beforeCommit = null,
+    lookAlikeScanLimit = MAX_LOOKALIKE_SCAN,
+    classify = classifyRelative,
 } = {}) {
     if (typeof record?.file !== 'string' || record.file === '') {
         throw new TypeError('record must have its file (a createPartRecord record): a failure to write it is said by that path');
     }
-    const fsOps = { link: fsp.link, rename: fsp.rename, realpath: fsp.realpath, lstat: fsp.lstat, ...ops };
+    const fsOps = {
+        link: fsp.link, rename: fsp.rename, realpath: fsp.realpath, lstat: fsp.lstat, opendir: fsp.opendir, ...ops,
+    };
     const maxMb = Math.round(maxBytes / MB);
     const limitText = `the ${maxMb} MB upload limit (the add-on's upload_max_mb option)`;
     // A size that rounds to the limit or under ("1.0 MB, over the 1 MB
@@ -258,6 +278,8 @@ function createUploads({
             { reason: 'exists', replaceable: false })
         : new FilesError(409, `${name} already exists in ${display}.`, { reason: 'exists', replaceable: true }));
     const display = (relative) => path.join(path.resolve(api.root), relative);
+    const hiddenName = (name) => new FilesError(400,
+        `${name} ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.`);
 
     // Mark a folder this wrapper just made as its inbox, so run.sh sweeps
     // it. Only on a mkdir that succeeded: EEXIST means someone made it
@@ -285,7 +307,9 @@ function createUploads({
         if (at.kind === 'sensitive') {
             throw new FilesError(403, `${shown} may hold secrets, so nothing is uploaded into it.`);
         }
-        if (at.relative.split(path.sep)[0].toLowerCase() === 'deps') {
+        // /iu, so deps spelt with the long s (U+017F) is deps too, as
+        // files-api folds names (its fold())
+        if (/^deps$/iu.test(at.relative.split(path.sep)[0])) {
             throw new FilesError(403, `${shown} holds the Python packages Home Assistant installs, so nothing is uploaded into it.`);
         }
         let st = await lstatOrNull(at.asked);
@@ -316,6 +340,90 @@ function createUploads({
         return { dir: at.asked, relative: at.relative, display: shown };
     }
 
+    // A look-alike of a name is another name with the same NFC form (they
+    // are canonically equivalent): `cafe\u0301.txt` beside `caf\u00e9.txt`,
+    // which read the same. Uploads are named in NFC, but a folder can hold
+    // names in other forms (copied in over Samba from a Mac, say), and two
+    // names that read the same are a trap in YAML that names files: so a
+    // look-alike is as taken as the name itself. Only a name not in NFC can
+    // be a look-alike of one in NFC (two NFC forms that differ are not
+    // equivalent), so this maps the names in `dir` that are not in NFC by
+    // their NFC form. Read with their names as bytes (textDirent): a name
+    // that is not UTF-8 cannot be equivalent to one that is, and is passed
+    // over. Every name read counts toward lookAlikeScanLimit but `ownPart`,
+    // the upload's own part (commit's scan, so it counts what plan's did);
+    // a folder with more is not mapped at all (an empty map: the exact name
+    // alone counts there), so the answer does not depend on the order names
+    // are read in. A folder that cannot be read is mapped as empty too, and
+    // logged unless it is not there (the inbox before its first upload, or a
+    // folder gone mid-upload, which the link or rename then meets).
+    async function lookAlikes(dir, log, ownPart = null) {
+        const found = new Map();
+        const own = ownPart && Buffer.from(path.basename(ownPart));
+        let read = 0;
+        let handle;
+        try {
+            handle = await fsOps.opendir(dir, { encoding: 'buffer' });
+        } catch (err) {
+            if (err.code !== 'ENOENT' && err.code !== 'ENOTDIR') {
+                log(`Upload: look-alike names not checked in ${JSON.stringify(dir)}: ${err.message}`);
+            }
+            return found;
+        }
+        try {
+            for await (const dirent of handle) {
+                if (own && own.equals(dirent.name)) continue;
+                if (++read > lookAlikeScanLimit) return new Map();
+                if (!textDirent(dirent)) continue;
+                const nfc = dirent.name.normalize('NFC');
+                if (nfc === dirent.name) continue;
+                if (!found.has(nfc)) found.set(nfc, []);
+                found.get(nfc).push(dirent.name);
+            }
+        } catch (err) {
+            log(`Upload: look-alike names not checked in ${JSON.stringify(dir)}: ${err.message}`);
+            return new Map();
+        } finally {
+            // Leaving the loop early closes it already; a second close
+            // rejects with ERR_DIR_CLOSED.
+            await handle.close().catch(() => {});
+        }
+        return found;
+    }
+
+    // The look-alike of `name` (in NFC) that is in `dir` now, from the map
+    // lookAlikes() made: { name, st } with its lstat, or null. The lstat is
+    // the word on whether it is there and what it is, so a name gone since
+    // the map was made is no look-alike. Of several (the forms of a name
+    // with two accents, say), a regular file before a folder, symlink or
+    // anything else, and the first in sorted order (by UTF-16 code unit)
+    // among equals, never the order the folder was read in: so a 409 names,
+    // and Replace overwrites, the first regular file that looks like the
+    // name, and only when there is none does the 409 name another entry
+    // (not replaceable).
+    //
+    // `relative` is the folder's, from the root: a look-alike whose own
+    // name the sidebar hides is refused as that name would be (hiddenName),
+    // so no answer names it and nothing is put at it. In defence only: the
+    // hidden names are those ending in .git (files-api's HIDDEN_NAME,
+    // /\.git$/i), and NFC keeps that ending as it is (a sweep of 5.5
+    // million strings found none that NFC takes into or out of it), so a
+    // look-alike of a name that is shown ends in .git only if that name
+    // does too, which plan() refuses first.
+    async function lookAlikeOf(dir, relative, name, found) {
+        let other = null;
+        for (const candidate of [...(found.get(name) || [])].sort()) {
+            const st = await lstatOrNull(path.join(dir, candidate));
+            if (st && st.isFile()) {
+                other = { name: candidate, st };
+                break;
+            }
+            if (st && !other) other = { name: candidate, st };
+        }
+        if (other && classify(path.join(relative, other.name)) === 'hidden') throw hiddenName(other.name);
+        return other;
+    }
+
     /**
      * Every check an upload gets before its first byte, for a request's
      * { name, dest, onConflict }: the plan receive() follows, or a
@@ -336,13 +444,15 @@ function createUploads({
         }
         const folder = await destination(inbox ? INBOX : dest, { inbox, create, log });
         const safe = sanitizeUploadName(name, { now });
-        if (classifyRelative(path.join(folder.relative, safe)) === 'hidden') {
-            throw new FilesError(400, `${safe} ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.`);
-        }
-        const existing = await lstatOrNull(path.join(folder.dir, safe));
-        if (existing && !inbox && onConflict === undefined) throw exists(safe, folder.display, existing);
-        if (existing && onConflict === 'replace' && !existing.isFile()) throw exists(safe, folder.display, existing);
-        return { ...folder, inbox, name: safe, onConflict, exists: Boolean(existing) };
+        if (classify(path.join(folder.relative, safe)) === 'hidden') throw hiddenName(safe);
+        // The name, or else a look-alike of it: what a 409 names, and what
+        // Replace would overwrite. commit() asks again once the body is in.
+        const exact = await lstatOrNull(path.join(folder.dir, safe));
+        const taken = exact ? { name: safe, st: exact }
+            : await lookAlikeOf(folder.dir, folder.relative, safe, await lookAlikes(folder.dir, log));
+        if (taken && !inbox && onConflict === undefined) throw exists(taken.name, folder.display, taken.st);
+        if (taken && onConflict === 'replace' && !taken.st.isFile()) throw exists(taken.name, folder.display, taken.st);
+        return { ...folder, inbox, name: safe, onConflict, exists: Boolean(taken) };
     }
 
     // The request body into the open part. Iterated with destroyOnReturn
@@ -497,12 +607,27 @@ function createUploads({
 
     // `handle` is the part's open descriptor, still open: Replace sets the
     // mode through it, never through the path. `progress` is receive()'s.
+    //
+    // Look-alikes (lookAlikes) are asked about here again, as the folder is
+    // now: a name the file is put at must have none, and Replace overwrites
+    // the name itself when it is there, else its look-alike, under that
+    // look-alike's own name. Nothing makes "no look-alike" hold until the
+    // link or rename the way link() makes "no file at the name" hold, so a
+    // look-alike made in the moment between the two is not caught. The
+    // folder is read for them only when they could matter, as in plan():
+    // not for a Replace whose name is there.
     async function commit(part, planned, handle, id, log, progress) {
         await recheck(planned);
-        const target = path.join(planned.dir, planned.name);
+        const alikeOf = async (name, alikes) => lookAlikeOf(planned.dir, planned.relative, name, alikes);
         if (planned.onConflict === 'replace') {
-            const old = await lstatOrNull(target);
-            if (old && !old.isFile()) throw exists(planned.name, planned.display, old);
+            let name = planned.name;
+            let old = await lstatOrNull(path.join(planned.dir, name));
+            if (!old) {
+                const alike = await alikeOf(name, await lookAlikes(planned.dir, log, part));
+                if (alike) ({ name, st: old } = alike);
+            }
+            const target = path.join(planned.dir, name);
+            if (old && !old.isFile()) throw exists(name, planned.display, old);
             // The old file's permissions: a 0600 key stays private, an
             // executable script stays executable. Never setuid, setgid or
             // sticky: an upload must not inherit those.
@@ -511,21 +636,31 @@ function createUploads({
             progress.at = target;
             await fsOps.rename(part, target);   // swaps the whole file in at once
             Object.assign(progress, { put: true, overwrote: Boolean(old) });
-            await mustHavePlaced(target, id, planned, log, { part, how: 'replace', overwrote: Boolean(old) });
-            return { path: target, name: planned.name, replaced: Boolean(old) };
+            await mustHavePlaced(target, id, { ...planned, name }, log, { part, how: 'replace', overwrote: Boolean(old) });
+            return { path: target, name, replaced: Boolean(old) };
         }
+        const alikes = await lookAlikes(planned.dir, log, part);
         await mustBeOurs(part, id, planned);
         const suffix = planned.inbox || planned.onConflict === 'keep-both';
         for (let n = 0; n <= (suffix ? MAX_SUFFIX : 0); n++) {
+            // In NFC like the name it numbers: ` (n)` is ASCII that composes
+            // with nothing on either side.
             const name = n === 0 ? planned.name : withSuffix(planned.name, n);
             const candidate = path.join(planned.dir, name);
+            const alike = await alikeOf(name, alikes);
+            if (alike && suffix) continue;
+            if (alike) {
+                // the name itself, when it is there too, as plan() says
+                const st = await lstatOrNull(candidate);
+                throw st ? exists(name, planned.display, st) : exists(alike.name, planned.display, alike.st);
+            }
             const how = await placeNew(part, candidate, progress);
             if (how) {
                 await mustHavePlaced(candidate, id, planned, log, { part, how });
                 return { path: candidate, name, replaced: false };
             }
         }
-        if (!suffix) throw exists(planned.name, planned.display, await lstatOrNull(target));
+        if (!suffix) throw exists(planned.name, planned.display, await lstatOrNull(path.join(planned.dir, planned.name)));
         throw new FilesError(409, `Too many files named like ${planned.name} in ${planned.display}.`,
             { reason: 'exists', replaceable: false });
     }
@@ -596,7 +731,7 @@ function createUploads({
                 // says neither.
                 if (progress.put) {
                     log(`Upload put at ${JSON.stringify(progress.at)}, then its check failed: ${err.message}`);
-                    throw progress.overwrote ? replacedChanged(planned.name, planned.display)
+                    throw progress.overwrote ? replacedChanged(path.basename(progress.at), planned.display)
                         : notTheUpload(path.basename(progress.at), planned.display);
                 }
                 // A link or rename that finds no part, or no folder, at the
