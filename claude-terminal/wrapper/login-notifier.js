@@ -25,6 +25,13 @@ const { reconstructLoginUrl } = require('./public/login-link.js');
 const NOTIFICATION_ID = 'claude_terminal_login';
 const SESSION = 'claude'; // run.sh setup_tmux_session
 const POLL_MS = 3000;
+// Each poll spawns two tmux processes. With nothing to watch - logged in, or
+// logged in a way isLoggedIn cannot see (a Console API key, an idle OAuth
+// token past its expiry) - the gap doubles up to this, so an idle add-on does
+// not spawn ~57,600 of them a day. A link to post or a notification to watch
+// brings it straight back to POLL_MS. The price is a slower first notice of a
+// new login screen: up to this long after it appears.
+const MAX_POLL_MS = 30000;
 const TMUX_TIMEOUT_MS = 5000;
 const HTTP_TIMEOUT_MS = 10000;
 
@@ -91,15 +98,33 @@ function createLoginNotifier({
     now = Date.now,
     log = console,
     pollMs = POLL_MS,
+    maxPollMs = MAX_POLL_MS,
+    timers = { setTimeout, clearTimeout },
 } = {}) {
-    // Every URL already posted. Never cleared: after the access token expires
-    // the used link may still be on screen, and posting it again would send
-    // the user to a login whose code nobody is waiting for. A new login always
-    // prints a new URL (fresh state/PKCE challenge), so it is still posted.
+    // URLs already posted. One whose login completed is kept for good: after
+    // the access token expires the used link may still be on screen, and
+    // posting it again would send the user to a login whose code nobody is
+    // waiting for. A new login always prints a new URL (fresh state/PKCE
+    // challenge), so it is still posted. One dismissed because it left the
+    // capture moves to `abandoned` (see dismissShown) and may be posted
+    // again, since the login may still be waiting - the capture only sees the
+    // session's active window. Any login that completes moves every abandoned
+    // URL back here: the user may have used one without the notifier ever
+    // seeing it on screen again.
     const posted = new Set();
+    const abandoned = new Set();
     let shownUrl = null;  // URL of the notification currently up, if any
     let missing = 0;      // consecutive captures without shownUrl on screen
     let timer = null;
+    let delay = pollMs;   // gap before the next poll; see MAX_POLL_MS
+    let watching = false; // set by tick(): a link to post or a notification up
+    // Whether a capture has succeeded since start(). Until one has, a failed
+    // capture is the boot case - the wrapper starts minutes before tmux can -
+    // and the loop holds its pace rather than backing off, so the first
+    // login screen is seen promptly. After that, a failed capture (the
+    // session gone) backs off like an idle one.
+    let paneSeen = false;
+    let waitingForPane = false; // set by tick()
     let generation = 0;   // bumped by start() and stop(); a stale loop exits
     // Last failure per service, so a Supervisor that keeps failing (HA Core
     // restarting, a 401) logs once per change instead of every poll.
@@ -139,17 +164,40 @@ function createLoginNotifier({
         return callService('dismiss', { notification_id: NOTIFICATION_ID });
     }
 
-    async function dismissShown(reason) {
+    async function dismissShown(reason, { forget = false } = {}) {
+        const url = shownUrl;
         if (await dismiss()) {
+            if (forget) {
+                posted.delete(url);
+                abandoned.add(url);
+            }
             shownUrl = null;
             missing = 0;
             log.log(`Login notifier: ${reason}, notification dismissed`);
         }
     }
 
+    // A capture that lands mid-resize rebuilds the URL from rows at the wrong
+    // width and stops short: a strict prefix of the real URL that still
+    // passes isAuthUrl. It is the same login screen, seen badly - never a
+    // link to post over the good one.
+    function isTruncationOf(url, full) {
+        return full.length > url.length && full.startsWith(url);
+    }
+
+    function alreadyPosted(url) {
+        if (posted.has(url)) return true;
+        for (const p of posted) if (isTruncationOf(url, p)) return true;
+        return false;
+    }
+
     async function tick() {
+        let unposted = false;
+        waitingForPane = false;
         try {
             if (await isLoggedIn({ readFile, homeDir, now })) {
+                for (const u of abandoned) posted.add(u);
+                abandoned.clear();
                 if (shownUrl) await dismissShown('login complete');
                 return;
             }
@@ -158,12 +206,16 @@ function createLoginNotifier({
             try {
                 url = await findLoginUrl({ execFile });
             } catch {
+                waitingForPane = !paneSeen;
                 return; // no tmux session yet, or tmux busy - try next tick
             }
+            paneSeen = true;
 
-            if (url && !posted.has(url)) {
+            if (url && !alreadyPosted(url)) {
+                unposted = true; // retried every poll until the create succeeds
                 if (await callService('create', notificationBody(url))) {
                     posted.add(url);
+                    abandoned.delete(url);
                     shownUrl = url;
                     missing = 0;
                     log.log('Login notifier: login link posted as a Home Assistant notification');
@@ -177,22 +229,34 @@ function createLoginNotifier({
             // exiting) writes nothing. Both take the login screen away, so a
             // link that has left the pane for two polls in a row is done
             // with. Two, so one odd capture mid-redraw does not count; a
-            // failed capture returned above and does not count either.
+            // failed capture returned above and does not count either, and
+            // a truncated one still shows the login screen.
+            //
+            // Gone from the capture is not proof the login is over, though:
+            // the user may only have switched tmux windows. So the link is
+            // set aside as abandoned, not used, and posted again if it comes
+            // back before a login completes.
             if (shownUrl) {
-                missing = url === shownUrl ? 0 : missing + 1;
-                if (missing >= 2) await dismissShown('login screen gone');
+                const onScreen = url === shownUrl || (url && isTruncationOf(url, shownUrl));
+                missing = onScreen ? 0 : missing + 1;
+                if (missing >= 2) await dismissShown('login screen gone', { forget: true });
             }
         } catch (err) {
             log.log(`Login notifier: ${err.message}`);
+        } finally {
+            watching = unposted || shownUrl !== null;
         }
     }
 
     function schedule(gen) {
-        timer = setTimeout(async () => {
+        timer = timers.setTimeout(async () => {
             if (gen !== generation) return;
             await tick();
-            if (gen === generation) schedule(gen);
-        }, pollMs);
+            if (gen !== generation) return;
+            if (watching) delay = pollMs;
+            else if (!waitingForPane) delay = Math.min(delay * 2, Math.max(maxPollMs, pollMs));
+            schedule(gen);
+        }, delay);
         timer.unref?.();
     }
 
@@ -204,13 +268,15 @@ function createLoginNotifier({
         // that dismiss or a tick is in flight: only the newest loop runs.
         async start() {
             const gen = ++generation;
-            clearTimeout(timer);
+            timers.clearTimeout(timer);
+            delay = pollMs;
+            paneSeen = false;
             await dismiss();
             if (gen === generation) schedule(gen);
         },
         stop() {
             generation++;
-            clearTimeout(timer);
+            timers.clearTimeout(timer);
             timer = null;
         },
         tick,

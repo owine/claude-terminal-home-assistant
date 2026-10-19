@@ -214,10 +214,110 @@ test('aborted login (claude exited to a shell): dismissed after two polls', asyn
     await n.tick();
     await n.tick();
     assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
-    // The used link is not eligible again even if it reappears on screen
+});
+
+// The capture sees the active window of the session only. Switching to
+// another tmux window for a few seconds takes the URL off the capture while
+// the login still waits for its code. It was dismissed for good: a URL once
+// posted was never posted again.
+test('a login screen that leaves the capture and comes back is posted again', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = 'root@ha:/config# '; // another window
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+    w.loginScreen(URL_A);
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss', 'create']);
+    assert.ok(w.calls[2].body.message.includes(URL_A));
+});
+
+test('a link dismissed because the login completed is still never re-posted', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.loggedIn();
+    await n.tick();
+    w.screen = '';
+    await n.tick();
+    w.loggedIn(NOW - 1);
     w.loginScreen(URL_A);
     await n.tick();
     assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
+// A link forgotten as gone can still be the one that logs the user in: they
+// switch back to the login window and paste the code before the next poll
+// sees the link again. The next poll finds them logged in - so that link is
+// used, and must not come back once the token expires with it still on
+// screen.
+test('a link forgotten as gone, then used to log in, is never re-posted', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = 'root@ha:/config# '; // another window
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+    w.loginScreen(URL_A);           // back, code pasted before the next poll
+    w.loggedIn();
+    await n.tick();
+    w.loggedIn(NOW - 1);            // hours later: expired, link still there
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
+// --- truncated captures ---
+//
+// capture-pane and the pane-width query are two tmux calls. One that lands
+// mid-resize rebuilds the URL from rows at the wrong width and stops short:
+// a prefix of the real URL that still looks like an auth URL. Posted, it
+// replaced the good link with a broken one, and the good one - already
+// posted - was never put back.
+
+const TRUNCATED_A = URL_A.slice(0, 50);
+
+test('a truncated capture of the posted URL does not replace it', async () => {
+    assert.ok(require('../public/login-link.js').isAuthUrl(TRUNCATED_A), 'fixture still looks like an auth URL');
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.loginScreen(TRUNCATED_A);
+    await n.tick();
+    w.loginScreen(URL_A);
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+});
+
+test('a truncated capture still counts as the login screen being up', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.loginScreen(TRUNCATED_A);
+    for (let i = 0; i < 4; i++) await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+});
+
+test('a truncated URL seen first is replaced by the full one', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(TRUNCATED_A);
+    await n.tick();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.loginScreen(TRUNCATED_A);
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'create']);
+    assert.ok(w.calls[1].body.message.includes(`\`${URL_A}\``));
 });
 
 test('a single blank capture between good ones does not dismiss', async () => {
@@ -272,7 +372,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('the loop keeps polling until stop(), then stops', async () => {
     const w = world();
-    const n = w.notifier({ pollMs: 5 });
+    const n = w.notifier({ pollMs: 5, maxPollMs: 5 });
     await n.start();
     await sleep(60);
     n.stop();
@@ -286,7 +386,7 @@ test('stop() during start()\'s dismiss leaves no loop behind', async () => {
     const w = world();
     let release;
     w.fetchGate = new Promise((r) => { release = r; });
-    const n = w.notifier({ pollMs: 5 });
+    const n = w.notifier({ pollMs: 5, maxPollMs: 5 });
     const starting = n.start();
     n.stop();
     w.fetchGate = null;
@@ -298,7 +398,7 @@ test('stop() during start()\'s dismiss leaves no loop behind', async () => {
 
 test('stop() then start() during an in-flight tick runs one loop, not two', async () => {
     const w = world();
-    const n = w.notifier({ pollMs: 5 });
+    const n = w.notifier({ pollMs: 5, maxPollMs: 5 });
     await n.start();
     let release;
     w.gate = new Promise((r) => { release = r; });
@@ -320,6 +420,154 @@ test('start() clears a stale notification before polling', async () => {
     await n.start();
     n.stop();
     assert.deepStrictEqual(w.services(), ['dismiss']);
+});
+
+// --- back-off ---
+//
+// isLoggedIn only recognises an unexpired claudeAiOauth token. Console
+// (API-key) logins and idle OAuth logins past expiry read as logged out for
+// good, and each poll spawns two tmux processes - every 3 s, all day, on a Pi.
+// With nothing to watch the loop backs off; a login link brings it back.
+
+// Fake timers: each setTimeout replaces the one pending callback, and fire()
+// runs it to completion (its tick and the next schedule).
+function fakeTimers() {
+    const t = { pending: null, delays: [] };
+    t.setTimeout = (fn, ms) => {
+        t.pending = fn;
+        t.delays.push(ms);
+        return { unref() {} };
+    };
+    t.clearTimeout = () => { t.pending = null; };
+    t.fire = async () => {
+        const fn = t.pending;
+        assert.ok(fn, 'a poll is scheduled');
+        t.pending = null;
+        await fn();
+    };
+    return t;
+}
+
+test('with no login screen, polling backs off to a cap', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.screen = 'root@ha:/config# ';
+    await n.start();
+    for (let i = 0; i < 7; i++) await t.fire();
+    assert.deepStrictEqual(t.delays, [3000, 6000, 12000, 24000, 30000, 30000, 30000, 30000]);
+    n.stop();
+});
+
+test('a login link brings polling back to 3 s while its notification is up', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.screen = '';
+    await n.start();
+    for (let i = 0; i < 5; i++) await t.fire();
+    assert.strictEqual(t.delays.at(-1), 30000);
+    w.loginScreen(URL_A);
+    await t.fire();
+    assert.deepStrictEqual(w.services(), ['dismiss', 'create']);
+    assert.strictEqual(t.delays.at(-1), 3000, 'fast again once a link is up');
+    await t.fire();
+    await t.fire();
+    assert.strictEqual(t.delays.at(-1), 3000, 'and stays fast while it is shown');
+    w.loggedIn();
+    await t.fire();
+    assert.deepStrictEqual(w.services(), ['dismiss', 'create', 'dismiss']);
+    assert.strictEqual(t.delays.at(-1), 6000, 'backs off again once it is dismissed');
+    n.stop();
+});
+
+// At boot the wrapper starts well before tmux does (packages, Docker CLI
+// and ha-mcp come in between). Backing off through those failed captures
+// left a fresh install's first login waiting up to 30 s for its link.
+test('until the pane has been captured once, failed captures keep polling at 3 s', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.screen = null; // no tmux session yet
+    await n.start();
+    for (let i = 0; i < 5; i++) await t.fire();
+    assert.deepStrictEqual(t.delays, [3000, 3000, 3000, 3000, 3000, 3000]);
+    w.screen = 'root@ha:/config# ';
+    await t.fire();
+    assert.strictEqual(t.delays.at(-1), 6000, 'backs off once the pane is up and idle');
+    n.stop();
+});
+
+// Later on, a session that has gone away (the shell exited) is no reason to
+// poll fast forever.
+test('once the pane has been seen, failed captures back off like idle ones', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.screen = '';
+    await n.start();
+    await t.fire();
+    w.screen = null;
+    await t.fire();
+    await t.fire();
+    assert.deepStrictEqual(t.delays, [3000, 6000, 12000, 24000]);
+    n.stop();
+});
+
+test('a restart waits for the pane at 3 s again', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.screen = '';
+    await n.start();
+    await t.fire();             // pane seen
+    n.stop();
+    w.screen = null;
+    await n.start();
+    await t.fire();
+    await t.fire();
+    assert.deepStrictEqual(t.delays.slice(-3), [3000, 3000, 3000]);
+    n.stop();
+});
+
+test('a restart begins at the base interval again', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    await n.start();
+    for (let i = 0; i < 5; i++) await t.fire();
+    n.stop();
+    await n.start();
+    assert.strictEqual(t.delays.at(-1), 3000);
+    n.stop();
+});
+
+test('a link whose create failed keeps polling fast, to retry', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.loginScreen(URL_A);
+    w.status = 503;
+    await n.start();
+    for (let i = 0; i < 4; i++) await t.fire();
+    assert.deepStrictEqual(t.delays, [3000, 3000, 3000, 3000, 3000]);
+    n.stop();
+});
+
+test('a used link left on screen does not keep polling fast', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.loginScreen(URL_A);
+    await n.start();
+    await t.fire();             // posted
+    w.loggedIn();
+    await t.fire();             // dismissed: login complete
+    w.loggedIn(NOW - 1);        // token expires, link still on screen
+    for (let i = 0; i < 3; i++) await t.fire();
+    assert.deepStrictEqual(w.services(), ['dismiss', 'create', 'dismiss']);
+    assert.deepStrictEqual(t.delays.slice(-3), [12000, 24000, 30000]);
+    n.stop();
 });
 
 // --- logged-in detection ---

@@ -172,7 +172,13 @@ else
     out=$(INIT_COMMAND_TIMEOUT=1 run_init_commands 2>&1)
     elapsed=$((SECONDS - start))
     assert_contains "a command past its timeout is stopped with a warning" \
-        "$out" "Stopped after 1s (use 'nohup ... &' for services): sleep 10"
+        "$out" "Stopped after 1s"
+    assert_contains "naming the command" "$out" "): sleep 10"
+    # The hint used to be bare `nohup ... &`. Followed as written, the service
+    # kept writing to the command's output file - deleted once replayed - so
+    # its output was lost while it went on filling the disk.
+    assert_contains "and its hint for services redirects their output" \
+        "$out" "nohup <command> > <log file> 2>&1 &"
     assert_contains "the next command still runs after a timeout" "$out" "[init] next"
     assert_status "the timeout bounds the wait (${elapsed}s)" 0 test "$elapsed" -lt 5
 

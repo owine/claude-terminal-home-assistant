@@ -28,10 +28,11 @@ order_file=$(new_tmpdir)/order
 record() { printf '%s\n' "$1" >> "$order_file"; }
 
 # Replace every step main() calls with a recorder. The real ones touch /data,
-# the Supervisor and the network.
-steps="init_environment export_oauth_token export_upload_max_mb prune_uploaded_images prune_upload_inbox
-run_health_check setup_session_picker setup_persistent_packages init_docker setup_ha_mcp start_wrapper_service
-start_web_terminal"
+# the Supervisor and the network - run_init_commands would run whatever an
+# /data/options.json on the test machine lists.
+steps="init_environment export_oauth_token export_login_notification export_upload_max_mb prune_uploaded_images
+prune_upload_inbox run_health_check setup_session_picker setup_persistent_packages init_docker setup_ha_mcp
+run_init_commands start_wrapper_service start_web_terminal"
 for step in $steps; do
     eval "$step() { record $step; }"
 done
@@ -39,6 +40,26 @@ done
 rm -f "$order_file"
 main 2>/dev/null
 position() { grep -nx "$1" "$order_file" | cut -d: -f1; }
+
+# A step main() calls that is not in the list above runs for real. Catch one
+# added later: every function main() names must have been recorded. Its body
+# is tokenised rather than matched line by line, so a call with arguments, a
+# redirect, in an && / || chain or inside an if still counts; the words kept
+# are those naming a function, apart from bashio's own.
+# (A function, not inline: bash 3.2 cannot parse a case inside $(...).)
+function_words() {
+    local word
+    while IFS= read -r word; do
+        case "$word" in ''|bashio::*) continue ;; esac
+        if declare -F "$word" >/dev/null 2>&1; then printf '%s\n' "$word"; fi
+    done
+}
+main_steps=$(declare -f main | tail -n +3 | tr -s ' \t;|&()' '\n' | function_words)
+assert_status "main's steps are found (else the next check checks nothing)" 0 \
+    test "$(printf '%s\n' "$main_steps" | grep -c .)" -ge 10
+for called in $main_steps; do
+    assert_status "main's step $called is stubbed and recorded" 0 grep -qx "$called" "$order_file"
+done
 
 wrapper=$(position start_wrapper_service)
 assert_status "main starts the wrapper itself" 0 test -n "$wrapper"
@@ -51,6 +72,20 @@ assert_eq "the terminal still starts last" "start_web_terminal" "$(tail -1 "$ord
 for early in export_upload_max_mb prune_upload_inbox; do
     assert_status "$early runs before the wrapper starts" 0 test "$(position "$early")" -lt "${wrapper:-0}"
 done
+# The wrapper decides at start whether to run the login notifier, from
+# LOGIN_NOTIFICATION and CLAUDE_CODE_OAUTH_TOKEN - so both are exported before
+# it starts.
+for early in export_oauth_token export_login_notification; do
+    assert_status "$early runs before the wrapper starts" 0 test "$(position "$early")" -lt "${wrapper:-0}"
+done
+# init_commands may use persistent packages and the Docker CLI, and must be
+# done before the terminal opens.
+init_cmds=$(position run_init_commands)
+for before in setup_persistent_packages init_docker; do
+    assert_status "run_init_commands runs after $before" 0 test "$(position "$before")" -lt "${init_cmds:-0}"
+done
+assert_status "run_init_commands runs before the terminal starts" 0 \
+    test "${init_cmds:-999}" -lt "$(position start_web_terminal)"
 
 # The eval'd recorders above replace main()'s steps for the rest of this file,
 # so re-source run.sh to get the real functions back.

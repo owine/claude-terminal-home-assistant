@@ -102,7 +102,9 @@ init_commands:
   shell started may keep running: in `npm ci && npm run build`, a stuck build
   outlives the timeout.
 - A service must put itself in the background with `nohup ... &` **and**
-  redirect its own output, as above.
+  redirect its own output, as above (`> file.log 2>&1`). Without the redirect
+  its output is lost: it goes to a temporary file that is deleted once the
+  command returns, while the service keeps writing to it.
 - Output goes to the app log (the last 200 lines per command). A command that
   fails logs a warning, and startup carries on.
 - The command text and its output are logged, so keep secrets out of both:
@@ -228,7 +230,9 @@ Two things help with that:
 - **Home Assistant notification**: while Claude is waiting for a login, the
   add-on posts the link as a "Claude Code login" notification, which also
   reaches the Companion app. Open it, sign in, then paste the code the browser
-  shows into the terminal. The notification goes away by itself once the login
+  shows into the terminal. While nothing needs it, the add-on checks for a
+  login screen less often, so the first notification can take up to 30
+  seconds to arrive. The notification goes away by itself once the login
   succeeds, or once the login screen is gone (a cancelled login, or a Console
   login, which does not leave the credentials it watches for). Notifications
   live in Home Assistant's memory, so if HA restarts mid-login the same link

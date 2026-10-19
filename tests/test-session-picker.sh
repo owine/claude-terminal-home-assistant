@@ -167,6 +167,9 @@ for seq in '\033[<u' '\033[>4;0m' '\033[?2004l' '\033[?1004l' '\033[?9l' '\033[?
     expected=$(printf '%b' "$seq")
     assert_contains "emits ${seq#\\033}" "$reset_out" "$expected"
 done
+# Why the pair, and not ?1049l alone: see the real-tmux cases below.
+assert_contains "refreshes the saved cursor (?1049h) straight before ?1049l" \
+    "$reset_out" "$(printf '\033[?1049h\033[?1049l')"
 
 # stty only runs against a terminal: under test, stdin is not one, and stty on
 # a pipe would only print an error.
@@ -206,5 +209,136 @@ before_prompt=${out%%Press Enter to return to menu*}
 assert_contains "and does so before its Press Enter prompt" "$before_prompt" "RESET"
 
 CLAUDE_BIN="$saved_bin"
+
+# --- in a real tmux pane -----------------------------------------------------
+#
+# What reset_terminal does to a pane is tmux's and the tty driver's business,
+# so these cases run the picker in a pane of a private tmux server and look at
+# the result from outside. Skipped on a laptop without tmux; in CI (test.yml
+# installs tmux) a skip would mean nothing was tested, so there it fails.
+
+printf '\n%s\n' "reset_terminal in a real tmux pane"
+
+if ! command -v tmux >/dev/null 2>&1; then
+    if [ -n "${CI:-}" ]; then
+        _fail "tmux is required in CI (test.yml installs it)"
+    else
+        printf '  skip tmux is not installed; run in the add-on image to exercise these cases\n'
+    fi
+    finish_suite
+    exit $?
+fi
+
+pane_tmp=$(new_tmpdir)
+export TMUX_TMPDIR="$pane_tmp"
+unset TMUX
+
+# in_pane <script> - run <script> (bash source) in a fresh 80x30 pane, with
+# the picker sourced and its pauses stubbed. $OUT is a directory the script
+# and the test share.
+in_pane() {
+    local script="$pane_tmp/pane.sh"
+    {
+        printf '. %q\n' "$REPO_ROOT/claude-terminal/scripts/claude-session-picker.sh"
+        printf 'sleep() { :; }\nOUT=%q\n' "$pane_tmp"
+        printf '%s\n' "$1"
+        printf 'command sleep 30\n'
+    } > "$script"
+    tmux kill-server 2>/dev/null
+    rm -f "$pane_tmp"/out.*
+    tmux -f /dev/null new-session -d -s picker -x 80 -y 30 "bash $script"
+}
+
+# wait_for <file> - up to 5 s
+wait_for() {
+    local i=0
+    while [ ! -e "$1" ] && [ "$i" -lt 50 ]; do
+        command sleep 0.1
+        i=$((i + 1))
+    done
+}
+
+# screen_with <text> - capture the pane until it shows <text>, up to 5 s, and
+# print the last capture. A marker file written by the pane proves only that
+# the pane's script got that far, not that tmux has parsed the output before
+# it - on a slow runner the capture could miss the end of it.
+screen_with() {
+    local i=0 screen
+    while :; do
+        screen=$(tmux capture-pane -p -t picker 2>/dev/null)
+        case "$screen" in *"$1"*) break ;; esac
+        [ "$i" -ge 50 ] && break
+        command sleep 0.1
+        i=$((i + 1))
+    done
+    printf '%s\n' "$screen"
+}
+
+# `stty sane` turns iutf8 off - BusyBox's, GNU's and macOS's alike - and tmux
+# had turned it on. Without it the tty driver's erase removes one byte, not
+# one character, so Backspace over `é` in the menu's canonical-mode `read`
+# left half of it behind: the line read back was \xc3 + what came after.
+# shellcheck disable=SC2016  # expanded in the pane
+in_pane '
+reset_terminal
+stty -a > "$OUT/out.stty"
+IFS= read -r line
+printf "%s" "$line" | od -An -tx1 | tr -d " \n" > "$OUT/out.line"
+'
+wait_for "$pane_tmp/out.stty"
+tmux send-keys -t picker -l 'é'
+tmux send-keys -t picker BSpace
+tmux send-keys -t picker -l 'a'
+tmux send-keys -t picker Enter
+wait_for "$pane_tmp/out.line"
+assert_eq "reset_terminal leaves iutf8 on" "iutf8" \
+    "$(tr ' ' '\n' < "$pane_tmp/out.stty" 2>/dev/null | grep -x -e iutf8 -e -iutf8)"
+assert_eq "so Backspace over a multibyte character erases all of it" "61" \
+    "$(cat "$pane_tmp/out.line" 2>/dev/null)"
+
+# A program that used the alternate screen during the session - an editor
+# opened from Claude Code, a pager - leaves tmux's saved cursor at the row
+# where it started. tmux restores that cursor on `?1049l` even when the
+# alternate screen is not in use, so reset_terminal jumped the cursor back up
+# and "Session ended" overwrote Claude's last lines, in the scrollback too.
+# The reset must leave the cursor where Claude left it.
+cat > "$pane_tmp/claude" <<'EOF'
+#!/bin/sh
+printf 'transcript start\n'
+printf '\033[?1049h\033[Hin an editor\033[?1049l'
+for i in 1 2 3 4 5 6; do printf 'final output %s\n' "$i"; done
+EOF
+chmod +x "$pane_tmp/claude"
+# shellcheck disable=SC2016  # expanded in the pane
+in_pane "CLAUDE_BIN=$pane_tmp/claude"'
+launch_claude
+show_return_message
+'
+screen=$(screen_with "Session ended")
+for i in 1 2 3 4 5 6; do
+    assert_contains "Claude's last output survives the exit message (line $i)" \
+        "${nl}${screen}${nl}" "${nl}final output $i${nl}"
+done
+assert_contains "and the exit message follows it" "${screen#*final output 6}" "Session ended"
+
+# The other case ?1049l exists for: Claude killed while it had the alternate
+# screen up. Leaving it must still restore the screen and cursor from before.
+cat > "$pane_tmp/claude" <<'EOF'
+#!/bin/sh
+printf 'transcript start\n'
+for i in 1 2 3; do printf 'final output %s\n' "$i"; done
+printf '\033[?1049h\033[10;10Hfull-screen UI when killed'
+EOF
+# shellcheck disable=SC2016  # expanded in the pane
+in_pane "CLAUDE_BIN=$pane_tmp/claude"'
+launch_claude
+show_return_message
+'
+screen=$(screen_with "Session ended")
+assert_not_contains "a killed full-screen Claude leaves the alternate screen" "$screen" "full-screen UI"
+assert_contains "and the exit message follows the main screen's output directly" \
+    "$screen" "final output 3${nl}${nl}────"
+
+tmux kill-server 2>/dev/null
 
 finish_suite
