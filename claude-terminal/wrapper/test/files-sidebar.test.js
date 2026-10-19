@@ -15,6 +15,9 @@ const {
     clampWidth,
     relativeTo,
     downloadUrl,
+    uploadUrl,
+    uploadTarget,
+    uploadErrorText,
 } = require('../public/files-sidebar.js');
 
 test('plain paths are typed as-is', () => {
@@ -107,4 +110,38 @@ test('downloadUrl: relative and encoded; protected=1 for single files only', () 
         'api/files/download-zip?path=%2Fconfig%2Fblueprints&check=1');
     assert.strictEqual(downloadUrl('/config/x.yaml', { check: true }),
         'api/files/download?path=%2Fconfig%2Fx.yaml');
+});
+
+test('uploadUrl: relative and encoded; no dest is the inbox; check=1 carries the size', () => {
+    assert.strictEqual(uploadUrl({ name: 'a b&c=d#.txt' }),
+        'api/files/upload?name=a%20b%26c%3Dd%23.txt');
+    assert.strictEqual(uploadUrl({ name: 'x.yaml', dest: '/config/with space', onConflict: 'keep-both' }),
+        'api/files/upload?name=x.yaml&dest=%2Fconfig%2Fwith%20space&onConflict=keep-both');
+    assert.strictEqual(uploadUrl({ name: 'x.yaml', dest: '/config/b', check: true, size: 42 }),
+        'api/files/upload?name=x.yaml&dest=%2Fconfig%2Fb&check=1&size=42');
+    assert.strictEqual(uploadUrl({ name: 'x', dest: null }), 'api/files/upload?name=x');
+});
+
+test('uploadTarget: offered on real folders; disabled with a reason on protected ones and deps', () => {
+    const dir = (p, extra = {}) => ({ type: 'dir', path: p, ...extra });
+    assert.deepStrictEqual(uploadTarget(dir('/config/blueprints'), '/config'),
+        { disabled: false, hint: '', title: 'Upload files into this folder' });
+    assert.strictEqual(uploadTarget(dir('/config/bp-link', { symlink: true }), '/config'), null);
+    assert.strictEqual(uploadTarget({ type: 'file', path: '/config/a.yaml' }, '/config'), null);
+    assert.strictEqual(uploadTarget(dir('/config/.storage', { sensitive: true }), '/config').disabled, true);
+    assert.strictEqual(uploadTarget(dir('/config/deps'), '/config').disabled, true);
+    assert.strictEqual(uploadTarget(dir('/config/deps/lib'), '/config').disabled, true);
+    assert.strictEqual(uploadTarget(dir('/config/www/deps'), '/config').disabled, false);
+    const inbox = uploadTarget(dir('/config/uploads'), '/config');
+    assert.strictEqual(inbox.disabled, false);
+    assert.match(inbox.hint, /upload_retention_days/);
+    assert.strictEqual(uploadTarget(dir('/config/www/uploads'), '/config').hint, '');
+});
+
+test('uploadErrorText: the server\'s message, else one for the status', () => {
+    assert.strictEqual(uploadErrorText(413, { error: 'This file is 30.0 MB, over the 25 MB upload limit.' }, 'big.bin'),
+        'big.bin: This file is 30.0 MB, over the 25 MB upload limit.');
+    assert.match(uploadErrorText(413, {}, 'big.bin'), /upload_max_mb/);
+    assert.match(uploadErrorText(0, {}, 'a.txt'), /Could not reach the add-on to upload a\.txt/);
+    assert.strictEqual(uploadErrorText(502, null, 'a.txt'), 'a.txt: upload failed (HTTP 502).');
 });
