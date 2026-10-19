@@ -632,7 +632,7 @@ test('check=1: a file just over the cap is over it, never "1.0 MB, over the 1 MB
 
 test('upload: a declared Content-Length over the cap is refused before any check or write', async () => {
     let adds = 0;
-    const counting = { add: async () => { adds++; }, remove: async () => {} };
+    const counting = { file: recordFile, add: async () => { adds++; }, remove: async () => {} };
     let planned = 0;
     const small = createUploads({ api, record: counting, maxBytes: 1024 * 1024, onPlanned: () => { planned++; } });
     await withServer({ uploads: small }, async (url) => {
@@ -952,7 +952,7 @@ test('upload: a folder that goes between the two halves of its last check is a 4
 });
 
 test('upload: a record that cannot be written refuses the upload before any byte', async () => {
-    const broken = { add: async () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); }, remove: async () => {} };
+    const broken = { file: recordFile, add: async () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); }, remove: async () => {} };
     await withServer({ uploads: createUploads({ api, record: broken }) }, async (url) => {
         const res = await post(url, { name: 'norecord.txt', dest: 'blueprints' }, 'x');
         assert.strictEqual(res.status, 507);
@@ -960,6 +960,16 @@ test('upload: a record that cannot be written refuses the upload before any byte
     });
     assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'norecord.txt')), false);
     assert.deepStrictEqual(partsUnder(), []);
+});
+
+test('uploads need a part record that says where it is kept', () => {
+    // its path is what a failure to write it names (see below)
+    const add = async () => {};
+    const remove = async () => {};
+    for (const record of [{ add, remove }, { add, remove, file: '' }, { add, remove, file: 42 }]) {
+        assert.throws(() => createUploads({ api, record }), /record must have its file/, JSON.stringify(record));
+    }
+    assert.doesNotThrow(() => createUploads({ api, record: { add, remove, file: recordFile } }));
 });
 
 test('upload: a record that cannot be written is said to be the add-on\'s data folder, not the destination', async () => {

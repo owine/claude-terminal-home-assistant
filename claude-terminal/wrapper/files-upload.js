@@ -180,10 +180,10 @@ const sizeText = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
 
 /**
  * Uploads over a files-api instance (for locate() and its root). `record` is
- * upload-parts.js's createPartRecord. The rest are test seams: `fsOps` the
- * link and rename that put a finished part in place, the realpath of the
- * last check before them and the lstat that tells the part's file apart
- * (each defaults on its own), `openPart` its open
+ * upload-parts.js's createPartRecord, whose `file` is required. The rest are
+ * test seams: `fsOps` the link and rename that put a finished part in place,
+ * the realpath of the last check before them and the lstat that tells the
+ * part's file apart (each defaults on its own), `openPart` its open
  * (a FileHandle, or anything with its stat - which must honour
  * { bigint: true } - chmod, write, datasync, truncate and close),
  * `partName` its name, `onPlanned` a hook between the checks and
@@ -205,6 +205,9 @@ function createUploads({
     onPlanned = null,
     beforeCommit = null,
 } = {}) {
+    if (typeof record?.file !== 'string' || record.file === '') {
+        throw new TypeError('record must have its file (a createPartRecord record): a failure to write it is said by that path');
+    }
     const fsOps = { link: fsp.link, rename: fsp.rename, realpath: fsp.realpath, lstat: fsp.lstat, ...ops };
     const maxMb = Math.round(maxBytes / MB);
     const limitText = `the ${maxMb} MB upload limit (the add-on's upload_max_mb option)`;
@@ -508,9 +511,8 @@ function createUploads({
         try {
             await record.add(part);
         } catch (err) {
-            const file = record.file ?? '/data/upload-parts';   // server.js's record
-            log(`Upload not saved: its part could not be recorded in ${file}: ${err.message}`);
-            const dir = path.dirname(file);
+            log(`Upload not saved: its part could not be recorded in ${record.file}: ${err.message}`);
+            const dir = path.dirname(record.file);
             throw DISK_FULL.has(err && err.code)
                 ? new FilesError(507, `The add-on's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`)
                 : new FilesError(500, `The add-on could not write to its data folder (${dir}), so the file was not saved. The add-on's log says why.`);
@@ -594,10 +596,14 @@ function createUploads({
             // file. Removed by its path only while that path still names it.
             if (id && await samePart(part, id).catch(() => false)) await fsp.unlink(part).catch(() => {});
             if (handle && !id) {
-                // Made (O_EXCL) but never identified: its stat failed. Not
-                // deleted by its path alone, which may name another file by
-                // now; left in the record, emptied above, for the next
-                // start's sweep, which deletes it under that sweep's checks.
+                // Made (O_EXCL) but never identified: its stat failed, so
+                // nothing here can tell it from another file put at its path
+                // since, and the unlink above, which needs the inode, is
+                // skipped. Left in the record, emptied above, for the next
+                // start's sweep. That sweep deletes by path too, with no
+                // inode: it relies on the part's random name and its checks
+                // that the path is a regular file in a real folder inside
+                // the root (upload-parts.js, judge).
                 log(`Upload parts: ${part} was made but not identified; left for the next start to remove`);
             } else {
                 await record.remove(part).catch((err) => log(`Upload parts: record not updated: ${err.message}`));
