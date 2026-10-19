@@ -79,6 +79,18 @@ test('a name keeps its last segment, without control characters or leading dots'
     assert.strictEqual(sanitizeUploadName('with space $(x) \'q\'.yaml'), 'with space $(x) \'q\'.yaml');
 });
 
+test('a name loses its bidirectional controls, so it reads as what it is', () => {
+    // U+202E (right-to-left override) shows 'photo<U+202E>gpj.exe' as 'photoexe.jpg'
+    assert.strictEqual(sanitizeUploadName('photo\u202egpj.exe'), 'photogpj.exe');
+    for (const ch of ['\u200e', '\u200f', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+        '\u2066', '\u2067', '\u2068', '\u2069', '\ufeff']) {
+        assert.strictEqual(sanitizeUploadName(`a${ch}b.txt`), 'ab.txt', `U+${ch.codePointAt(0).toString(16)}`);
+    }
+    assert.strictEqual(sanitizeUploadName('\u202e.env'), 'env');
+    // positive control: other characters outside ASCII stay
+    assert.strictEqual(sanitizeUploadName('caf\u00e9 \u65e5\u672c \u05e9\u05dc\u05d5\u05dd.txt'), 'caf\u00e9 \u65e5\u672c \u05e9\u05dc\u05d5\u05dd.txt');
+});
+
 test('a name left empty becomes upload-<timestamp>', () => {
     for (const raw of ['', '...', '/', ' . ', '\x00\x01', '../..']) {
         assert.strictEqual(sanitizeUploadName(raw, { now: () => 1700000000000 }), 'upload-1700000000000', JSON.stringify(raw));

@@ -54,8 +54,12 @@ const MAX_SUFFIX = 999;
 // rename after a fresh lstat takes over (see placeNew).
 const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EMLINK']);
 const DISK_FULL = new Set(['ENOSPC', 'EDQUOT']);
+// Control characters, and the invisible marks that reorder or hide text:
+// the bidirectional marks, embeddings, overrides and isolates (U+200E-200F,
+// U+202A-202E, U+2066-2069), with which `photo<U+202E>gpj.exe` reads as
+// `photoexe.jpg`, and the byte-order mark U+FEFF.
 // eslint-disable-next-line no-control-regex
-const CONTROL = /[\x00-\x1f\x7f-\x9f]/g;
+const CONTROL = /[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
 
 /**
  * The upload cap in bytes, from UPLOAD_MAX_MB (whole megabytes). Anything but
@@ -79,7 +83,8 @@ function cutToBytes(s, max) {
 
 /**
  * The name an upload is saved under, from the client's file name: its last
- * path segment, without control characters, without any run of dots and
+ * path segment, without control characters or bidirectional marks (CONTROL),
+ * without any run of dots and
  * spaces at its start (so `. .env` cannot come back as `.env`, nor anything
  * as the wrapper's own `.ctp-upload-*.part`) or spaces at its end, cut to
  * MAX_NAME_BYTES keeping a short extension. `upload-<epoch
