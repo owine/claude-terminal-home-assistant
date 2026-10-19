@@ -16,13 +16,10 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { inside, PARTIAL_FILE } = require('./files-api');
 
-async function lstatOrNull(p) {
-    try {
-        return await fsp.lstat(p);
-    } catch {
-        return null;
-    }
-}
+// An error that says nothing is at the path: no such name, or a file where a
+// folder should be. Anything else (EACCES, EIO, ELOOP) says only that it
+// could not be looked at.
+const nothingThere = (err) => err.code === 'ENOENT' || err.code === 'ENOTDIR';
 
 /**
  * The record of parts being written, in a file in /data. Parts are held in
@@ -35,10 +32,10 @@ async function lstatOrNull(p) {
  * add() rejects when the record cannot be written, and the upload is then
  * refused: a part nobody recorded could outlive a crash forever.
  *
- * `open` and `unlink` are test seams: the temp file's open, and the sweep's
- * delete.
+ * `open`, `unlink` and `lstat` are test seams: the temp file's open, and
+ * the sweep's delete and look at a part.
  */
-function createPartRecord({ file, root, log = console.error, open = fsp.open, unlink = fsp.unlink }) {
+function createPartRecord({ file, root, log = console.error, open = fsp.open, unlink = fsp.unlink, lstat = fsp.lstat }) {
     const parts = new Set();
     // What start() could not sweep - the whole record, its root not there
     // yet, or the parts it could not judge (judge): carried into every
@@ -70,9 +67,10 @@ function createPartRecord({ file, root, log = console.error, open = fsp.open, un
     // folder inside the root. Nothing else is searched: what the record does
     // not name is never touched. 'keep' it named, for a later start, when a
     // part may be there but cannot be judged now: /config resolving
-    // somewhere else this time, a folder swapped for a link, a folder that
-    // cannot be read. 'drop' it when it never could be removed (not a part's
-    // path) or nothing is there.
+    // somewhere else this time, a folder swapped for a link, a folder or a
+    // part that cannot be looked at (and, in sweep(), one whose unlink
+    // failed). 'drop' it when it never could be removed (not a part's path)
+    // or nothing is there.
     async function judge(p, rootReal) {
         if (typeof p !== 'string' || !path.isAbsolute(p) || path.resolve(p) !== p) return 'drop';
         if (!PARTIAL_FILE.test(path.basename(p))) return 'drop';
@@ -81,10 +79,14 @@ function createPartRecord({ file, root, log = console.error, open = fsp.open, un
         try {
             realDir = await fsp.realpath(dir);
         } catch (err) {
-            return err.code === 'ENOENT' || err.code === 'ENOTDIR' ? 'drop' : 'keep';
+            return nothingThere(err) ? 'drop' : 'keep';
         }
-        const st = await lstatOrNull(p);
-        if (!st) return 'drop';
+        let st;
+        try {
+            st = await lstat(p);
+        } catch (err) {
+            return nothingThere(err) ? 'drop' : 'keep';
+        }
         if (realDir !== dir || !inside(rootReal, dir)) return 'keep';
         // A link or a folder in the part's place is not the part.
         return st.isFile() ? 'remove' : 'drop';
@@ -128,7 +130,7 @@ function createPartRecord({ file, root, log = console.error, open = fsp.open, un
         await write([]);
         if (removed) log(`Upload parts: removed ${removed} left by an earlier run`);
         if (kept.length) {
-            log(`Upload parts: ${kept.length} left in the record, not removable now (outside ${root}, or not in a real folder); tried again at the next start`);
+            log(`Upload parts: ${kept.length} left in the record, not removable now (outside ${root}, not in a real folder, not readable, or not deleted); tried again at the next start`);
         }
         return removed;
     }

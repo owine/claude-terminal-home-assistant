@@ -53,7 +53,7 @@ test('startup removes the parts the record names, and nothing else', async () =>
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), [outsidePart, viaLink]);
     assert.deepStrictEqual(logged, [
         'Upload parts: removed 1 left by an earlier run',
-        `Upload parts: 2 left in the record, not removable now (outside ${conf}, or not in a real folder); tried again at the next start`,
+        `Upload parts: 2 left in the record, not removable now (outside ${conf}, not in a real folder, not readable, or not deleted); tried again at the next start`,
     ]);
 });
 
@@ -87,7 +87,7 @@ test('startup keeps naming a part it cannot judge now, and sweeps it once it can
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), []);
 });
 
-test('startup keeps naming a part whose folder cannot be read now, or that it failed to remove', async () => {
+test('startup keeps naming a part whose folder or name cannot be read now, or that it failed to remove', async () => {
     const r = path.join(base, 'unjudged');
     const conf = path.join(r, 'config');
     fs.mkdirSync(conf, { recursive: true });
@@ -98,18 +98,31 @@ test('startup keeps naming a part whose folder cannot be read now, or that it fa
     const noDir = path.join(conf, 'gone', '.ctp-upload-1111111111111111.part');
     const stuck = write('b/.ctp-upload-2222222222222222.part', '', conf);
     const freed = write('b/.ctp-upload-3333333333333333.part', '', conf);
+    // a part whose own lstat fails, other than "not there"
+    const unlooked = write('b/.ctp-upload-4444444444444444.part', '', conf);
+    // a "folder" that is a file: nothing can be in it (ENOTDIR from the
+    // part's lstat, or from the folder's realpath one level down)
+    write('afile', 'a file', conf);
+    const inFile = path.join(conf, 'afile', '.ctp-upload-5555555555555555.part');
+    const belowFile = path.join(conf, 'afile', 'sub', '.ctp-upload-6666666666666666.part');
     const file = path.join(r, 'upload-parts');
-    fs.writeFileSync(file, JSON.stringify([inLoop, noDir, stuck, freed]));
+    fs.writeFileSync(file, JSON.stringify([inLoop, noDir, stuck, freed, unlooked, inFile, belowFile]));
     const unlink = async (p) => {
         if (p === stuck) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
         return fs.promises.unlink(p);
     };
+    const lstat = async (p, ...rest) => {
+        if (p === unlooked) throw Object.assign(new Error('simulated EIO'), { code: 'EIO' });
+        return fs.promises.lstat(p, ...rest);
+    };
     const logged = [];
-    assert.strictEqual(await createPartRecord({ file, root: conf, log: (m) => logged.push(m), unlink }).start(), 1);
+    assert.strictEqual(await createPartRecord({ file, root: conf, log: (m) => logged.push(m), unlink, lstat }).start(), 1);
     assert.strictEqual(fs.existsSync(freed), false);
     assert.strictEqual(fs.existsSync(stuck), true);
-    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), [inLoop, stuck]);
+    assert.strictEqual(fs.existsSync(unlooked), true);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), [inLoop, stuck, unlooked]);
     assert.ok(logged.some((m) => m.includes(`could not remove ${stuck}: simulated EBUSY`)), logged.join('\n'));
+    assert.ok(logged.some((m) => m.startsWith('Upload parts: 3 left in the record, not removable now')), logged.join('\n'));
     // positive control: a part that is gone between the look and the unlink is just gone
     fs.writeFileSync(file, JSON.stringify([stuck]));
     const vanishing = async (p) => {
