@@ -55,6 +55,11 @@ const MAX_SUFFIX = 999;
 // link() refusals that mean "no hard links on this filesystem", where a
 // rename after a fresh lstat takes over (see placeNew).
 const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EMLINK']);
+// What a link or rename that puts a part in place raises when a path to it
+// changed under it: no part or folder there any more (ENOENT), the folder
+// swapped for a file (ENOTDIR) or for a link that loops (ELOOP). The
+// folder changed; not a fault.
+const PATH_CHANGED = new Set(['ENOENT', 'ENOTDIR', 'ELOOP']);
 // Failures that are the file system's, not a bug: answered as what they are
 // (the global answer would be "Internal error"), and still logged.
 const DISK_FULL_TEXT = 'The disk is full, so the file was not saved. Free some space and try again.';
@@ -207,6 +212,12 @@ function createUploads({
     const partChanged = (display) => new FilesError(409,
         `The upload's temporary file in ${display} was moved or replaced during the upload, so nothing was saved.`,
         { reason: 'changed' });
+    // A Replace whose rename went through: the old file is overwritten,
+    // whatever is at its name now, so "nothing was saved" would be untrue.
+    const replacedChanged = (name, display) => new FilesError(409,
+        `${name} in ${display} was overwritten, but what is there now is not the upload: it was moved or replaced `
+        + `as it was put in place. The previous ${name} is gone.`,
+        { reason: 'changed', replaced: true });
     const exists = (name, display, st) => (st && !st.isFile()
         ? new FilesError(409, `${name} already exists in ${display} and is not a regular file, so it cannot be replaced.`,
             { reason: 'exists', replaceable: false })
@@ -320,18 +331,22 @@ function createUploads({
     // Put a finished part at `target` unless something is there already:
     // link() refuses an existing name atomically, which a check followed by
     // a rename cannot. Where hard links are not supported, a fresh lstat
-    // and a rename are the fallback. False when the name is taken.
-    async function placeNew(part, target) {
+    // and a rename are the fallback. 'link' or 'rename', for how it was put
+    // there; null when the name is taken. `progress.put` is set the moment
+    // either goes through (see receive).
+    async function placeNew(part, target, progress) {
         try {
             await fsOps.link(part, target);
-            return true;
+            progress.put = true;
+            return 'link';
         } catch (err) {
-            if (err.code === 'EEXIST') return false;
+            if (err.code === 'EEXIST') return null;
             if (!NO_HARD_LINKS.has(err.code)) throw err;
         }
-        if (await lstatOrNull(target)) return false;
+        if (await lstatOrNull(target)) return null;
         await fsOps.rename(part, target);
-        return true;
+        progress.put = true;
+        return 'rename';
     }
 
     // The folder may have gone, or been swapped for a link, while the body
@@ -368,20 +383,45 @@ function createUploads({
     async function mustBeOurs(part, id, planned) {
         if (!(await samePart(part, id))) throw partChanged(planned.display);
     }
-    // After the link or rename: the part's name can be given to another
-    // file between the last mustBeOurs and that call, which then puts the
-    // other file in place. Nothing this upload wrote is there, so it is
-    // not a success. What landed is not this upload's to remove: logged,
-    // and left.
-    async function mustHavePlaced(target, id, planned, log) {
+    // Whether `target` is the file at `part` (dev and inode, as BigInts):
+    // the part's name itself, or, when that is a symlink, what it points
+    // to, since macOS's link() follows a link at its first path (Linux's
+    // does not).
+    async function sameFileAsPart(target, part) {
+        const t = await lstatOrNull(target, { bigint: true });
+        const same = (st) => Boolean(t && st && st.dev === t.dev && st.ino === t.ino);
+        if (same(await lstatOrNull(part, { bigint: true }))) return true;
+        return same(await fsp.stat(part, { bigint: true }).catch(() => null));
+    }
+    // After the link or rename, `target` must hold the uploaded file. It
+    // may not: the part's name was given to another file between the last
+    // mustBeOurs and that call (which then put the other file in place),
+    // or the file was moved away or replaced the moment it landed. Either
+    // way it is not a success. What is at the name is not this upload's
+    // to remove, with one exception: after a link(), a target that is the
+    // same file as the one at the part's name now is a second name for
+    // another file, made by this call alone; that name is taken back and
+    // the file left at the part's name. `how` is placeNew's answer, or
+    // 'replace'; `overwrote` whether a Replace's rename overwrote a file.
+    async function mustHavePlaced(target, id, planned, log, { part, how, overwrote = false }) {
         if (await samePart(target, id)) return;
-        log(`Upload not saved: ${target} is not the uploaded file (its temporary file was replaced as it was put in place); left as it is`);
-        throw partChanged(planned.display);
+        const what = `Upload not saved: ${target} is not the uploaded file (moved or replaced as it was put in place)`;
+        if (how === 'link' && await sameFileAsPart(target, part)) {
+            try {
+                await fsp.unlink(target);
+                log(`${what}; it was a second name for the file at ${part}, made by this upload, so that name was removed`);
+            } catch (err) {
+                log(`${what}; the second name this upload made for the file at ${part} was not removed: ${err.message}`);
+            }
+        } else {
+            log(`${what}; left as it is`);
+        }
+        throw overwrote ? replacedChanged(planned.name, planned.display) : partChanged(planned.display);
     }
 
     // `handle` is the part's open descriptor, still open: Replace sets the
-    // mode through it, never through the path.
-    async function commit(part, planned, handle, id, log) {
+    // mode through it, never through the path. `progress` is receive()'s.
+    async function commit(part, planned, handle, id, log, progress) {
         await recheck(planned);
         const target = path.join(planned.dir, planned.name);
         if (planned.onConflict === 'replace') {
@@ -393,7 +433,8 @@ function createUploads({
             if (old) await handle.chmod(old.mode & 0o777);
             await mustBeOurs(part, id, planned);
             await fsOps.rename(part, target);   // swaps the whole file in at once
-            await mustHavePlaced(target, id, planned, log);
+            progress.put = true;
+            await mustHavePlaced(target, id, planned, log, { part, how: 'replace', overwrote: Boolean(old) });
             return { path: target, name: planned.name, replaced: Boolean(old) };
         }
         await mustBeOurs(part, id, planned);
@@ -401,8 +442,9 @@ function createUploads({
         for (let n = 0; n <= (suffix ? MAX_SUFFIX : 0); n++) {
             const name = n === 0 ? planned.name : withSuffix(planned.name, n);
             const candidate = path.join(planned.dir, name);
-            if (await placeNew(part, candidate)) {
-                await mustHavePlaced(candidate, id, planned, log);
+            const how = await placeNew(part, candidate, progress);
+            if (how) {
+                await mustHavePlaced(candidate, id, planned, log, { part, how });
                 return { path: candidate, name, replaced: false };
             }
         }
@@ -417,7 +459,9 @@ function createUploads({
      * out - the client gone or stalled, over the cap, a failed write or
      * rename, the folder gone, moved or swapped - the part is emptied and
      * deleted and dropped from the record, and nothing is left at the
-     * destination.
+     * destination. Except once a link or rename has put it at its name:
+     * then a failed check after it is still a 409, but the file is never
+     * emptied, since it may be the user's upload wherever it went.
      */
     async function receive(req, planned, { log = console.error } = {}) {
         if (onPlanned) await onPlanned(planned);
@@ -428,7 +472,11 @@ function createUploads({
         // there before), by device and inode. Null until then, and only
         // that file is ever emptied or deleted.
         let id = null;
-        let placed = null;
+        // Set the moment a link or rename puts the part at its name. From
+        // then on the file can be the user's upload somewhere, whatever any
+        // later check says: moved away the moment it landed, it is still
+        // their bytes, so never emptied.
+        const progress = { put: false };
         try {
             handle = await openPart(part);
             const opened = await handle.stat({ bigint: true });
@@ -441,23 +489,24 @@ function createUploads({
             const size = await writeBody(req, handle, planned.name, log);
             await handle.datasync();     // on disk before it replaces anything
             if (beforeCommit) await beforeCommit(part, planned);
+            let placed;
             try {
-                placed = await commit(part, planned, handle, id, log);
+                placed = await commit(part, planned, handle, id, log, progress);
             } catch (err) {
                 // A link or rename that finds no part, or no folder, at
-                // the path: the folder was moved or swapped for a link
-                // since its last check. Changed, not a fault.
-                if (err.code !== 'ENOENT') throw err;
+                // the path (PATH_CHANGED): the folder was moved or swapped
+                // for a file or a link since its last check.
+                if (!PATH_CHANGED.has(err.code)) throw err;
                 log(`Upload not saved: ${err.message}`);
                 throw partChanged(planned.display);
             }
             return { ...placed, size, dir: planned.display, inbox: planned.inbox };
         } finally {
             if (handle) {
-                // Not put in place: emptied through the descriptor, which
+                // Never put anywhere: emptied through the descriptor, which
                 // reaches the file wherever it is now. A folder moved
                 // mid-upload takes the part along, out of the unlink's reach.
-                if (!placed) await handle.truncate(0).catch(() => {});
+                if (!progress.put) await handle.truncate(0).catch(() => {});
                 await handle.close().catch(() => {});
             }
             // After a link() the part is a second name for the file; after a

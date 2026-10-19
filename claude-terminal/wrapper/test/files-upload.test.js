@@ -1255,13 +1255,17 @@ test('race: a part swapped in the moment before it is put in place is a logged 4
             rename: async (a, b) => { swap(a); return fs.promises.rename(a, b); },
         },
     });
+    // What each leaves: a rename moves the other file to the name, where it
+    // stays (not this upload's to remove). A link() only gave it a second
+    // name, which this upload made and so takes back: the other file stays
+    // at the part's name, as it was.
     const cases = [
-        [viaLink, { name: 'l.txt' }, 'l.txt'],
-        [viaRename, { name: 'old.txt', onConflict: 'replace' }, 'old.txt'],
-        [noLinks, { name: 'n.txt' }, 'n.txt'],
+        [viaLink, { name: 'l.txt' }, { [PART]: 'not the upload', 'old.txt': 'old' }, 'l.txt'],
+        [viaRename, { name: 'old.txt', onConflict: 'replace' }, { 'old.txt': 'not the upload' }, 'old.txt'],
+        [noLinks, { name: 'n.txt' }, { 'n.txt': 'not the upload', 'old.txt': 'old' }, 'n.txt'],
     ];
     try {
-        for (const [uploads, params, landed] of cases) {
+        for (const [uploads, params, left, named] of cases) {
             fs.rmSync(f.dir, { recursive: true, force: true });
             fs.mkdirSync(f.dir);
             fs.writeFileSync(path.join(f.dir, 'old.txt'), 'old');
@@ -1270,9 +1274,10 @@ test('race: a part swapped in the moment before it is put in place is a logged 4
                 assert.strictEqual(res.status, 409, JSON.stringify(params));
                 assert.strictEqual((await res.json()).reason, 'changed');
             });
-            // what landed is the other file, never this upload's bytes
-            assert.strictEqual(fs.readFileSync(path.join(f.dir, landed), 'utf8'), 'not the upload');
-            assert.ok(logged.some((m) => m.includes(path.join(f.dir, landed))), logged.join('\n'));
+            // never this upload's bytes, anywhere
+            assert.deepStrictEqual(filesIn(f.dir), left, JSON.stringify(params));
+            assert.ok(logged.some((m) => m.includes(path.join(f.dir, named))
+                && m.includes('moved or replaced as it was put in place')), logged.join('\n'));
         }
     } finally {
         f.cleanup();
@@ -1309,6 +1314,151 @@ test('race: a folder swapped for a link as the part is put in place is a 409, no
     } finally {
         f.cleanup();
     }
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('race: a part swapped for a symlink as it is linked into place leaves no name for the link\'s target', async () => {
+    // Linux's link() makes a second name for the symlink, macOS's for what
+    // it points to (here outside the root). Either name is this call's own
+    // and is taken back; the file outside is untouched.
+    const f = raceFixture('race-symlinked');
+    const key = path.join(f.out, 'k.key');
+    fs.writeFileSync(key, 'secret');
+    const viaLink = createUploads({
+        api, record, partName: () => PART,
+        fsOps: { link: async (a, b) => { fs.unlinkSync(a); fs.symlinkSync(key, a); return fs.promises.link(a, b); } },
+    });
+    try {
+        await withServer({ uploads: viaLink }, async (url) => {
+            const res = await post(url, { dest: 'race-symlinked', name: 'n.txt' }, 'content');
+            assert.strictEqual(res.status, 409);
+            assert.strictEqual((await res.json()).reason, 'changed');
+        });
+        assert.deepStrictEqual(filesIn(f.dir), { [PART]: '<link>' });
+        assert.deepStrictEqual(filesIn(f.out), { 'k.key': 'secret' });
+        assert.strictEqual(fs.statSync(key).nlink, 1);
+    } finally {
+        f.cleanup();
+    }
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('race: a file moved away the moment it is put in place keeps every byte', async () => {
+    // Something (an automation, a sync tool) takes the file as soon as it
+    // appears. It is not where the upload put it, so the answer is a 409,
+    // but it is the user's file: never emptied wherever it went.
+    const f = raceFixture('race-taken');
+    const away = path.join(f.out, 'taken');
+    const take = (target) => fs.renameSync(target, away);
+    const logged = [];
+    const viaLink = createUploads({
+        api, record, partName: () => PART,
+        fsOps: { link: async (a, b) => { await fs.promises.link(a, b); take(b); } },
+    });
+    const viaReplace = createUploads({
+        api, record, partName: () => PART,
+        fsOps: { rename: async (a, b) => { await fs.promises.rename(a, b); take(b); } },
+    });
+    const noLinks = createUploads({
+        api, record, partName: () => PART,
+        fsOps: {
+            link: async () => { throw Object.assign(new Error('not supported'), { code: 'EPERM' }); },
+            rename: async (a, b) => { await fs.promises.rename(a, b); take(b); },
+        },
+    });
+    const cases = [
+        [viaLink, { name: 'l.txt' }],
+        [viaReplace, { name: 'old.txt', onConflict: 'replace' }],
+        [noLinks, { name: 'n.txt' }],
+    ];
+    try {
+        for (const [uploads, params] of cases) {
+            fs.rmSync(away, { force: true });
+            fs.writeFileSync(path.join(f.dir, 'old.txt'), 'old');
+            await withServer({ uploads, log: (m) => logged.push(m) }, async (url) => {
+                const res = await post(url, { dest: 'race-taken', ...params }, 'USER CONTENT');
+                assert.strictEqual(res.status, 409, JSON.stringify(params));
+                assert.strictEqual((await res.json()).reason, 'changed');
+            });
+            assert.strictEqual(fs.readFileSync(away, 'utf8'), 'USER CONTENT', JSON.stringify(params));
+            assert.deepStrictEqual(Object.keys(filesIn(f.dir)).filter((n) => n !== 'old.txt'), [], JSON.stringify(params));
+        }
+        assert.ok(logged.every((m) => !/temporary file was replaced/.test(m)), logged.join('\n'));
+    } finally {
+        f.cleanup();
+    }
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('race: a Replace that put something else in place says the old file is gone, not that nothing was saved', async () => {
+    const f = raceFixture('race-replaced');
+    const viaReplace = createUploads({
+        api, record, partName: () => PART,
+        fsOps: { rename: async (a, b) => { fs.unlinkSync(a); fs.writeFileSync(a, 'not the upload'); return fs.promises.rename(a, b); } },
+    });
+    fs.writeFileSync(path.join(f.dir, 'old.txt'), 'old');
+    try {
+        await withServer({ uploads: viaReplace }, async (url) => {
+            let res = await post(url, { dest: 'race-replaced', name: 'old.txt', onConflict: 'replace' }, 'content');
+            assert.strictEqual(res.status, 409);
+            let body = await res.json();
+            assert.strictEqual(body.reason, 'changed');
+            assert.strictEqual(body.replaced, true);
+            assert.doesNotMatch(body.error, /nothing was saved/);
+            assert.match(body.error, /old\.txt in .*race-replaced was overwritten/);
+            assert.match(body.error, /previous old\.txt is gone/);
+            // Replace onto a free name overwrote nothing: no such claim.
+            res = await post(url, { dest: 'race-replaced', name: 'free.txt', onConflict: 'replace' }, 'content');
+            assert.strictEqual(res.status, 409);
+            body = await res.json();
+            assert.strictEqual(body.reason, 'changed');
+            assert.strictEqual(body.replaced, undefined);
+            assert.doesNotMatch(body.error, /overwritten/);
+        });
+    } finally {
+        f.cleanup();
+    }
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('race: a folder swapped for a file, or a link loop, as the part is put in place is a 409, not a 500', async () => {
+    const f = raceFixture('race-notdir');
+    const away = path.join(base, 'away-race-notdir');
+    // ENOTDIR: the folder's path names a regular file now. ELOOP: a link
+    // that points at itself.
+    const toFile = () => { fs.renameSync(f.dir, away); fs.writeFileSync(f.dir, 'a file now'); };
+    const toLoop = () => { fs.renameSync(f.dir, away); fs.symlinkSync(f.dir, f.dir); };
+    const restore = () => { fs.rmSync(f.dir, { force: true }); fs.renameSync(away, f.dir); };
+    const at = (swap) => [
+        [createUploads({ api, record, fsOps: { link: async (a, b) => { swap(); return fs.promises.link(a, b); } } }), { name: 'n.txt' }],
+        [createUploads({ api, record, fsOps: { rename: async (a, b) => { swap(); return fs.promises.rename(a, b); } } }),
+            { name: 'old.txt', onConflict: 'replace' }],
+    ];
+    const logged = [];
+    try {
+        for (const [uploads, params] of [...at(toFile), ...at(toLoop)]) {
+            fs.writeFileSync(path.join(f.dir, 'old.txt'), 'old');
+            await withServer({ uploads, log: (m) => logged.push(m) }, async (url) => {
+                const res = await post(url, { dest: 'race-notdir', ...params }, 'USER CONTENT');
+                assert.strictEqual(res.status, 409, JSON.stringify(params));
+                assert.strictEqual((await res.json()).reason, 'changed');
+            });
+            restore();
+            // The part went with the folder, out of the unlink's reach:
+            // back with it now, emptied through its descriptor.
+            const left = filesIn(f.dir);
+            const parts = Object.keys(left).filter((n) => /^\.ctp-upload-.*\.part$/.test(n));
+            assert.deepStrictEqual(parts.map((n) => left[n]), [''], JSON.stringify(params));
+            for (const n of parts) fs.unlinkSync(path.join(f.dir, n));
+            assert.deepStrictEqual(filesIn(f.dir), { 'old.txt': 'old' }, JSON.stringify(params));
+        }
+        assert.ok(logged.some((m) => /ENOTDIR/.test(m)), logged.join('\n'));
+        assert.ok(logged.some((m) => /ELOOP/.test(m)), logged.join('\n'));
+    } finally {
+        if (fs.existsSync(away)) restore();
+        f.cleanup();
+    }
+    assert.deepStrictEqual(partsUnder(), []);
     assert.deepStrictEqual(recorded(), []);
 });
 

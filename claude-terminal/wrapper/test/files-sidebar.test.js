@@ -150,6 +150,11 @@ test('uploadErrorText: the server\'s message, else one for the status', () => {
     // A message that already names the file is not prefixed with it again.
     assert.strictEqual(uploadErrorText(400, { error: 'x.git ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.' }, 'x.git'),
         'x.git ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.');
+    // A Replace that overwrote the old file and then lost the upload says
+    // so as the server words it, never as "nothing was saved".
+    const overwritten = 'old.txt in /config/dir was overwritten, but what is there now is not the upload: '
+        + 'it was moved or replaced as it was put in place. The previous old.txt is gone.';
+    assert.strictEqual(uploadErrorText(409, { reason: 'changed', replaced: true, error: overwritten }, 'old.txt'), overwritten);
     // Names from the device are shown without the marks that reorder text.
     assert.strictEqual(uploadErrorText(502, null, 'photo\u202Egpj.exe'), 'photogpj.exe: upload failed (HTTP 502).');
 });
