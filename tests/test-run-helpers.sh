@@ -192,6 +192,15 @@ assert_eq "an unreadable value is passed on empty" "set:" "${UPLOAD_MAX_MB+set}:
 unset UPLOAD_MAX_MB
 reset_config
 
+# The schema is the cap: the Supervisor refuses to save a bigger value, so
+# the wrapper never sees one (its own parse of up to 7 digits stays as
+# defence). DOCS.md's options table states the same maximum.
+assert_eq "config.yaml's schema caps upload_max_mb at 1024 MB" "  upload_max_mb: int(1,1024)?" \
+    "$(grep -E '^  upload_max_mb: int' "$REPO_ROOT/claude-terminal/config.yaml")"
+# shellcheck disable=SC2016  # the backticks are Markdown, matched literally
+assert_contains "DOCS.md states the 1024 MB maximum" \
+    "$(grep -E '^\| `upload_max_mb`' "$REPO_ROOT/claude-terminal/DOCS.md")" "1024"
+
 # ---------------------------------------------------------------------------
 # prune_claude_versions
 # ---------------------------------------------------------------------------

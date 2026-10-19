@@ -134,6 +134,7 @@ dir=$(new_uploads)
 # shellcheck disable=SC2016  # expanded by the inner shell
 assert_status "survives bashio's shell options" 0 bash -c '
     set -o errexit -o errtrace -o nounset -o pipefail
+    shopt -s inherit_errexit 2>/dev/null || true
     bashio::log.info() { :; }
     bashio::log.warning() { :; }
     bashio::config() { printf "%s\\n" "${2:-}"; }
@@ -249,6 +250,7 @@ dir=$(new_inbox)
 # shellcheck disable=SC2016  # expanded by the inner shell
 assert_status "survives bashio's shell options" 0 bash -c '
     set -o errexit -o errtrace -o nounset -o pipefail
+    shopt -s inherit_errexit 2>/dev/null || true
     bashio::log.info() { :; }
     bashio::log.warning() { :; }
     bashio::config() { printf "%s\\n" "${2:-}"; }

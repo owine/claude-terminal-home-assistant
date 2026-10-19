@@ -34,8 +34,10 @@ const { classifyRelative, inside, sendError, FilesError } = require('./files-api
 const { createCrossSiteGuard } = require('./http-guards');
 
 const MB = 1024 * 1024;
-// upload_max_mb's default, and what an unusable UPLOAD_MAX_MB falls back to:
-// bashio returns "" for every option when the Supervisor is unreachable.
+// upload_max_mb's default, and what an unusable UPLOAD_MAX_MB falls back to.
+// Defence in depth: the schema allows only 1 to 1024, and run.sh stops at
+// startup rather than read "" when the Supervisor is unreachable (bashio's
+// inherit_errexit), but the wrapper can also be started without either.
 const DEFAULT_MAX_MB = 25;
 // The inbox, relative to the root. run.sh sweeps its top level at startup
 // (upload_retention_days); a folder chosen with "Upload here" is never swept.

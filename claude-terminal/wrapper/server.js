@@ -233,9 +233,10 @@ const server = http.createServer(app);
 // Node cuts off a request whose body has not all arrived within
 // requestTimeout (default 5 minutes) with a 408. A 25 MB upload on a slow
 // mobile link can take longer, and upload_max_mb can be raised, so it is 30
-// minutes, or as long as a file at the cap takes at 128 kbit/s
-// (uploadRequestTimeoutMs). It is server-wide: Node has no per-route
-// setting. headersTimeout (60 s) is deliberately left alone, so a client
+// minutes, or as long as a file at the cap takes at 128 kbit/s, but never
+// over 12 hours (uploadRequestTimeoutMs, MAX_REQUEST_TIMEOUT_MS): it is
+// server-wide, since Node has no per-route setting, so no request of any
+// kind may hold a connection open for longer. headersTimeout (60 s) is deliberately left alone, so a client
 // that never finishes its headers is still cut off quickly, and uploads have
 // their own idle timeout for a body that stops arriving (files-upload.js).
 server.requestTimeout = uploadRequestTimeoutMs(uploadLimit);

@@ -722,8 +722,10 @@ export_login_notification() {
 
 # Hand the upload_max_mb option (whole megabytes) to the wrapper, which caps
 # Files sidebar uploads with it (wrapper/files-upload.js). Passed on as read:
-# the wrapper falls back to 25 for anything but a positive whole number,
-# including the "" bashio returns when the Supervisor cannot be reached.
+# the wrapper falls back to 25 for anything but a positive whole number. An
+# unreachable Supervisor never gets this far (bashio's inherit_errexit stops
+# run.sh at the first option it cannot read); the fallback is defence in
+# depth, as is the wrapper's own parse behind the schema's 1 to 1024.
 export_upload_max_mb() {
     UPLOAD_MAX_MB=$(bashio::config 'upload_max_mb' '25')
     export UPLOAD_MAX_MB
@@ -806,9 +808,10 @@ prune_old_files() {
     local days
     days=$(bashio::config "$option" '30')
 
-    # bashio::config yields "" rather than the default when the Supervisor API
-    # is unreachable. For every other option the safe reading of a missing
-    # value is its default; for a deletion it is "delete nothing".
+    # An empty value is read as "delete nothing". Current bashio never yields
+    # one for an unreachable Supervisor (its inherit_errexit stops run.sh
+    # there instead), but older ones did, and for a deletion the safe
+    # reading of a missing value is not its default: it is nothing.
     case "$days" in
         '')
             bashio::log.info "${option} could not be read; keeping all ${what} this boot"
