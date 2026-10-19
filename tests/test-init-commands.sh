@@ -158,6 +158,16 @@ assert_contains "backslashes in output are logged as written (\\t)" "$out" '[ini
 assert_contains "backslashes in the command are logged as written" \
     "$out" "Running: printf '%s\n' 'a\cb' 'x\ty'"
 
+# Raw control bytes in output, ESC above all, are logged as ? (a tab as a
+# space), so a command's output cannot drive the log viewer's terminal.
+write_options '{"init_commands": ["printf '"'"'raw\\033[2Jesc\\tcol\\n'"'"'"]}'
+out=$(
+    bashio::log.info() { printf 'INFO: %b\n' "$*" >&2; }
+    run_init_commands 2>&1
+)
+assert_contains "raw control bytes in output are logged as ?" "$out" '[init] raw?[2Jesc col'
+assert_not_contains "no escape byte from output reaches the log" "$out" "$(printf '\033')"
+
 # ---------------------------------------------------------------------------
 # Timeouts and services
 # ---------------------------------------------------------------------------

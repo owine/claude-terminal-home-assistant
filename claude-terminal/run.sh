@@ -636,8 +636,22 @@ log_init_output() {
         bashio::log.info "  [init] ... $((total - max)) earlier line(s) omitted"
     fi
     while IFS= read -r line || [ -n "$line" ]; do
-        bashio::log.info "  [init] ${line//\\/\\\\}"
+        log_output_line "  [init] " "$line"
     done < <(tail -n "$max" "$file" 2>/dev/null) || true
+}
+
+# log_output_line <prefix> <line>
+#
+# Log one line of another program's output as it was written. bashio logs
+# with printf '%b', which expands backslashes: `\n` would start a forged line,
+# `\033` or `\u001b` an ANSI sequence, `\c` cut the line short; so they are
+# doubled. Raw control bytes go too: a path in an error message is quoted by
+# no one, and an ESC in it would reach whatever shows the log as it is. Each
+# becomes `?`, except a tab, which is just spacing and becomes a space.
+log_output_line() {
+    local line="${2//$'\t'/ }"
+    line="${line//[[:cntrl:]]/?}"
+    bashio::log.info "$1${line//\\/\\\\}"
 }
 
 # Optional Docker CLI support.
@@ -988,14 +1002,13 @@ start_wrapper_service() {
 # Run the wrapper once, prefixing its output into the add-on log. Under
 # pipefail the pipeline's status is node's, which is what supervise reports.
 #
-# Backslashes are doubled because bashio logs with printf '%b', which would
-# expand them: the wrapper JSON-quotes the names it logs so that one cannot
-# carry a newline or an ANSI sequence, and %b would turn `\n` and `\u001b`
-# back into the real thing - a forged log line from a file's name. Same as
-# log_init_output.
+# Each line goes through log_output_line: the wrapper JSON-quotes the names
+# it logs so that one cannot carry a newline or an ANSI sequence, and bashio's
+# printf '%b' would turn `\n` and `\u001b` back into the real thing - a
+# forged log line from a file's name.
 run_wrapper() {
     node "$1" 2>&1 | while IFS= read -r line; do
-        bashio::log.info "[Wrapper] ${line//\\/\\\\}"
+        log_output_line "[Wrapper] " "$line"
     done
 }
 

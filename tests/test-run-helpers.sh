@@ -532,22 +532,36 @@ assert_eq "resets the back-off after a run that stayed up" "1 2 1 " "$(cat "$sup
 printf '\n%s\n' "run_wrapper"
 
 # The wrapper's output: one line holding JSON escapes, one holding a
-# backslash before a letter printf knows (\c ends %b's output outright).
+# backslash before a letter printf knows (\c ends %b's output outright), a
+# percent sign and an octal escape, a trailing backslash, raw control bytes
+# (an unquoted err.message can carry a path's ESC as it is), and a tab.
 # shellcheck disable=SC2329  # invoked by run_wrapper
 node() {
     printf '%s\n' 'Blocked request for "a\nINFO: [Wrapper] forged\u001b[2J\x1b[31m"'
     printf '%s\n' 'Upload saved at C:\cut\there'
+    printf '%s\n' '100% done, %s %b \0101'
+    printf '%s\n' "ends in a backslash\\"
+    printf 'raw\033[2Jesc\001soh\177del\n'
+    printf 'col1\tcol2\n'
 }
 out=$(
     bashio::log.info() { printf 'INFO: %b\n' "$*" >&2; }
     run_wrapper server.js 2>&1
 )
-assert_eq "each wrapper line is one log line" "2" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+assert_eq "each wrapper line is one log line" "6" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
 assert_contains "escapes in a wrapper line are logged as written" \
     "$out" 'INFO: [Wrapper] Blocked request for "a\nINFO: [Wrapper] forged\u001b[2J\x1b[31m"'
 assert_contains "a backslash before a letter is logged as written (\\c)" \
     "$out" 'INFO: [Wrapper] Upload saved at C:\cut\there'
+assert_contains "a percent sign and an octal escape are logged as written" \
+    "$out" 'INFO: [Wrapper] 100% done, %s %b \0101'
+assert_contains "a trailing backslash is logged as written" \
+    "$out" "INFO: [Wrapper] ends in a backslash\\"
+assert_contains "raw control bytes are logged as ?" \
+    "$out" 'INFO: [Wrapper] raw?[2Jesc?soh?del'
+assert_contains "a tab is logged as a space" "$out" 'INFO: [Wrapper] col1 col2'
 assert_not_contains "no escape byte reaches the log" "$out" "$(printf '\033')"
+assert_not_contains "no other control byte reaches the log" "$out" "$(printf '\001')"
 unset -f node
 
 # ---------------------------------------------------------------------------
