@@ -349,7 +349,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('the loop keeps polling until stop(), then stops', async () => {
     const w = world();
-    const n = w.notifier({ pollMs: 5 });
+    const n = w.notifier({ pollMs: 5, maxPollMs: 5 });
     await n.start();
     await sleep(60);
     n.stop();
@@ -363,7 +363,7 @@ test('stop() during start()\'s dismiss leaves no loop behind', async () => {
     const w = world();
     let release;
     w.fetchGate = new Promise((r) => { release = r; });
-    const n = w.notifier({ pollMs: 5 });
+    const n = w.notifier({ pollMs: 5, maxPollMs: 5 });
     const starting = n.start();
     n.stop();
     w.fetchGate = null;
@@ -375,7 +375,7 @@ test('stop() during start()\'s dismiss leaves no loop behind', async () => {
 
 test('stop() then start() during an in-flight tick runs one loop, not two', async () => {
     const w = world();
-    const n = w.notifier({ pollMs: 5 });
+    const n = w.notifier({ pollMs: 5, maxPollMs: 5 });
     await n.start();
     let release;
     w.gate = new Promise((r) => { release = r; });
@@ -397,6 +397,105 @@ test('start() clears a stale notification before polling', async () => {
     await n.start();
     n.stop();
     assert.deepStrictEqual(w.services(), ['dismiss']);
+});
+
+// --- back-off ---
+//
+// isLoggedIn only recognises an unexpired claudeAiOauth token. Console
+// (API-key) logins and idle OAuth logins past expiry read as logged out for
+// good, and each poll spawns two tmux processes - every 3 s, all day, on a Pi.
+// With nothing to watch the loop backs off; a login link brings it back.
+
+// Fake timers: each setTimeout replaces the one pending callback, and fire()
+// runs it to completion (its tick and the next schedule).
+function fakeTimers() {
+    const t = { pending: null, delays: [] };
+    t.setTimeout = (fn, ms) => {
+        t.pending = fn;
+        t.delays.push(ms);
+        return { unref() {} };
+    };
+    t.clearTimeout = () => { t.pending = null; };
+    t.fire = async () => {
+        const fn = t.pending;
+        assert.ok(fn, 'a poll is scheduled');
+        t.pending = null;
+        await fn();
+    };
+    return t;
+}
+
+test('with no login screen, polling backs off to a cap', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.screen = 'root@ha:/config# ';
+    await n.start();
+    for (let i = 0; i < 7; i++) await t.fire();
+    assert.deepStrictEqual(t.delays, [3000, 6000, 12000, 24000, 30000, 30000, 30000, 30000]);
+    n.stop();
+});
+
+test('a login link brings polling back to 3 s while its notification is up', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.screen = '';
+    await n.start();
+    for (let i = 0; i < 5; i++) await t.fire();
+    assert.strictEqual(t.delays.at(-1), 30000);
+    w.loginScreen(URL_A);
+    await t.fire();
+    assert.deepStrictEqual(w.services(), ['dismiss', 'create']);
+    assert.strictEqual(t.delays.at(-1), 3000, 'fast again once a link is up');
+    await t.fire();
+    await t.fire();
+    assert.strictEqual(t.delays.at(-1), 3000, 'and stays fast while it is shown');
+    w.loggedIn();
+    await t.fire();
+    assert.deepStrictEqual(w.services(), ['dismiss', 'create', 'dismiss']);
+    assert.strictEqual(t.delays.at(-1), 6000, 'backs off again once it is dismissed');
+    n.stop();
+});
+
+test('a restart begins at the base interval again', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    await n.start();
+    for (let i = 0; i < 5; i++) await t.fire();
+    n.stop();
+    await n.start();
+    assert.strictEqual(t.delays.at(-1), 3000);
+    n.stop();
+});
+
+test('a link whose create failed keeps polling fast, to retry', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.loginScreen(URL_A);
+    w.status = 503;
+    await n.start();
+    for (let i = 0; i < 4; i++) await t.fire();
+    assert.deepStrictEqual(t.delays, [3000, 3000, 3000, 3000, 3000]);
+    n.stop();
+});
+
+test('a used link left on screen does not keep polling fast', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.loginScreen(URL_A);
+    await n.start();
+    await t.fire();             // posted
+    w.loggedIn();
+    await t.fire();             // dismissed: login complete
+    w.loggedIn(NOW - 1);        // token expires, link still on screen
+    for (let i = 0; i < 3; i++) await t.fire();
+    assert.deepStrictEqual(w.services(), ['dismiss', 'create', 'dismiss']);
+    assert.deepStrictEqual(t.delays.slice(-3), [12000, 24000, 30000]);
+    n.stop();
 });
 
 // --- logged-in detection ---

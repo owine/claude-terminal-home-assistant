@@ -25,6 +25,13 @@ const { reconstructLoginUrl } = require('./public/login-link.js');
 const NOTIFICATION_ID = 'claude_terminal_login';
 const SESSION = 'claude'; // run.sh setup_tmux_session
 const POLL_MS = 3000;
+// Each poll spawns two tmux processes. With nothing to watch - logged in, or
+// logged in a way isLoggedIn cannot see (a Console API key, an idle OAuth
+// token past its expiry) - the gap doubles up to this, so an idle add-on does
+// not spawn ~57,600 of them a day. A link to post or a notification to watch
+// brings it straight back to POLL_MS. The price is a slower first notice of a
+// new login screen: up to this long after it appears.
+const MAX_POLL_MS = 30000;
 const TMUX_TIMEOUT_MS = 5000;
 const HTTP_TIMEOUT_MS = 10000;
 
@@ -91,6 +98,8 @@ function createLoginNotifier({
     now = Date.now,
     log = console,
     pollMs = POLL_MS,
+    maxPollMs = MAX_POLL_MS,
+    timers = { setTimeout, clearTimeout },
 } = {}) {
     // URLs already posted. One whose login completed is kept for good: after
     // the access token expires the used link may still be on screen, and
@@ -103,6 +112,8 @@ function createLoginNotifier({
     let shownUrl = null;  // URL of the notification currently up, if any
     let missing = 0;      // consecutive captures without shownUrl on screen
     let timer = null;
+    let delay = pollMs;   // gap before the next poll; see MAX_POLL_MS
+    let watching = false; // set by tick(): a link to post or a notification up
     let generation = 0;   // bumped by start() and stop(); a stale loop exits
     // Last failure per service, so a Supervisor that keeps failing (HA Core
     // restarting, a 401) logs once per change instead of every poll.
@@ -167,6 +178,7 @@ function createLoginNotifier({
     }
 
     async function tick() {
+        let unposted = false;
         try {
             if (await isLoggedIn({ readFile, homeDir, now })) {
                 if (shownUrl) await dismissShown('login complete');
@@ -181,6 +193,7 @@ function createLoginNotifier({
             }
 
             if (url && !alreadyPosted(url)) {
+                unposted = true; // retried every poll until the create succeeds
                 if (await callService('create', notificationBody(url))) {
                     posted.add(url);
                     shownUrl = url;
@@ -209,15 +222,19 @@ function createLoginNotifier({
             }
         } catch (err) {
             log.log(`Login notifier: ${err.message}`);
+        } finally {
+            watching = unposted || shownUrl !== null;
         }
     }
 
     function schedule(gen) {
-        timer = setTimeout(async () => {
+        timer = timers.setTimeout(async () => {
             if (gen !== generation) return;
             await tick();
-            if (gen === generation) schedule(gen);
-        }, pollMs);
+            if (gen !== generation) return;
+            delay = watching ? pollMs : Math.min(delay * 2, Math.max(maxPollMs, pollMs));
+            schedule(gen);
+        }, delay);
         timer.unref?.();
     }
 
@@ -229,13 +246,14 @@ function createLoginNotifier({
         // that dismiss or a tick is in flight: only the newest loop runs.
         async start() {
             const gen = ++generation;
-            clearTimeout(timer);
+            timers.clearTimeout(timer);
+            delay = pollMs;
             await dismiss();
             if (gen === generation) schedule(gen);
         },
         stop() {
             generation++;
-            clearTimeout(timer);
+            timers.clearTimeout(timer);
             timer = null;
         },
         tick,
