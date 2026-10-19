@@ -801,8 +801,8 @@ get_claude_launch_command() {
 # <pattern> and that are older than <option> days (default 30; 0 keeps them
 # all). Never a subfolder, nor anything in one, nor a symlink: `find -type f`
 # does not match a link, and without -L it is not followed. A value that is
-# not a whole number deletes nothing: guessing wrong here is the one mistake
-# that cannot be undone.
+# not a whole number, or is over 36500, deletes nothing: guessing wrong here
+# is the one mistake that cannot be undone.
 prune_old_files() {
     local dir="$1" option="$2" pattern="$3" what="$4"
     local days
@@ -822,6 +822,17 @@ prune_old_files() {
             return 0
             ;;
     esac
+    # Over 36500 days (100 years, upload_retention_days' schema cap) keeps
+    # everything. find is given $((days * 1440)) minutes and shell arithmetic
+    # wraps past 2^63 without a word: 12810238940076078 days came out as 704
+    # minutes, and swept every file older than half a day. The length is
+    # checked first, so no arithmetic or `[` comparison sees a huge value (a
+    # 20-digit one is not even a number to `[`). Checked here rather than in
+    # the schema, which would invalidate existing image_retention_days values.
+    if [ "${#days}" -gt 5 ] || [ "$days" -gt 36500 ]; then
+        bashio::log.warning "${option} is more than 36500 days (${days}); keeping all ${what}"
+        return 0
+    fi
     if [ "$days" -eq 0 ] || [ ! -d "$dir" ]; then
         return 0
     fi
