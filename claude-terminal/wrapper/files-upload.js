@@ -259,20 +259,23 @@ function createUploads({
     // it. Only on a mkdir that succeeded: EEXIST means someone made it
     // first, maybe the user, and a folder that was there is never marked.
     // 'wx' creates the file or fails, never writing through a symlink. A
-    // marker that cannot be written fails safe: the upload goes on, the
-    // inbox is not swept, and run.sh says so at every start.
-    async function markInbox(dir) {
+    // marker that cannot be written fails safe: the upload goes on and the
+    // inbox is not swept. Logged here, since run.sh's line at every start
+    // cannot tell this apart from a marker the user deleted.
+    async function markInbox(dir, log) {
+        const marker = path.join(dir, INBOX_MARKER);
         try {
-            await fsp.writeFile(path.join(dir, INBOX_MARKER), INBOX_MARKER_NOTE, { flag: 'wx', mode: 0o644 });
-        } catch {
-            // as above: unswept, and run.sh's log says how to opt in
+            await fsp.writeFile(marker, INBOX_MARKER_NOTE, { flag: 'wx', mode: 0o644 });
+        } catch (err) {
+            log(`Upload inbox: could not write its marker ${JSON.stringify(marker)} (${err.code || err.message}), `
+                + 'so the inbox will not be swept (upload_retention_days)');
         }
     }
 
     // Where an upload goes: a real folder (not a symlink, nor below one)
     // inside the root, not protected and not under deps. The inbox is made
     // on first use (`create`; a check=1 only asks).
-    async function destination(requested, { inbox, create }) {
+    async function destination(requested, { inbox, create, log }) {
         const at = await api.locate(requested);   // 400, 404 (outside, .git), 503
         const shown = display(at.relative);
         if (at.kind === 'sensitive') {
@@ -291,7 +294,7 @@ function createUploads({
             } catch (err) {
                 if (err.code !== 'EEXIST') throw err;
             }
-            if (made) await markInbox(at.asked);
+            if (made) await markInbox(at.asked, log);
             st = await lstatOrNull(at.asked);
         }
         if (!st) throw new FilesError(404, `${shown} does not exist.`);
@@ -314,7 +317,7 @@ function createUploads({
      * { name, dest, onConflict }: the plan receive() follows, or a
      * FilesError. Shared by check=1 and the upload itself.
      */
-    async function plan({ name, dest, onConflict }, { create = true } = {}) {
+    async function plan({ name, dest, onConflict }, { create = true, log = console.error } = {}) {
         if (typeof name !== 'string' || name === '') throw new FilesError(400, 'Missing or invalid file name');
         if (dest !== undefined && typeof dest !== 'string') throw new FilesError(400, 'Invalid path');
         if (onConflict !== undefined && onConflict !== 'replace' && onConflict !== 'keep-both') {
@@ -327,7 +330,7 @@ function createUploads({
         if (inbox && onConflict === 'replace') {
             throw new FilesError(400, 'The inbox never replaces a file: a taken name gets a number. Choose a folder to replace a file in it.');
         }
-        const folder = await destination(inbox ? INBOX : dest, { inbox, create });
+        const folder = await destination(inbox ? INBOX : dest, { inbox, create, log });
         const safe = sanitizeUploadName(name, { now });
         if (classifyRelative(path.join(folder.relative, safe)) === 'hidden') {
             throw new FilesError(400, `${safe} ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.`);
@@ -672,7 +675,7 @@ function createUploadRouter({ uploads, uploadLimiter, checkLimiter, log = consol
             }
             const declared = Number(req.get('content-length'));
             if (declared > uploads.maxBytes) throw uploads.tooBig(declared);
-            const planned = await uploads.plan(query);
+            const planned = await uploads.plan(query, { log });
             res.json(await uploads.receive(req, planned, { log }));
         } catch (err) {
             // The client is gone (a ClientGone, or a stall cut off), or

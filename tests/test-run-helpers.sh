@@ -320,9 +320,22 @@ assert_contains "and the count leaves the marker out" "$out" "removed 1 "
 dir=$(inbox_with)
 out=$(prune_upload_inbox "$dir" 2>&1 >/dev/null)
 assert_eq "an inbox without the marker is untouched" "yes" "$(there "$dir/old.pdf")"
-assert_contains "and the log says it is skipped" "$out" "${dir} has no .ctp-inbox"
+assert_contains "and the log says it is skipped" "$out" "${dir} has no .ctp-inbox marker, so it is not swept"
 assert_contains "and how to opt in" "$out" "touch ${dir}/.ctp-inbox"
 assert_eq "and creates no marker" "no" "$(there "$dir/.ctp-inbox")"
+# Not "the add-on did not make it": a marker the wrapper could not write, or
+# one the user deleted to opt out, leaves a folder the add-on did make.
+assert_not_contains "and does not guess who made the folder" "$out" "did not make"
+
+# With upload_retention_days 0 nothing would be swept anyway, so there is
+# nothing to explain: no line at every start for a choice already made.
+set_config upload_retention_days 0
+dir=$(inbox_with)
+assert_eq "retention 0: an unmarked inbox logs nothing" "" "$(prune_upload_inbox "$dir" 2>&1)"
+ln -s "$(inbox_with marked)/.ctp-inbox" "$dir/.ctp-inbox"
+assert_eq "retention 0: nor does a symlinked marker" "" "$(prune_upload_inbox "$dir" 2>&1)"
+assert_eq "and the files stay" "yes" "$(there "$dir/old.pdf")"
+set_config upload_retention_days 30
 
 # A symlink is not the marker: `[ -f ]` follows one, so a link to any regular
 # file (another folder's marker, say) would pass for it.

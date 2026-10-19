@@ -273,6 +273,39 @@ test('the inbox the wrapper makes is marked as its own; a folder already there i
     assert.deepStrictEqual(fs.readdirSync(path.join(raceRoot, 'uploads')), []);
 });
 
+// The marker is not the upload: one that cannot be written leaves an inbox
+// run.sh will not sweep, which is safe, but is said in the log.
+test('a marker that cannot be written is logged, and the upload still lands', async () => {
+    const failRoot = path.join(base, 'fail-root');
+    fs.mkdirSync(failRoot);
+    const failUploads = createUploads({ api: createFilesApi({ root: failRoot }), record });
+    const fsp = require('node:fs/promises');
+    const realWriteFile = fsp.writeFile;
+    fsp.writeFile = async (file, ...rest) => {
+        if (path.basename(String(file)) === INBOX_MARKER) {
+            throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+        }
+        return realWriteFile(file, ...rest);
+    };
+    const logs = [];
+    try {
+        await withServer({ uploads: failUploads, log: (line) => logs.push(line) }, async (url) => {
+            const res = await post(url, { name: 'a.txt' }, 'bytes');
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual((await res.json()).inbox, true);
+        });
+    } finally {
+        fsp.writeFile = realWriteFile;
+    }
+    const inbox = path.join(failRoot, 'uploads');
+    assert.strictEqual(fs.readFileSync(path.join(inbox, 'a.txt'), 'utf8'), 'bytes');
+    assert.strictEqual(fs.existsSync(path.join(inbox, INBOX_MARKER)), false);
+    const line = logs.find((l) => l.includes(INBOX_MARKER));
+    assert.ok(line, `logged: ${JSON.stringify(logs)}`);
+    assert.match(line, /EACCES/);
+    assert.match(line, /not be swept/);
+});
+
 test('the marker is never shown: not in the listing, recent changes or a zip', async () => {
     const hideRoot = path.join(base, 'hide-root');
     fs.mkdirSync(hideRoot);

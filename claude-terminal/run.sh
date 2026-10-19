@@ -875,7 +875,10 @@ prune_uploaded_images() {
 # Only an inbox the add-on made, though: the wrapper writes the marker
 # .ctp-inbox into the folder when it makes it (files-upload.js), and a folder
 # without one, such as an `uploads` the user had before the inbox existed, is
-# left alone and said so, with how to opt in. The marker must be a regular
+# left alone and said so, with how to opt in (unless upload_retention_days is
+# 0, when nothing would be swept). The line does not say who made the folder:
+# a marker the wrapper could not write, or one the user deleted to opt out,
+# leaves a folder the add-on made. The marker must be a regular
 # file - `[ -f ]` follows a link, so a symlink to any file would pass - and
 # is never swept itself.
 #
@@ -886,6 +889,7 @@ prune_upload_inbox() {
     local dir="${1:-/config/uploads}"
     local marker_name=".ctp-inbox"
     local marker="${dir}/${marker_name}"
+    local days
     if [ -L "$dir" ]; then
         bashio::log.warning "${dir} is a symlink, not a plain folder; not sweeping it (upload_retention_days)"
         return 0
@@ -897,12 +901,20 @@ prune_upload_inbox() {
     if [ ! -d "$dir" ]; then
         return 0
     fi
+    # With retention 0 no sweep runs, so a missing marker needs no word at
+    # every start. Any other value, even one prune_old_files will refuse,
+    # goes on: the marker is checked first, and prune_old_files says the rest.
+    days=$(bashio::config 'upload_retention_days' '30')
+    case "$days" in
+        '' | *[!0]*) ;;
+        *) return 0 ;;
+    esac
     if [ -L "$marker" ]; then
         bashio::log.warning "${marker} is a symlink, not the add-on's marker; not sweeping ${dir} (upload_retention_days)"
         return 0
     fi
     if [ ! -f "$marker" ]; then
-        bashio::log.info "${dir} has no ${marker_name} marker, so the add-on did not make it and does not sweep it (upload_retention_days). To have it swept as the upload inbox: touch ${marker}. To keep it as your own folder, move it elsewhere; the add-on makes a fresh inbox on the next upload"
+        bashio::log.info "${dir} has no ${marker_name} marker, so it is not swept (upload_retention_days). To have it swept as the upload inbox: touch ${marker}. To keep it as your own folder, move it elsewhere; the add-on makes a fresh inbox on the next upload"
         return 0
     fi
     prune_old_files "$dir" upload_retention_days '*' "upload inbox files" "$marker_name"

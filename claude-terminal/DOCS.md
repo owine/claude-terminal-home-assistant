@@ -463,9 +463,9 @@ Both places are cleared at startup. `/data/images/` loses the add-on's own
 `pasted-*` files once they are older than `image_retention_days`. **The inbox
 is disposable:** every file at its top level is deleted once it is older than
 `upload_retention_days`, whoever put it there, if the add-on made the folder
-(see Uploads under Files Sidebar). A name already taken in the inbox gets a number (`report (1).pdf`);
-nothing is overwritten. Move files you want to keep somewhere else in
-`/config`.
+(see Uploads under Files Sidebar). A name already taken in the inbox gets a
+number (`report (1).pdf`); nothing is overwritten. Move files you want to
+keep somewhere else in `/config`.
 
 ```bash
 # Use a typed path with Claude
@@ -641,8 +641,10 @@ the top level of `/config/uploads` that was last modified more than
 forever), whoever put it there, Claude included. Folders inside the inbox,
 and anything in them, are left alone, as are symlinks at its top level, and
 so is every folder you chose with **Upload here**, except `/config/uploads`
-itself: Upload here on it puts files in the swept folder, and its menu says
-so. Keep files you want to last somewhere else. If `/config/uploads` is a
+itself: Upload here on it puts files in the inbox, and its menu says that
+files there are cleared after `upload_retention_days` if the add-on made the
+folder (it holds `.ctp-inbox`, below). Keep files you want to last somewhere
+else. If `/config/uploads` is a
 symlink or a file rather than a folder, it is never swept, and uploads to the
 inbox are refused until it is a plain folder again.
 
@@ -651,8 +653,10 @@ writes a one-line note into it, `.ctp-inbox`, which marks the folder as its
 own; the sidebar never shows the note, nor puts it in a zip, and the sweep
 never deletes it. If you already had a folder called `uploads` in `/config`,
 uploads go into it as well, but nothing in it is ever deleted: the log says
-at every start that it is not swept, and why. To have such a folder swept
-like an inbox the add-on made, create the marker yourself (`touch
+at every start that it is not swept, and why (unless `upload_retention_days`
+is `0`, when nothing is swept anyway). If the add-on cannot write the note,
+the log says so, and that inbox is not swept either. To have such a folder
+swept like an inbox the add-on made, create the marker yourself (`touch
 /config/uploads/.ctp-inbox` in the terminal). To keep it as your own, move or
 rename it, and the add-on makes a fresh inbox on the next upload. Deleting
 `.ctp-inbox` stops the sweep in the same way; the marker must be a plain
