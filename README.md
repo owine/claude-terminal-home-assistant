@@ -33,7 +33,7 @@ This project is a fork built upon work from two repositories:
 
 ### Features from Upstream
 
-- **File Uploads from the Terminal**: Paste (Ctrl+V), drop or pick (📎) any file, and its path is typed at the prompt for Claude
+- **Image Paste Support**: Paste (Ctrl+V), drop or pick (📎) a file, and its path is typed at the prompt for Claude. This fork extends it from images to any file
 - **Persistent Package Management**: Install system and Python packages that survive reboots
 - **Auto-install Configuration**: Configure packages to auto-install on startup
 - **Native Claude Installation**: Uses Anthropic's official installer
@@ -77,7 +77,7 @@ A web-based terminal interface with Claude Code CLI pre-installed and enhanced p
   - JPEG, PNG, GIF, WebP and SVG images up to 10 MB go to `/data/images/`; HEIC photos, bigger images and every other type go to the inbox, up to `upload_max_mb` (25 MB by default)
   - Paths are typed at the prompt, quoted where needed, without pressing Enter
   - Perfect for OCR, image analysis, screenshot debugging, or any file you want Claude to read
-- **Files Sidebar**: Browse and preview `/config` (read-only), download files and folders (as zips), list recently changed files, insert a file's path at the prompt, and run `ha core check`
+- **Files Sidebar**: Browse and preview `/config`, upload files into it (an inbox by default, or a folder you pick), download files and folders (as zips), list recently changed files, insert a file's path at the prompt, and run `ha core check`
 - **Persistent Package Management**: Install packages that survive container restarts
 - **Auto-install Packages**: Configure APK and pip packages to auto-install on startup
 - **Python Virtual Environment**: Isolated Python environment for packages

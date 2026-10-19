@@ -1980,13 +1980,6 @@
             });
         })();
 
-        // Prevent default drag behavior on iframe
-        window.addEventListener('load', () => {
-            const iframe = document.getElementById('terminal-frame');
-            iframe.addEventListener('dragover', (e) => e.preventDefault());
-            iframe.addEventListener('drop', (e) => e.preventDefault());
-        });
-
         // ========================================
         // iOS Touch-to-Scroll for Terminal
         // ========================================
