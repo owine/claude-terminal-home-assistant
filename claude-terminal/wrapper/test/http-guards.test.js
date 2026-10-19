@@ -1,7 +1,9 @@
 'use strict';
 
 const assert = require('node:assert');
-const { createRateLimiter, createOriginGuard, createUpgradeGuard, createCrossSiteGuard, errorResponseFor } = require('../http-guards.js');
+const {
+    createRateLimiter, createOriginGuard, createUpgradeGuard, createCrossSiteGuard, createRequestDeadline, errorResponseFor,
+} = require('../http-guards.js');
 
 let passed = 0;
 function test(name, fn) {
@@ -708,4 +710,178 @@ test('treats an unrecognised error code as a server error, not a client error', 
     assert.strictEqual(errorResponseFor(err).status, 500);
 });
 
-console.log(`\n${passed} passed`);
+// ---------------------------------------------------------------------------
+// createRequestDeadline
+// ---------------------------------------------------------------------------
+//
+// server.requestTimeout is server-wide and, for the Files uploads, 30 minutes
+// or more, so the image route (/upload, multer) inherited it: a client that
+// sent part of a body and stopped held the connection, and the partial file,
+// for half an hour. The route keeps bounds of its own. Real sockets and real
+// multer, so what the route does with a cut request is what is tested.
+// These run after the synchronous cases above, one at a time.
+
+const asyncTests = [];
+function testAsync(name, fn) { asyncTests.push([name, fn]); }
+
+const http = require('node:http');
+const net = require('node:net');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const express = require('express');
+const multer = require('multer');
+
+const BOUNDARY = '----deadline';
+const PART_HEAD = `--${BOUNDARY}\r\nContent-Disposition: form-data; name="image"; filename="a.png"\r\nContent-Type: image/png\r\n\r\n`;
+const PART_TAIL = `\r\n--${BOUNDARY}--\r\n`;
+
+// The image route as server.js builds it, with a deadline in front of
+// multer. Returns its port, the folder it saves into, what reached the error
+// handler, and the server's sockets as they close.
+async function imageRoute(deadline) {
+    const logged = [];
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deadline-'));
+    const upload = multer({
+        storage: multer.diskStorage({ destination: dir, filename: (req, file, cb) => cb(null, 'image.png') }),
+        fileFilter: (req, file, cb) => cb(file.mimetype === 'image/png' ? null : new Error('Only image files are allowed'), true),
+    });
+    const app = express();
+    const errors = [];
+    app.post('/upload', createRequestDeadline({ log: (line) => logged.push(line), ...deadline }), upload.single('image'), (req, res) => res.json({ size: req.file.size }));
+    app.use((err, req, res, next) => {   // eslint-disable-line no-unused-vars
+        errors.push(err.message);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+    const server = http.createServer(app);
+    const closed = [];
+    server.on('connection', (s) => s.on('close', () => closed.push(Date.now())));
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return {
+        port: server.address().port, dir, errors, closed, logged,
+        async stop() {
+            server.closeAllConnections();
+            await new Promise((resolve) => server.close(resolve));
+            fs.rmSync(dir, { recursive: true, force: true });
+        },
+    };
+}
+function connect(port, body, length) {
+    return new Promise((resolve) => {
+        const sock = net.connect(port, '127.0.0.1', () => {
+            sock.write(`POST /upload HTTP/1.1\r\nHost: x\r\nContent-Type: multipart/form-data; boundary=${BOUNDARY}\r\n`
+                + `Content-Length: ${length}\r\n\r\n${body}`);
+            resolve(sock);
+        });
+        sock.on('error', () => {});
+    });
+}
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function until(predicate, ms) {
+    const end = Date.now() + ms;
+    while (!predicate() && Date.now() < end) await sleep(10);
+    return predicate();
+}
+
+testAsync('request deadline: a body that stops arriving is cut off after idleMs, and its partial file removed', async () => {
+    const route = await imageRoute({ totalMs: 10000, idleMs: 200 });
+    try {
+        const started = Date.now();
+        await connect(route.port, `${PART_HEAD}partial`, 100000);
+        assert.ok(await until(() => route.closed.length === 1, 3000), 'the stalled upload is still open');
+        assert.ok(route.closed[0] - started >= 150, `cut after ${route.closed[0] - started} ms`);
+        assert.deepStrictEqual(route.logged, ['Request body for "/upload" cut off: no data for 200 ms']);
+        assert.ok(await until(() => fs.readdirSync(route.dir).length === 0, 2000), String(fs.readdirSync(route.dir)));
+    } finally {
+        await route.stop();
+    }
+});
+
+testAsync('request deadline: a log that throws still cuts the body off, and throws nothing', async () => {
+    const stray = [];
+    const onStray = (err) => stray.push(err);
+    process.on('uncaughtException', onStray);
+    const route = await imageRoute({ totalMs: 10000, idleMs: 100, log: () => { throw new Error('log down'); } });
+    try {
+        await connect(route.port, `${PART_HEAD}partial`, 100000);
+        assert.ok(await until(() => route.closed.length === 1, 3000), 'the stalled upload is still open');
+        await sleep(50);
+        assert.deepStrictEqual(stray.map(String), []);
+    } finally {
+        process.off('uncaughtException', onStray);
+        await route.stop();
+    }
+});
+
+testAsync('request deadline: a body that keeps trickling is cut off at totalMs', async () => {
+    const route = await imageRoute({ totalMs: 300, idleMs: 5000 });
+    let timer;
+    try {
+        const started = Date.now();
+        const sock = await connect(route.port, PART_HEAD, 100000);
+        timer = setInterval(() => sock.write('x'), 20);
+        assert.ok(await until(() => route.closed.length === 1, 3000), 'the trickling upload is still open');
+        assert.ok(route.closed[0] - started >= 250, `cut after ${route.closed[0] - started} ms`);
+        assert.deepStrictEqual(route.logged, ['Request body for "/upload" cut off: still arriving after 300 ms']);
+        assert.ok(await until(() => fs.readdirSync(route.dir).length === 0, 2000), String(fs.readdirSync(route.dir)));
+    } finally {
+        clearInterval(timer);
+        await route.stop();
+    }
+});
+
+testAsync('request deadline: a body refused early is still bounded while multer drains it', async () => {
+    // multer refuses the file type at the part's headers, then reads the rest
+    // of the body before it answers: that read is bounded too.
+    const route = await imageRoute({ totalMs: 300, idleMs: 5000 });
+    let timer;
+    try {
+        const started = Date.now();
+        const sock = await connect(route.port, PART_HEAD.replace('image/png', 'image/gif'), 100000);
+        timer = setInterval(() => sock.write('x'), 20);
+        assert.ok(await until(() => route.closed.length === 1, 3000), 'the refused upload is still open');
+        assert.ok(route.closed[0] - started >= 250, `cut after ${route.closed[0] - started} ms`);
+        assert.ok(await until(() => route.errors.length === 1, 1000), 'multer never gave up');
+        assert.deepStrictEqual(route.errors, ['Only image files are allowed']);
+        assert.deepStrictEqual(fs.readdirSync(route.dir), []);
+    } finally {
+        clearInterval(timer);
+        await route.stop();
+    }
+});
+
+testAsync('request deadline: an upload in time is answered, and its kept-alive connection outlives both bounds', async () => {
+    const route = await imageRoute({ totalMs: 300, idleMs: 200 });
+    try {
+        const body = `${PART_HEAD}${'p'.repeat(1000)}${PART_TAIL}`;
+        const sock = await connect(route.port, body, Buffer.byteLength(body));
+        let text = '';
+        sock.on('data', (d) => { text += d; });
+        assert.ok(await until(() => /\{"size":1000\}$/.test(text), 2000), text);
+        assert.match(text, /^HTTP\/1\.1 200 /);
+        // Past both bounds: neither may fire on a request that is over.
+        await sleep(600);
+        assert.deepStrictEqual(route.closed, []);
+        assert.strictEqual(sock.destroyed, false);
+        assert.deepStrictEqual(route.errors, []);
+        assert.deepStrictEqual(route.logged, []);
+        assert.deepStrictEqual(fs.readdirSync(route.dir), ['image.png']);
+    } finally {
+        await route.stop();
+    }
+});
+
+(async () => {
+    for (const [name, fn] of asyncTests) {
+        try {
+            await fn();
+            passed++;
+            console.log(`ok - ${name}`);
+        } catch (err) {
+            console.error(`FAIL - ${name}`);
+            console.error(err.message);
+            process.exitCode = 1;
+        }
+    }
+    console.log(`\n${passed} passed`);
+})();

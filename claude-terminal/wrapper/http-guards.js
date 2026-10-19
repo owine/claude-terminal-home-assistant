@@ -283,6 +283,50 @@ function createUpgradeGuard({ log = console.warn, now = monotonic } = {}) {
 }
 
 /**
+ * Bounds of one route's own on the time its request body may take, inside the
+ * server-wide server.requestTimeout. Node has no per-route timeout, and
+ * server.js raises the server's to 30 minutes or more for the Files uploads,
+ * so a route that has no reason to wait that long (the image upload, at most
+ * 10 MB) puts this in front of whatever reads its body.
+ *
+ * The body is cut off - the request destroyed, so its socket goes and whatever
+ * reads it sees an abort (multer then removes the partial file) - when no byte
+ * of it has arrived for `idleMs`, or when it is still arriving at `totalMs`.
+ * Both end once the body has arrived or the request is closed, not when the
+ * response is over: a body still arriving after an early answer is no less
+ * bounded for it (and multer, refusing a file type, reads the rest before it
+ * answers). A request in time is never touched, and its socket keeps no
+ * timeout of ours past it. Never throws: it runs in timer and socket
+ * callbacks.
+ */
+function createRequestDeadline({ totalMs, idleMs, log = console.warn }) {
+    return (req, res, next) => {
+        const cut = (why) => {
+            if (req.complete || req.destroyed) return;
+            try {
+                log(`Request body for ${JSON.stringify(req.originalUrl || req.url)} cut off: ${why}`);
+            } catch {
+                // A failing log must not keep the request open.
+            }
+            req.destroy();
+        };
+        const stalled = () => cut(`no data for ${idleMs} ms`);
+        const total = setTimeout(cut, totalMs, `still arriving after ${totalMs} ms`);
+        req.setTimeout(idleMs, stalled);
+        const done = () => {
+            clearTimeout(total);
+            req.removeListener('timeout', stalled);
+        };
+        req.once('end', () => {
+            done();
+            req.setTimeout(0);
+        });
+        req.once('close', done);
+        next();
+    };
+}
+
+/**
  * Classify an error from the upload pipeline into a status and a JSON body.
  *
  * multer signals a rejected file type by handing an ordinary Error to the error
@@ -307,6 +351,7 @@ module.exports = {
     createOriginGuard,
     createCrossSiteGuard,
     createUpgradeGuard,
+    createRequestDeadline,
     errorResponseFor,
     INVALID_FILE_TYPE,
 };
