@@ -25,6 +25,7 @@
 const fsp = require('node:fs/promises');
 const fs = require('node:fs');
 const path = require('node:path');
+const { isUtf8 } = require('node:buffer');
 const childProcess = require('node:child_process');
 const express = require('express');
 
@@ -162,16 +163,48 @@ const inside = (root, p) => p === root || p.startsWith(root + path.sep);
 // deleted since the open reads as "<path> (deleted)", and is judged by its
 // path. No /proc, or a non-absolute answer, is "unknown" (null), and
 // preview() then relies on its path checks alone.
+//
+// The suffix alone does not mean deleted: "x.key (deleted)" is a legal live
+// name, and stripping it would judge that file as x.key. So the suffix is
+// kept when the path as read still names this very file (same device and
+// inode), and stripped otherwise. That covers an unlinked file (nlink 0),
+// and one unlinked from the name it was opened by while a hard link
+// elsewhere keeps it alive, which the kernel marks the same way.
 const DELETED_SUFFIX = ' (deleted)';
-async function procFdPath(fd) {
+const fstat = (fd) => new Promise((resolve, reject) => {
+    fs.fstat(fd, (err, st) => (err ? reject(err) : resolve(st)));
+});
+// `lstat` is a test seam: a file on another device with the same inode
+// number cannot be made on demand.
+async function procFdPath(fd, { lstat = fsp.lstat } = {}) {
     let target;
     try {
         target = await fsp.readlink(`/proc/self/fd/${fd}`);
     } catch {
         return null;
     }
-    if (target.endsWith(DELETED_SUFFIX)) target = target.slice(0, -DELETED_SUFFIX.length);
+    if (target.endsWith(DELETED_SUFFIX) && !(await namesOpenFile(target, fd, lstat))) {
+        target = target.slice(0, -DELETED_SUFFIX.length);
+    }
     return path.isAbsolute(target) ? target : null;
+}
+
+// One file, told by its device and inode: an inode number is only unique on
+// its own device.
+const sameInode = (a, b) => a.dev === b.dev && a.ino === b.ino;
+
+// Whether `target` is, right now, the file open on `fd`. The name itself,
+// by lstat: a symlink there is not the file, wherever it points. Any failure
+// is "no", which strips the suffix: the old reading, and the stricter one
+// for a secret-shaped name hiding behind it.
+async function namesOpenFile(target, fd, lstat) {
+    try {
+        const [open, named] = await Promise.all([fstat(fd), lstat(target)]);
+        // No nlink test needed: no name resolves to an unlinked inode.
+        return sameInode(open, named);
+    } catch {
+        return false;
+    }
 }
 
 // An error the routes turn into a status code and a message for the UI.
@@ -288,6 +321,23 @@ function walkEntryType(relative, dirent, { allowSensitive = false } = {}) {
     if (dirent.isDirectory()) return 'dir';
     if (dirent.isFile()) return 'file';
     return 'other';
+}
+
+/**
+ * Folders are read with their names as bytes (BYTE_NAMES), and each entry
+ * passed through textDirent(). Read as strings, a name that is not valid
+ * UTF-8 (Linux allows any bytes but '/' and NUL) comes back with U+FFFD in
+ * it: a path that names nothing, so the entry dropped out of a listing, a
+ * recent-changes walk or a zip without a word. Such a name cannot be shown
+ * or asked for either (every path here travels as a string), so it is still
+ * left out, but as null here, for the walk to count and report
+ * (`unreadableNames`). Any other entry comes back with its name as a string.
+ */
+const BYTE_NAMES = { encoding: 'buffer' };
+function textDirent(dirent) {
+    if (!isUtf8(dirent.name)) return null;
+    dirent.name = dirent.name.toString('utf8');
+    return dirent;
 }
 
 /**
@@ -417,20 +467,24 @@ function createFilesApi({
         const { real, root: rootReal } = await resolve(requested);
         let dir;
         try {
-            dir = await fsp.opendir(real);
+            dir = await fsp.opendir(real, BYTE_NAMES);
         } catch (err) {
             if (err.code === 'ENOTDIR') throw new FilesError(400, 'Not a folder');
             throw new FilesError(400, `Cannot read folder (${err.code || 'error'})`);
         }
         const dirents = [];
         let truncated = false;
+        let unreadableNames = 0;
         try {
             for await (const dirent of dir) {
-                if (dirents.length >= maxEntries) {
+                // Every name read counts, shown or not: the bound is on the
+                // read, so a folder of unreadable names cannot get round it.
+                if (dirents.length + unreadableNames >= maxEntries) {
                     truncated = true;
                     break;
                 }
-                dirents.push(dirent);
+                if (textDirent(dirent)) dirents.push(dirent);
+                else unreadableNames++;
             }
         } catch (err) {
             throw new FilesError(400, `Cannot read folder (${err.code || 'error'})`);
@@ -442,7 +496,7 @@ function createFilesApi({
         const entries = (await Promise.all(dirents.map((d) => describe(real, d, rootReal))))
             .filter(Boolean)
             .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1));
-        return { path: real, root: rootReal, entries, truncated };
+        return { path: real, root: rootReal, entries, truncated, unreadableNames };
     }
 
     /**
@@ -577,17 +631,26 @@ function createFilesApi({
         const found = [];
         let visits = 0;
         let incomplete = false;
+        // Names that could not be read, every one the walk passed: whether
+        // such a file changed in the window cannot be known without its
+        // name, so this is not "left out of recent changes", only "seen and
+        // not readable". A folder so named counts once, unwalked.
+        let unreadableNames = 0;
 
         async function walk(dir, depth) {
             if (depth > MAX_RECENT_DEPTH) { incomplete = true; return; }
             let handle;
-            try { handle = await fsp.opendir(dir); } catch { return; }
+            try { handle = await fsp.opendir(dir, BYTE_NAMES); } catch { return; }
             const subdirs = [];
             try {
                 for await (const dirent of handle) {
                     if (++visits > MAX_RECENT_VISITS || Date.now() > deadline) {
                         incomplete = true;
                         break;
+                    }
+                    if (!textDirent(dirent)) {
+                        unreadableNames++;
+                        continue;
                     }
                     const full = path.join(dir, dirent.name);
                     const relative = path.relative(rootReal, full);
@@ -625,6 +688,7 @@ function createFilesApi({
             entries: found.slice(0, MAX_RECENT),
             truncated: found.length > MAX_RECENT,
             incomplete,
+            unreadableNames,
         };
     }
 
@@ -717,6 +781,9 @@ module.exports = {
     walkEntryType,
     looksBinary,
     procFdPath,
+    sameInode,
+    textDirent,
+    BYTE_NAMES,
     FilesError,
     allowsProtected,
     sendError,

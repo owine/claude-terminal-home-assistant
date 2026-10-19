@@ -22,6 +22,8 @@ const express = require('express');
 const yazl = require('yazl');
 const {
     walkEntryType,
+    textDirent,
+    BYTE_NAMES,
     allowsProtected,
     sendError,
     FilesError,
@@ -352,12 +354,15 @@ function createDownloads({
 
     /**
      * Walk a folder and decide what its zip holds, before a byte is sent:
-     * { name, files: [{ full, name, size, mtime, mode }], bytes }.
+     * { name, files: [{ full, name, size, mtime, mode }], bytes, unreadableNames }.
      *
      * Left out, whatever protected=1 says: never-shown and sensitive entries
      * (a sensitive folder is not even entered), symlinks (never followed and
      * never archived), anything but regular files and folders, and partial
-     * files (PARTIAL_FILE, which covers in-flight uploads). Refused with 413:
+     * files (PARTIAL_FILE, which covers in-flight uploads). Names that are not
+     * valid UTF-8 are left out too (a zip entry and a request both name a
+     * file by string), with all that is in such a folder, and counted in
+     * `unreadableNames`, so the preflight can say so. Refused with 413:
      * a walk that hits a bound, and a total over the cap.
      */
     async function planZip(requested) {
@@ -388,6 +393,7 @@ function createDownloads({
         const files = [];
         let bytes = 0;
         let visits = 0;
+        let unreadableNames = 0;
         let cut = null;   // why the walk stopped early, for the refusal
         const deadline = Date.now() + timeBudgetMs;
 
@@ -399,7 +405,7 @@ function createDownloads({
             if (onListed) await onListed(dir);
             let handle;
             try {
-                handle = await fsp.opendir(dir);
+                handle = await fsp.opendir(dir, BYTE_NAMES);
             } catch (err) {
                 if (depth === 0) throw new FilesError(400, `Cannot read folder (${err.code || 'error'})`);
                 return;   // vanished or unreadable since its parent was listed
@@ -427,7 +433,8 @@ function createDownloads({
                         cut = 'listing it took too long';
                         break;
                     }
-                    dirents.push(dirent);
+                    if (textDirent(dirent)) dirents.push(dirent);
+                    else unreadableNames++;
                 }
             } catch {
                 // Folder changed under us; keep what was read.
@@ -484,7 +491,7 @@ function createDownloads({
             throw new FilesError(413,
                 `This folder holds ${formatSize(bytes)}, over the ${formatSize(maxZipBytes)} zip limit.${largest('Largest')}`);
         }
-        return { name: `${top}.zip`, files, bytes };
+        return { name: `${top}.zip`, files, bytes, unreadableNames };
     }
 
     /**
@@ -577,7 +584,7 @@ function createDownloadRouter({ downloads, fileLimiter, zipLimiter, maxZips = MA
         // handed a download that could only fail silently.
         if (req.query.check === '1') {
             settle();   // the download that follows queues anew (see above)
-            return res.json({ name: plan.name, files: plan.files.length, bytes: plan.bytes });
+            return res.json({ name: plan.name, files: plan.files.length, bytes: plan.bytes, unreadableNames: plan.unreadableNames });
         }
         try {
             await downloads.sendZip(plan, req, res, { log, onSettled: settle });

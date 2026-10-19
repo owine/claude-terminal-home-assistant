@@ -751,7 +751,7 @@ test('check=1: a file just over the cap is over it, never "1.0 MB, over the 1 MB
 
 test('upload: a declared Content-Length over the cap is refused before any check or write', async () => {
     let adds = 0;
-    const counting = { add: async () => { adds++; }, remove: async () => {} };
+    const counting = { file: recordFile, add: async () => { adds++; }, remove: async () => {} };
     let planned = 0;
     const small = createUploads({ api, record: counting, maxBytes: 1024 * 1024, onPlanned: () => { planned++; } });
     await withServer({ uploads: small }, async (url) => {
@@ -1071,13 +1071,93 @@ test('upload: a folder that goes between the two halves of its last check is a 4
 });
 
 test('upload: a record that cannot be written refuses the upload before any byte', async () => {
-    const broken = { add: async () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); }, remove: async () => {} };
+    const broken = { file: recordFile, add: async () => { throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); }, remove: async () => {} };
     await withServer({ uploads: createUploads({ api, record: broken }) }, async (url) => {
         const res = await post(url, { name: 'norecord.txt', dest: 'blueprints' }, 'x');
         assert.strictEqual(res.status, 507);
         await res.arrayBuffer();
     });
     assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'norecord.txt')), false);
+    assert.deepStrictEqual(partsUnder(), []);
+});
+
+test('uploads need a part record that says where it is kept', () => {
+    // its path is what a failure to write it names (see below)
+    const add = async () => {};
+    const remove = async () => {};
+    for (const record of [{ add, remove }, { add, remove, file: '' }, { add, remove, file: 42 }]) {
+        assert.throws(() => createUploads({ api, record }), /record must have its file/, JSON.stringify(record));
+    }
+    assert.doesNotThrow(() => createUploads({ api, record: { add, remove, file: recordFile } }));
+});
+
+test('upload: a record that cannot be written is said to be the add-on\'s data folder, not the destination', async () => {
+    // The record lives in /data. A refusal there worded like one in /config
+    // ("not allowed to write there") sends the user to the wrong folder.
+    const file = path.join(data, 'record-dir', 'upload-parts');
+    const failing = (code) => createPartRecord({
+        file, root, log: () => {},
+        open: async () => { throw Object.assign(new Error(`simulated ${code}`), { code }); },
+    });
+    const dir = path.dirname(file);
+    for (const [code, status, text] of [
+        ['ENOSPC', 507, `The add-on's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`],
+        ['EDQUOT', 507, `The add-on's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`],
+        ['EACCES', 500, `The add-on could not write to its data folder (${dir}), so the file was not saved. The add-on's log says why.`],
+        ['EROFS', 500, `The add-on could not write to its data folder (${dir}), so the file was not saved. The add-on's log says why.`],
+    ]) {
+        const logged = [];
+        await withServer({ uploads: createUploads({ api, record: failing(code) }), log: (m) => logged.push(m) }, async (url) => {
+            const res = await post(url, { name: 'norecord.txt', dest: 'blueprints' }, 'x');
+            assert.strictEqual(res.status, status, code);
+            assert.deepStrictEqual(await res.json(), { error: text }, code);
+        });
+        assert.deepStrictEqual(logged, [`Upload not saved: its part could not be recorded in ${file}: simulated ${code}`], code);
+    }
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'norecord.txt')), false);
+    assert.deepStrictEqual(partsUnder(), []);
+});
+
+test('upload: a part made but never identified stays in the record, and the next start removes it', async () => {
+    // openPart made the file (O_EXCL), then the stat that names it by inode
+    // failed. Without the inode nothing may delete it by its path now, so
+    // it stays recorded, emptied, for the next start's sweep - never
+    // dropped from the record, which would leave it hidden for good.
+    const own = path.join(data, 'parts-unidentified');
+    fs.writeFileSync(own, '[]\n');
+    const ownRecord = createPartRecord({ file: own, root, log: () => {} });
+    const name = '.ctp-upload-00000000000000bb.part';
+    const part = path.join(root, 'blueprints', name);
+    let partIno = null;
+    const logged = [];
+    const blind = createUploads({
+        api, record: ownRecord, partName: () => name,
+        openPart: async (p) => {
+            const handle = await fs.promises.open(p, 'wx', 0o644);
+            partIno = (await handle.stat()).ino;
+            await handle.write('stale');   // emptied through the descriptor, all the same
+            return {
+                stat: async () => { throw Object.assign(new Error('simulated EIO'), { code: 'EIO' }); },
+                truncate: (n) => handle.truncate(n),
+                close: () => handle.close(),
+            };
+        },
+    });
+    await withServer({ uploads: blind, log: (m) => logged.push(m) }, async (url) => {
+        const res = await post(url, { name: 'blind.txt', dest: 'blueprints' }, 'x');
+        assert.strictEqual(res.status, 500);
+        await res.arrayBuffer();
+    });
+    assert.ok(partIno !== null, 'positive control: the part was made');
+    assert.ok(await until(() => openFds(partIno) === 0), 'descriptor left open');
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'blind.txt')), false);
+    assert.strictEqual(fs.statSync(part).size, 0);
+    assert.deepStrictEqual(ownRecord.list(), [part]);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(own, 'utf8')), [part]);
+    assert.ok(logged.some((m) => m.includes(`${part} was made but not identified`)), logged.join('\n'));
+    const next = createPartRecord({ file: own, root, log: () => {} });
+    assert.strictEqual(await next.start(), 1);
+    assert.strictEqual(fs.existsSync(part), false);
     assert.deepStrictEqual(partsUnder(), []);
 });
 

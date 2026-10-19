@@ -75,6 +75,7 @@ const FOLDER_AT_NAME = new Set(['EISDIR', 'ENOTEMPTY']);
 // Failures that are the file system's, not a bug: answered as what they are
 // (the global answer would be "Internal error"), and still logged.
 const DISK_FULL_TEXT = 'The disk is full, so the file was not saved. Free some space and try again.';
+const DISK_FULL = new Set(['ENOSPC', 'EDQUOT']);
 const FS_REFUSALS = new Map([
     ['ENOSPC', [507, DISK_FULL_TEXT]],
     ['EDQUOT', [507, DISK_FULL_TEXT]],
@@ -186,10 +187,10 @@ const sizeText = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
 
 /**
  * Uploads over a files-api instance (for locate() and its root). `record` is
- * upload-parts.js's createPartRecord. The rest are test seams: `fsOps` the
- * link and rename that put a finished part in place, the realpath of the
- * last check before them and the lstat that tells the part's file apart
- * (each defaults on its own), `openPart` its open
+ * upload-parts.js's createPartRecord, whose `file` is required. The rest are
+ * test seams: `fsOps` the link and rename that put a finished part in place,
+ * the realpath of the last check before them and the lstat that tells the
+ * part's file apart (each defaults on its own), `openPart` its open
  * (a FileHandle, or anything with its stat - which must honour
  * { bigint: true } - chmod, write, datasync, truncate and close),
  * `partName` its name, `onPlanned` a hook between the checks and
@@ -211,6 +212,9 @@ function createUploads({
     onPlanned = null,
     beforeCommit = null,
 } = {}) {
+    if (typeof record?.file !== 'string' || record.file === '') {
+        throw new TypeError('record must have its file (a createPartRecord record): a failure to write it is said by that path');
+    }
     const fsOps = { link: fsp.link, rename: fsp.rename, realpath: fsp.realpath, lstat: fsp.lstat, ...ops };
     const maxMb = Math.round(maxBytes / MB);
     const limitText = `the ${maxMb} MB upload limit (the add-on's upload_max_mb option)`;
@@ -526,6 +530,22 @@ function createUploads({
             { reason: 'exists', replaceable: false });
     }
 
+    // The record lives in the add-on's data folder (/data), not where the
+    // file goes: a failure to write it is said as that folder's, never with
+    // FS_REFUSALS' words, which are about the destination. Logged, with the
+    // record's path. Nothing is written yet, so nothing is left behind.
+    async function recordPart(part, log) {
+        try {
+            await record.add(part);
+        } catch (err) {
+            log(`Upload not saved: its part could not be recorded in ${record.file}: ${err.message}`);
+            const dir = path.dirname(record.file);
+            throw DISK_FULL.has(err && err.code)
+                ? new FilesError(507, `The add-on's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`)
+                : new FilesError(500, `The add-on could not write to its data folder (${dir}), so the file was not saved. The add-on's log says why.`);
+        }
+    }
+
     /**
      * Stream the request into a part beside the destination, then put it in
      * place: { path, name, size, dir, replaced, inbox }. On every other way
@@ -539,7 +559,7 @@ function createUploads({
     async function receive(req, planned, { log = console.error } = {}) {
         if (onPlanned) await onPlanned(planned);
         const part = path.join(planned.dir, partName());
-        await record.add(part);
+        await recordPart(part, log);
         let handle = null;
         // The part this upload created (O_EXCL: never a file that was
         // there before), by device and inode. Null until then, and only
@@ -602,7 +622,19 @@ function createUploads({
             // rename it is gone already; after a failure it is the emptied
             // file. Removed by its path only while that path still names it.
             if (id && await samePart(part, id).catch(() => false)) await fsp.unlink(part).catch(() => {});
-            await record.remove(part).catch((err) => log(`Upload parts: record not updated: ${err.message}`));
+            if (handle && !id) {
+                // Made (O_EXCL) but never identified: its stat failed, so
+                // nothing here can tell it from another file put at its path
+                // since, and the unlink above, which needs the inode, is
+                // skipped. Left in the record, emptied above, for the next
+                // start's sweep. That sweep deletes by path too, with no
+                // inode: it relies on the part's random name and its checks
+                // that the path is a regular file in a real folder inside
+                // the root (upload-parts.js, judge).
+                log(`Upload parts: ${part} was made but not identified; left for the next start to remove`);
+            } else {
+                await record.remove(part).catch((err) => log(`Upload parts: record not updated: ${err.message}`));
+            }
         }
     }
 

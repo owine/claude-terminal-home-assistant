@@ -20,10 +20,12 @@ const {
     classifyRelative,
     looksBinary,
     procFdPath,
+    sameInode,
     sendError,
     FilesError,
 } = require('../files-api.js');
 const { createRateLimiter } = require('../http-guards.js');
+const { makeBadName, needsBadNames } = require('./bad-name.js');
 
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'files-api-')));
 const root = path.join(base, 'config');
@@ -287,6 +289,107 @@ test('procFdPath names the open file on Linux, and is null elsewhere', async () 
     }
 });
 
+test('sameInode needs the device and the inode both to match', () => {
+    assert.strictEqual(sameInode({ dev: 1, ino: 5 }, { dev: 1, ino: 5 }), true);
+    // an inode number is only unique on its own device
+    assert.strictEqual(sameInode({ dev: 1, ino: 5 }, { dev: 2, ino: 5 }), false);
+    assert.strictEqual(sameInode({ dev: 1, ino: 5 }, { dev: 1, ino: 6 }), false);
+});
+
+// The kernel marks an unlinked file by appending " (deleted)" to the path it
+// reports, but a live file may carry that suffix in its real name. Only an
+// unlinked file loses the suffix; a live one keeps its name, and is judged
+// by it.
+test('procFdPath strips " (deleted)" only from a file that is really gone',
+    { skip: !hasProcFd && 'needs /proc/self/fd (Linux)' }, async () => {
+        const dir = path.join(root, 'del-suffix');
+        fs.mkdirSync(dir);
+        const at = (name) => path.join(dir, name);
+        const opened = async (name, before = () => {}) => {
+            const handle = await fs.promises.open(at(name), 'r');
+            try {
+                before();
+                return await procFdPath(handle.fd);
+            } finally {
+                await handle.close();
+            }
+        };
+        try {
+            for (const name of ['x.key (deleted)', 'repo.git (deleted)', 'a (deleted) (deleted)']) {
+                fs.writeFileSync(at(name), 'live');
+                assert.strictEqual(await opened(name), at(name), `live ${name}`);
+            }
+            // Unlinked: the kernel's suffix goes, the real name stays.
+            fs.writeFileSync(at('gone.key'), 'x');
+            assert.strictEqual(await opened('gone.key', () => fs.unlinkSync(at('gone.key'))), at('gone.key'));
+            fs.writeFileSync(at('b (deleted)'), 'x');
+            assert.strictEqual(await opened('b (deleted)', () => fs.unlinkSync(at('b (deleted)'))), at('b (deleted)'));
+            // Unlinked while another file now holds the suffixed name.
+            fs.writeFileSync(at('c.key'), 'x');
+            assert.strictEqual(await opened('c.key', () => {
+                fs.unlinkSync(at('c.key'));
+                fs.writeFileSync(at('c.key (deleted)'), 'impostor');
+            }), at('c.key'));
+            // Unlinked here but still linked elsewhere (nlink 1): still gone
+            // from the name it was opened by.
+            fs.writeFileSync(at('d.key'), 'x');
+            assert.strictEqual(await opened('d.key', () => {
+                fs.linkSync(at('d.key'), at('d-other'));
+                fs.unlinkSync(at('d.key'));
+            }), at('d.key'));
+            // ...and with another file at the suffixed name: still gone.
+            fs.writeFileSync(at('e.key'), 'x');
+            assert.strictEqual(await opened('e.key', () => {
+                fs.linkSync(at('e.key'), at('e-other'));
+                fs.unlinkSync(at('e.key'));
+                fs.writeFileSync(at('e.key (deleted)'), 'impostor');
+            }), at('e.key'));
+            // ...and with a symlink at the suffixed name pointing at the
+            // file's surviving name: a link is not the file, however it
+            // resolves, so the name is looked at, never followed.
+            fs.writeFileSync(at('f.key'), 'x');
+            assert.strictEqual(await opened('f.key', () => {
+                fs.linkSync(at('f.key'), at('f-other'));
+                fs.unlinkSync(at('f.key'));
+                fs.symlinkSync(at('f-other'), at('f.key (deleted)'));
+            }), at('f.key'));
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+test('procFdPath: the same inode number on another device is another file',
+    { skip: !hasProcFd && 'needs /proc/self/fd (Linux)' }, async () => {
+        const file = write('del-dev/g (deleted)', 'live');
+        const handle = await fs.promises.open(file, 'r');
+        try {
+            const own = await handle.stat();
+            const elsewhere = async () => ({ ...own, dev: own.dev + 1 });
+            assert.strictEqual(await procFdPath(handle.fd, { lstat: elsewhere }), file.slice(0, -' (deleted)'.length));
+            // positive control: the same device and inode is this file
+            assert.strictEqual(await procFdPath(handle.fd, { lstat: async () => own }), file);
+        } finally {
+            await handle.close();
+            fs.rmSync(path.join(root, 'del-dev'), { recursive: true, force: true });
+        }
+    });
+
+test('a live file named "... (deleted)" previews by its own name',
+    { skip: !hasProcFd && 'needs /proc/self/fd (Linux)' }, async () => {
+        const dir = path.join(root, 'del-preview');
+        try {
+            write('del-preview/x.key (deleted)', 'not a key\n');
+            write('del-preview/repo.git (deleted)', 'not a repo\n');
+            assert.strictEqual((await api.preview('del-preview/x.key (deleted)')).content, 'not a key\n');
+            assert.strictEqual((await api.preview('del-preview/repo.git (deleted)')).content, 'not a repo\n');
+            // A name that IS secret-shaped stays refused.
+            write('del-preview/x (deleted).key', 'KEY\n');
+            await refused(api.preview('del-preview/x (deleted).key'), 403);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
 // --- preview ---
 
 test('preview returns text as a string with size and mtime', async () => {
@@ -431,6 +534,62 @@ test('recent changes stops when its time budget runs out', async () => {
     assert.strictEqual(res.incomplete, true);
     assert.deepStrictEqual(res.entries, []);
 });
+
+// --- names that are not valid UTF-8 ---
+//
+// Linux allows any bytes in a name but '/' and NUL. Node decodes such a name
+// with U+FFFD in it, a path that names nothing: the entry dropped out of the
+// listing and of recent changes without a word. Now it is counted.
+
+const badNames = needsBadNames(path.join(base, 'probe'));
+
+test('a name that is not valid UTF-8 is counted in a listing, not silently left out',
+    badNames, async () => {
+        const dir = path.join(root, 'odd-names');
+        try {
+            write('odd-names/plain.txt', 'plain');
+            write('odd-names/ok�.txt', 'a real U+FFFD is valid UTF-8');
+            makeBadName(dir, Buffer.from([0x62, 0xff, 0x2e, 0x74, 0x78, 0x74]));   // b\xff.txt
+            makeBadName(dir, Buffer.from([0x64, 0xfe]), { folder: true });         // d\xfe/
+            const res = await api.list('odd-names');
+            assert.deepStrictEqual(res.entries.map((e) => e.name), ['ok�.txt', 'plain.txt']);
+            assert.strictEqual(res.unreadableNames, 2);
+            assert.strictEqual((await api.list('packages')).unreadableNames, 0);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+test('names that are not valid UTF-8 count toward a listing\'s entry bound', badNames, async () => {
+    // Read and counted all the same: a folder of 100k such names must not
+    // become a 100k-entry read.
+    const dir = path.join(root, 'odd-bound');
+    try {
+        write('odd-bound/plain.txt', 'plain');
+        for (const b of [0xfa, 0xfb, 0xfc]) makeBadName(dir, Buffer.from([0x62, b]));
+        const res = await createFilesApi({ root, maxEntries: 2 }).list('odd-bound');
+        assert.strictEqual(res.truncated, true);
+        assert.strictEqual(res.entries.length + res.unreadableNames, 2);
+        // positive control: with room for all four, all are read
+        const all = await createFilesApi({ root, maxEntries: 4 }).list('odd-bound');
+        assert.deepStrictEqual([all.truncated, all.entries.length, all.unreadableNames], [false, 1, 3]);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('a name that is not valid UTF-8 is counted in recent changes, not silently left out',
+    badNames, async () => {
+        const recentRoot = path.join(base, 'recent-odd');
+        write('plain.txt', 'plain', recentRoot);
+        write('sub/ok�.txt', 'valid', recentRoot);
+        makeBadName(recentRoot, Buffer.from([0x62, 0xff, 0x2e, 0x74, 0x78, 0x74]));
+        makeBadName(path.join(recentRoot, 'sub'), Buffer.from([0x64, 0xfe]), { folder: true });
+        const res = await createFilesApi({ root: recentRoot }).recent(24);
+        assert.deepStrictEqual(res.entries.map((e) => e.relative).sort(), ['plain.txt', path.join('sub', 'ok�.txt')]);
+        assert.strictEqual(res.unreadableNames, 2);
+        assert.strictEqual((await api.recent(24)).unreadableNames, 0);
+    });
 
 // --- ha core check ---
 

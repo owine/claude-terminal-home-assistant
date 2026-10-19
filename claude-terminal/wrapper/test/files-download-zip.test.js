@@ -130,6 +130,7 @@ test('zip: check=1 answers the plan as JSON, without streaming', async () => {
             name: 'blueprints.zip',
             files: BLUEPRINT_NAMES.length,
             bytes: (await downloads.planZip('blueprints')).bytes,
+            unreadableNames: 0,
         });
     });
 });
