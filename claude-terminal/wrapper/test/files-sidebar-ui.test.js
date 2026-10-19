@@ -97,4 +97,17 @@ test('without files-sidebar.js, init hides the Files button and stops there', ()
     assert.deepStrictEqual(touched, ['#files-sidebar', '#files-btn']);
 });
 
+// Uploads go through upload-client.js; a sidebar that offered Upload with
+// nothing behind it would fail on first use. So without it, as without
+// files-sidebar.js, the Files button goes.
+test('without upload-client.js, init hides the Files button and stops there', () => {
+    const filesBtn = { style: {} };
+    const { win, touched, errors } = load({ 'files-sidebar': {}, 'files-btn': filesBtn });
+    win.FilesSidebar = {};   // files-sidebar.js loaded, upload-client.js did not
+    win.FilesSidebarUI.init(pageFunctions());
+    assert.strictEqual(filesBtn.style.display, 'none');
+    assert.ok(errors.some((e) => e.includes('upload-client.js did not load')), JSON.stringify(errors));
+    assert.deepStrictEqual(touched, ['#files-sidebar', '#files-btn']);
+});
+
 console.log(`\n${passed} passed`);

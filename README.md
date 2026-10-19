@@ -33,7 +33,7 @@ This project is a fork built upon work from two repositories:
 
 ### Features from Upstream
 
-- **Image Paste Support**: Upload images via paste (Ctrl+V), drag-drop, or upload button for Claude analysis
+- **Image Paste Support**: Paste (Ctrl+V), drop or pick (📎) a file, and its path is typed at the prompt for Claude. This fork extends it from images to any file
 - **Persistent Package Management**: Install system and Python packages that survive reboots
 - **Auto-install Configuration**: Configure packages to auto-install on startup
 - **Native Claude Installation**: Uses Anthropic's official installer
@@ -72,12 +72,12 @@ A web-based terminal interface with Claude Code CLI pre-installed and enhanced p
   - Learning resources
 
 #### Enhanced Features (Pro)
-- **Image Paste Support**: Paste (Ctrl+V), drag-drop, or upload images for Claude analysis
+- **File Uploads from the Terminal**: Paste (Ctrl+V), drop or pick (📎) any file; small images go to `/data/images`, everything else to the `/config/uploads` inbox
   - Lightweight service (~10MB RAM, ARM-compatible)
-  - Supports JPEG, PNG, GIF, WebP, SVG (10MB limit)
-  - Persistent storage in `/data/images/`
-  - Perfect for OCR, image analysis, screenshot debugging
-- **Files Sidebar**: Browse and preview `/config` (read-only), download files and folders (as zips), list recently changed files, insert a file's path at the prompt, and run `ha core check`
+  - JPEG, PNG, GIF, WebP and SVG images up to 10 MB go to `/data/images/`; HEIC photos, bigger images and every other type go to the inbox, up to `upload_max_mb` (25 MB by default)
+  - Paths are typed at the prompt, quoted where needed, without pressing Enter
+  - Perfect for OCR, image analysis, screenshot debugging, or any file you want Claude to read
+- **Files Sidebar**: Browse and preview `/config`, upload files into it (an inbox by default, or a folder you pick), download files and folders (as zips), list recently changed files, insert a file's path at the prompt, and run `ha core check`
 - **Persistent Package Management**: Install packages that survive container restarts
 - **Auto-install Packages**: Configure APK and pip packages to auto-install on startup
 - **Python Virtual Environment**: Isolated Python environment for packages

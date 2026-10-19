@@ -1658,6 +1658,304 @@ async function checkUploads(browser, url) {
     }
 }
 
+// 9. The terminal's own ways in: the paperclip, a paste and a drop take any
+//    file. Small images (PNG, JPEG, GIF, WebP, SVG, at most 10 MB) still go
+//    to the image upload, faked here so section 5 keeps the image limiter's
+//    budget; everything else goes to the inbox through api/files/upload.
+//    Every path is typed at the prompt, quoted where it needs it, without
+//    Enter. A real paste or drop over the terminal lands in its frame's
+//    document (the page hands the pointer to the frame there), so both are
+//    dispatched there as well as on the page. What landed is read from the
+//    container and what was typed from tmux. Its own context with service
+//    workers blocked, so context.route sees what it fakes. Every real upload
+//    body takes its share of uploadBudget first.
+async function checkTerminalUploads(browser, url) {
+    dexec(['rm', '-rf', INBOX_DIR]);
+    await resetPane();
+    const exists = (p) => dexec(['sh', '-c', '[ -e "$1" ] && echo yes || echo no', 'sh', p]).trim() === 'yes';
+    const read = (p) => (exists(p) ? dexec(['cat', p]) : null);
+    const size = (p) => (exists(p) ? Number(dexec(['stat', '-c', '%s', p]).trim()) : -1);
+    const pickDir = mkdtempSync(join(tmpdir(), 'ctp-terminal-upload-'));
+    const local = (name, body) => {
+        const p = join(pickDir, name);
+        writeFileSync(p, body);
+        return p;
+    };
+    // The pane's last line (wrapped lines joined) and what follows the
+    // prompt on it. Had Enter been sent, a fresh prompt would be there.
+    const lastLine = () => dexec(['tmux', 'capture-pane', '-pJ']).trimEnd().split('\n').pop();
+    // The bare prompt: the same last line twice in a row, once seq's
+    // output (ending in 300) has been followed by it.
+    let promptLine = '';
+    await waitFor(() => {
+        const line = lastLine();
+        const settled = line === promptLine && line !== '300';
+        promptLine = line;
+        return settled;
+    });
+    const atPrompt = () => {
+        const line = lastLine();
+        return line.startsWith(promptLine) ? line.slice(promptLine.length).trimStart() : `(not at the prompt) ${line}`;
+    };
+    const typed = (text) => waitFor(() => atPrompt() === text);
+    const clearPrompt = async () => {
+        sendKeys('C-u');
+        await waitFor(() => atPrompt() === '');
+    };
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    // Inbox requests by kind: bodies (which reach the server unless a route
+    // aborts them) and check=1 questions.
+    const bodies = [];
+    const asks = [];
+    context.on('request', (r) => {
+        const u = new URL(r.url());
+        if (r.method() !== 'POST' || !u.pathname.endsWith('/api/files/upload')) return;
+        (u.searchParams.has('check') ? asks : bodies).push(u);
+    });
+    // The image upload, faked: counted, never sent. Each answer names its
+    // own file, so a typed path says which upload it was.
+    let imageUploads = 0;
+    await context.route((u) => /\/upload$/.test(u.pathname) && !u.pathname.endsWith('/api/files/upload'), (route) => {
+        imageUploads++;
+        const name = `pasted-0-0000000${imageUploads}.png`;
+        return route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ success: true, path: `/data/images/${name}`, filename: name, size: 3 }) });
+    });
+    let budgeted = 0;
+    const budget = async (n) => {
+        budgeted += n;
+        await uploadBudget(n);
+    };
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const status = () => wrapper.evaluate('document.getElementById("status").textContent');
+        const pick = async (files) => {
+            const [chooser] = await Promise.all([page.waitForEvent('filechooser'), wrapper.locator('#upload-btn').click()]);
+            await chooser.setFiles(files);
+        };
+        // Synthetic drops and pastes with a real DataTransfer: on the page
+        // over the terminal, or in the terminal's frame on xterm's own
+        // elements. files: [name, type, text or a byte count].
+        const fire = (where, kind, { files = [], text = null } = {}) => wrapper.evaluate(`(() => {
+            const where = ${JSON.stringify(where)};
+            const kind = ${JSON.stringify(kind)};
+            const frame = document.getElementById('terminal-frame').contentWindow;
+            const w = where === 'frame' ? frame : window;
+            const target = where === 'frame'
+                ? (kind === 'paste' ? frame.term.textarea : frame.term.element.querySelector('.xterm-screen'))
+                : (kind === 'paste' ? document.body : document.getElementById('terminal-container'));
+            const dt = new w.DataTransfer();
+            const text = ${JSON.stringify(text)};
+            if (text !== null) dt.setData('text/plain', text);
+            for (const [name, type, body] of ${JSON.stringify(files)}) {
+                dt.items.add(new w.File([typeof body === 'number' ? new Uint8Array(body) : body], name, { type }));
+            }
+            const overlay = () => document.getElementById('drop-zone').classList.contains('active');
+            if (kind === 'paste') {
+                const ev = new w.Event('paste', { bubbles: true, cancelable: true });
+                Object.defineProperty(ev, 'clipboardData', { value: dt });
+                target.dispatchEvent(ev);
+                return JSON.stringify({ prevented: ev.defaultPrevented });
+            }
+            const drag = (type) => new w.DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt });
+            target.dispatchEvent(drag('dragenter'));
+            target.dispatchEvent(drag('dragover'));
+            const during = overlay();
+            const drop = drag('drop');
+            target.dispatchEvent(drop);
+            return JSON.stringify({ overlay: during, prevented: drop.defaultPrevented, after: overlay() });
+        })()`).then(JSON.parse);
+
+        // The paperclip takes any file, several at once.
+        const looks = await wrapper.evaluate(`JSON.stringify({
+            title: document.getElementById('upload-btn').title,
+            label: document.getElementById('upload-btn').getAttribute('aria-label'),
+            accept: document.getElementById('file-input').getAttribute('accept'),
+            multiple: document.getElementById('file-input').multiple,
+            drop: document.getElementById('drop-zone-text').textContent,
+        })`);
+        check('the paperclip is "Upload file", and its picker takes any file, several at once', looks,
+            JSON.stringify({ title: 'Upload file', label: 'Upload file', accept: null, multiple: true, drop: 'Drop file here' }));
+        if (JSON.parse(looks).accept !== null) return;   // the images-only flow: everything below would only time out
+
+        const pdf = 'report $1.pdf';
+        await budget(1);
+        await pick(local(pdf, '%PDF-1.4 ctp\n'));
+        check('a file picked with the paperclip lands in the inbox',
+            await waitFor(() => read(`${INBOX_DIR}/${pdf}`) === '%PDF-1.4 ctp\n'), true);
+        check('and its path is typed at the prompt, quoted, without Enter', await typed(`'${INBOX_DIR}/${pdf}'`), true);
+        check('it never goes to the image upload', imageUploads, 0);
+        await clearPrompt();
+
+        await pick(local('small.png', PNG_A));
+        check('a small image picked with the paperclip still goes to the image upload',
+            await waitFor(() => imageUploads === 1), true);
+        check('and its path is typed as it is', await typed('/data/images/pasted-0-00000001.png'), true);
+        check('and none of it lands in the inbox', exists(`${INBOX_DIR}/small.png`), false);
+        await clearPrompt();
+
+        await budget(1);
+        await pick([local('two.png', PNG_B), local('notes v2.txt', 'notes\n')]);
+        check('files picked together are typed in order, space-separated, each quoted as it needs',
+            await typed(`/data/images/pasted-0-00000002.png '${INBOX_DIR}/notes v2.txt'`), true);
+        await clearPrompt();
+
+        // Dropped on the page over the terminal: an image over 10 MB and a
+        // HEIC photo go to the inbox.
+        const BIG = 10 * 1024 * 1024 + 1;
+        await budget(2);
+        const onPage = await fire('page', 'drop', { files: [['big.png', 'image/png', BIG], ['photo.heic', 'image/heic', 'heic']] });
+        check('a file drag over the terminal shows the drop overlay, and the drop hides it',
+            onPage, (v) => v.overlay && !v.after);
+        check('an image over 10 MB and a HEIC photo dropped on the terminal go to the inbox',
+            await waitFor(() => size(`${INBOX_DIR}/big.png`) === BIG && read(`${INBOX_DIR}/photo.heic`) === 'heic'), true);
+        check('and both paths are typed', await typed(`${INBOX_DIR}/big.png ${INBOX_DIR}/photo.heic`), true);
+        check('still no image upload for them', imageUploads, 2);
+        await clearPrompt();
+
+        await budget(1);
+        await fire('page', 'paste', { files: [['clip.pdf', 'application/pdf', 'clip\n']] });
+        check('a file pasted with the page focused goes to the inbox, its path typed',
+            (await waitFor(() => read(`${INBOX_DIR}/clip.pdf`) === 'clip\n')) && (await typed(`${INBOX_DIR}/clip.pdf`)), true);
+        await clearPrompt();
+
+        // Over the terminal, the page hands the pointer to the terminal's
+        // frame, so a real paste or drop there happens in its document.
+        check('fixture: over the terminal, the pointer goes to its frame',
+            await wrapper.evaluate(`(() => {
+                const r = document.getElementById('terminal-frame').getBoundingClientRect();
+                return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.id;
+            })()`), 'terminal-frame');
+        const mouseMode = () => wrapper.evaluate(`(() => {
+            const t = ${TERM};
+            return (t.modes && t.modes.mouseTrackingMode) || t._core?.coreMouseService?.activeProtocol || null;
+        })()`);
+        const modeBefore = await mouseMode();
+        check('fixture: tmux has the mouse, so xterm is reporting it', modeBefore, (m) => typeof m === 'string' && !/^none$/i.test(m));
+        await budget(1);
+        const inFrame = await fire('frame', 'drop', { files: [['frame drop.txt', 'text/plain', 'frame\n']] });
+        check('a file drag inside the terminal frame shows the overlay, and its drop is taken',
+            inFrame, (v) => v.overlay && v.prevented && !v.after);
+        check('a file dropped inside the terminal frame lands in the inbox, its path typed',
+            (await waitFor(() => read(`${INBOX_DIR}/frame drop.txt`) === 'frame\n'))
+                && (await typed(`'${INBOX_DIR}/frame drop.txt'`)), true);
+        check('mouse reporting is just as it was', await mouseMode(), modeBefore);
+        await clearPrompt();
+
+        await fire('frame', 'paste', { files: [['image.png', 'image/png', 'png']] });
+        check('a screenshot pasted with the terminal focused goes to the image upload, its path typed',
+            (await waitFor(() => imageUploads === 3)) && (await typed('/data/images/pasted-0-00000003.png')), true);
+        await clearPrompt();
+
+        // Text pastes stay xterm's: plain text, and text with a file beside
+        // it (spreadsheet cells come with a picture of themselves).
+        await fire('frame', 'paste', { text: 'echo ctp-plain-paste' });
+        check('a text paste in the terminal is left to xterm, which types it', await typed('echo ctp-plain-paste'), true);
+        await clearPrompt();
+        await fire('frame', 'paste', { text: 'cells', files: [['cells.png', 'image/png', 'png']] });
+        check('text with a file beside it pastes the text', await typed('cells'), true);
+        await clearPrompt();
+        // Positive control for "and uploads nothing": terminal uploads queue
+        // in order, so had cells.png gone up, this one would be the fifth.
+        await fire('frame', 'paste', { files: [['after.png', 'image/png', 'png']] });
+        check('and uploads nothing: the next pasted image is the only upload since',
+            (await typed('/data/images/pasted-0-00000004.png')) && imageUploads === 4, true);
+        await clearPrompt();
+
+        // Refusals: in the status line, and nothing typed for the refused.
+        await budget(1);
+        const bodiesBefore = bodies.length;
+        await fire('page', 'drop', { files: [['ok.txt', 'text/plain', 'ok\n'], ['big.bin', 'application/octet-stream', 26 * 1024 * 1024]] });
+        check('a file over upload_max_mb is refused in the status line, naming the limit and its option',
+            await waitFor(async () => /26\.0 MB, over the 25 MB upload limit \(the add-on's upload_max_mb option\)/.test(await status())), true);
+        check('the file before it in the batch is still typed', await typed(`${INBOX_DIR}/ok.txt`), true);
+        check('and the refused body is never sent', bodies.length - bodiesBefore, 1);
+        // "Sent to terminal: …" came first and arms a 5 s clear; the refusal
+        // after it must outlive that. Polled for 6.5 s: it must never go.
+        check('the refusal stays past the 5 s clear of the line before it',
+            await waitFor(async () => !/upload limit/.test(await status()), { timeout: 6500 }), false);
+        await clearPrompt();
+
+        let busyAsks = 0;
+        const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
+        await context.route(isAsk, (route) => {
+            busyAsks++;
+            return route.fulfill({ status: 429, contentType: 'application/json',
+                body: JSON.stringify({ error: 'Too many uploads, try again in a minute' }) });
+        });
+        await fire('page', 'drop', { files: [['b1.txt', 'text/plain', '1'], ['b2.txt', 'text/plain', '2'], ['b3.txt', 'text/plain', '3']] });
+        check('a batch stops at the first 429, with one line for all it left',
+            await waitFor(async () => (await status()) === '⏳ 3 not uploaded: too many uploads, try again in a minute.'), true);
+        check('and asks nothing more after it', busyAsks, 1);
+        check('nothing is typed for them', atPrompt(), '');
+        await context.unroute(isAsk);
+
+        const isBody = (u) => u.pathname.endsWith('/api/files/upload') && !u.searchParams.has('check');
+        await context.route(isBody, (route) => route.abort());
+        await fire('page', 'drop', { files: [['lost.txt', 'text/plain', 'lost\n']] });
+        check('an upload that gets no answer says so',
+            await waitFor(async () => /^⚠️ Could not reach the add-on to upload lost\.txt\./.test(await status())), true);
+        check('and types nothing', atPrompt(), '');
+        await context.unroute(isBody);
+
+        // When the terminal cannot take the text, uploadImage's old
+        // fallback: the clipboard, else the status line.
+        await budget(1);
+        await wrapper.evaluate(`(() => {
+            const f = document.getElementById('terminal-frame').contentWindow;
+            window.ctpTerm = f.term;
+            f.term = undefined;
+        })()`);
+        try {
+            await fire('page', 'drop', { files: [['fallback x.txt', 'text/plain', 'fb\n']] });
+            check('when the terminal cannot take the path, it goes to the clipboard or the status line instead',
+                await waitFor(async () => /^(Copied path: |Path: )'\/config\/uploads\/fallback x\.txt'/.test(await status())), true);
+        } finally {
+            await wrapper.evaluate('document.getElementById("terminal-frame").contentWindow.term = window.ctpTerm');
+        }
+        check('and nothing was typed', atPrompt(), '');
+
+        // (UPLOAD_PART is the download checks' stand-in, not a real one.)
+        check('no upload part is left anywhere',
+            dexec(['find', '/config', '-maxdepth', '3', '-name', '.ctp-upload-*.part', '!', '-name', UPLOAD_PART]).trim(), '');
+        // uploadBudget must have seen every body that reached the server
+        // (lost.txt's was aborted by the route, so it never did).
+        check('fixture: every real upload body was budgeted', bodies.length - 1, budgeted);
+    } finally {
+        await context.close();
+        rmSync(pickDir, { recursive: true, force: true });
+        dexec(['rm', '-rf', INBOX_DIR]);
+        sendKeys('C-u');
+    }
+}
+
+// If upload-client.js does not load (a 404 while the add-on updates), the
+// terminal still works: the paperclip goes, and so does the Files button
+// (the sidebar uploads through it too). Its own context with service
+// workers blocked, so the worker's precached copy cannot answer the aborted
+// request. wrapperFrame() itself waits for a live terminal.
+async function checkUploadClientMissing(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    let aborted = 0;
+    await page.route('**/upload-client.js', (route) => { aborted++; return route.abort(); });
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        check('fixture: the upload client script was blocked', aborted, (n) => n >= 1);
+        check('without upload-client.js the paperclip and the Files button go, and the terminal still runs',
+            await wrapper.evaluate(`JSON.stringify({
+                paperclip: getComputedStyle(document.getElementById('upload-btn')).display,
+                files: getComputedStyle(document.getElementById('files-btn')).display,
+                client: typeof window.UploadClient,
+            })`), JSON.stringify({ paperclip: 'none', files: 'none', client: 'undefined' }));
+    } finally {
+        await context.close();
+    }
+}
+
 async function run(engine, mode, url) {
     console.log(`\n=== ${engine.name()} / ${mode} ===`);
     const failuresBefore = failures;
@@ -1687,6 +1985,8 @@ async function run(engine, mode, url) {
         await cacheControl(''), 'no-cache');
     check('scripts are served with revalidation',
         await cacheControl('terminal-clipboard.js'), 'no-cache');
+    check('the upload client is served with revalidation',
+        await cacheControl('upload-client.js'), 'no-cache');
     check('the service worker is served with revalidation',
         await cacheControl('sw.js'), 'no-cache');
     // The Files sidebar's UI moved out of index.html into its own script. It
@@ -2130,6 +2430,8 @@ async function run(engine, mode, url) {
     await checkSidebarScriptMissing(browser, url);
     await checkNoResizeObserver(browser, url);
     await checkUploads(browser, url);
+    await checkTerminalUploads(browser, url);
+    await checkUploadClientMissing(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {

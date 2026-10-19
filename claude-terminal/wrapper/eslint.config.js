@@ -33,6 +33,13 @@ module.exports = [
         },
     },
     {
+        // Dual-target as well, and under Node it require()s files-sidebar.js.
+        files: ['public/upload-client.js'],
+        languageOptions: {
+            globals: { module: 'writable', exports: 'writable', require: 'readonly' },
+        },
+    },
+    {
         // Browser-driving integration test: ESM, Node globals, not run by CI.
         files: ['test/integration/**/*.mjs'],
         languageOptions: {

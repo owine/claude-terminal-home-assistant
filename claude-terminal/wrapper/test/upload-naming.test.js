@@ -5,6 +5,7 @@ const {
     uploadFilename,
     isAllowedImageMime,
     EXTENSION_FOR_MIME,
+    IMAGE_MAX_BYTES,
 } = require('../upload-naming.js');
 
 let passed = 0;
@@ -109,6 +110,12 @@ test('accepts exactly the mimetypes that have an extension', () => {
     assert.strictEqual(isAllowedImageMime('text/html'), false);
     assert.strictEqual(isAllowedImageMime('toString'), false);
     assert.strictEqual(isAllowedImageMime(undefined), false);
+});
+
+// The image upload's limit, named so the terminal's routing
+// (public/upload-client.js) can hold the same number.
+test('IMAGE_MAX_BYTES is 10 MB', () => {
+    assert.strictEqual(IMAGE_MAX_BYTES, 10 * 1024 * 1024);
 });
 
 console.log(`\n${passed} passed`);

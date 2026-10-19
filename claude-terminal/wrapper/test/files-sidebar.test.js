@@ -69,6 +69,27 @@ test('bash reads every quoted path back as the original, as one word', { skip: !
     }
 });
 
+// Only a word that starts with '/' is safe as it is. zsh's EQUALS option
+// expands a leading '=' (=ls is /bin/ls), and a leading '%' or '-' means a
+// job or an option to the command before it.
+const LEADING = ['=ls', '%x', '-rf'];
+
+test('a word that does not start with / is quoted', () => {
+    assert.deepStrictEqual(LEADING.map(shellQuote), ["'=ls'", "'%x'", "'-rf'"]);
+});
+
+let zsh = null;
+try { execFileSync('zsh', ['-c', 'true']); zsh = 'zsh'; } catch { /* no zsh */ }
+
+for (const [name, shell] of [['bash', bash], ['zsh', zsh]]) {
+    test(`${name} reads a word with a leading = % or - back as itself`, { skip: !shell && `${name} not available` }, () => {
+        for (const p of LEADING) {
+            const out = execFileSync(shell, ['-c', `set -- ${shellQuote(p)}; printf '%s|%s' "$#" "$1"`]).toString();
+            assert.strictEqual(out, `1|${p}`, JSON.stringify(p));
+        }
+    });
+}
+
 test('formatSize', () => {
     assert.strictEqual(formatSize(0), '0 B');
     assert.strictEqual(formatSize(2048), '2.0 KB');

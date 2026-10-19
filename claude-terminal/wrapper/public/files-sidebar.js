@@ -5,8 +5,10 @@
 // harness (module.exports). The DOM wiring is files-sidebar-ui.js.
 (function (root) {
     // Characters a POSIX shell gives no special meaning anywhere in a word that
-    // starts with '/'. A path made only of these is typed as-is.
-    const SAFE_WORD = /^[A-Za-z0-9_/.,:@%+=-]+$/;
+    // starts with '/'. A path made only of these, '/' first, is typed as-is.
+    // The leading '/' is required: zsh's EQUALS option expands a leading '='
+    // (=ls is /bin/ls), and a leading '-' or '%' is an option or a job.
+    const SAFE_WORD = /^\/[A-Za-z0-9_/.,:@%+=-]*$/;
     // C0 and C1 controls and DEL. Typed raw, these would be keystrokes (a
     // newline is Enter) or escape sequences when echoed back.
     // eslint-disable-next-line no-control-regex

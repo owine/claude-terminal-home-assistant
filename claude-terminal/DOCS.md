@@ -209,7 +209,7 @@ mapping cannot be disabled without forking the add-on.
 | `tmux_mouse_mode` | `true` | Mouse reporting: the wheel scrolls and a drag selects. Set `false` to disable it entirely (the wheel then sends arrow keys to full-screen apps). Flip it live with **Prefix + m**. **Changed in 2.7.3** — this defaulted to `false` before, so if you never set it, the mouse became active on upgrade |
 | `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
 | `image_retention_days` | `30` | Pasted and dropped images older than this many days are deleted at startup. Only the add-on's own uploads (`pasted-*` in `/data/images`) are touched. `0` keeps them forever. `/data` is included in every Home Assistant backup, so this also bounds backup growth. Caches and the Claude binary are always left out of backups; after a restore the add-on reinstalls the Claude version bundled with the image, and Claude updates itself again from there |
-| `upload_max_mb` | `25` | Largest file, in megabytes, that the Files sidebar uploads into `/config`, from 1 to at most 1024. Pasted and dropped images keep their own 10 MB limit. See Uploads under Files Sidebar |
+| `upload_max_mb` | `25` | Largest file, in megabytes, uploaded into `/config`, from 1 to at most 1024: from the Files sidebar, and from the terminal (📎, paste, drop) for everything but small images, which go to `/data/images` with their own 10 MB limit. See Uploads under Files Sidebar, and Uploading Files from the Terminal |
 | `upload_retention_days` | `30` | Files in the sidebar's upload inbox, `/config/uploads`, last modified more than this many days ago are deleted at startup: every file at the inbox's top level, whatever its name and whoever put it there. Folders and symlinks in it are never removed. From 0 to at most 36500 (100 years); `0` keeps them forever. A folder you chose with **Upload here** is never swept. See Uploads under Files Sidebar |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |
@@ -321,7 +321,7 @@ The terminal starts directly in your `/config` directory, giving you immediate a
 - **Menu Alias**: Type `menu` from bash to return to session picker
 - **Auto-Launching**: Claude starts automatically when you open the terminal (configurable)
 - **Claude AI**: Access Claude's AI capabilities for programming, troubleshooting and more
-- **Image Paste Support**: Paste images (Ctrl+V), drag-drop, or upload for Claude analysis
+- **File Uploads from the Terminal**: Paste (Ctrl+V), drop or pick (📎) any file, and its path is typed at the prompt for Claude
 - **Files Sidebar**: Browse, preview and download files in `/config` (folders as a zip), see recently changed files, and run Home Assistant's configuration check
 - **Direct Config Access**: Terminal starts in `/config` for immediate access to all Home Assistant files
 - **Simple Setup**: Uses OAuth for easy authentication
@@ -425,98 +425,65 @@ When your network is unavailable, the app shows a branded offline page with a re
 
 ### Enhanced Features
 
-#### Image Paste Support
+#### Uploading Files from the Terminal
 
-Claude Terminal Prowine supports pasting and uploading images directly in the web interface for analysis, OCR, or any other image-related tasks.
+Any file can go from your device to the add-on straight from the terminal,
+and its path is typed at the prompt for you to use with Claude:
 
-##### Usage Methods
+- **Paste** (Ctrl+V, or Cmd+V on a Mac) a screenshot, a copied image or a
+  copied file, with the terminal or anything else on the page focused. A
+  clipboard that also holds plain text pastes that text instead (copied
+  spreadsheet cells, for example, come with a picture of themselves).
+- **Drop** files anywhere on the terminal.
+- **📎** in the header opens a file picker; pick one file or several.
 
-**Method 1: Paste (Keyboard)**
-1. Copy an image to your clipboard (from screenshot, browser, etc.)
-2. Focus on the terminal window
-3. Press **Ctrl+V** (or **Cmd+V** on Mac)
-4. The image uploads automatically
-5. Use the path with Claude: `analyze /data/images/pasted-123456.png`
+Where a file goes depends on what it is:
 
-**Method 2: Drag and Drop**
-1. Drag an image file from your file manager
-2. Drop it anywhere on the terminal window
-3. The image uploads automatically
-4. Use the file path shown in the status bar
+| File | Goes to | Limit |
+|---|---|---|
+| A PNG, JPEG, GIF, WebP or SVG image of at most 10 MB | `/data/images/`, under a name the add-on picks (`pasted-<time>-<random>.png`) | 10 MB |
+| Anything else: other types, HEIC photos, bigger images | The upload inbox, `/config/uploads/`, under its own name | `upload_max_mb` (25 MB unless you change it) |
 
-**Method 3: Upload Button**
-1. Click the **📎 Upload Image** button in the top right
-2. Select an image file from the file picker
-3. The image uploads automatically
+Paths are typed at the prompt without pressing Enter, so you can add to the
+command before you run it. A name with spaces or other characters the shell
+would read is quoted (`'/config/uploads/my report.pdf'`). Several files are
+typed in the order they came, separated by spaces. If the terminal cannot take
+the text (still loading, say), the paths are copied to the clipboard instead,
+or shown in the status bar if that fails too. Folders cannot be dropped: drop
+the files inside them.
 
-##### File Storage
+Progress and refusals show in the status bar beside the header buttons. A
+refusal says why: a file over `upload_max_mb` is refused before any of it is
+sent, and the message names the limit. It stays until the next message.
+Uploads are limited in rate: when the add-on answers "too many uploads", the
+batch stops at that file, and the status bar says how many were not uploaded.
+Wait a minute and send those again.
 
-- **Location**: `/data/images/`
-- **Persistence**: Images survive container restarts
-- **Naming**: Files are automatically named `pasted-<timestamp>.<ext>`
-- **Formats**: JPEG, PNG, GIF, WebP, and SVG
-- **Size Limit**: 10MB per file
-
-##### Examples
+Both places are cleared at startup. `/data/images/` loses the add-on's own
+`pasted-*` files once they are older than `image_retention_days`. **The inbox
+is disposable:** every file at its top level is deleted once it is older than
+`upload_retention_days`, whoever put it there (see Uploads under Files
+Sidebar). A name already taken in the inbox gets a number (`report (1).pdf`);
+nothing is overwritten. Move files you want to keep somewhere else in
+`/config`.
 
 ```bash
-# Analyze an image
-analyze /data/images/pasted-1732374829123.png
-
-# Extract text from screenshot (OCR)
-extract the text from /data/images/pasted-1732374829123.png
-
-# Compare images
-compare /data/images/pasted-123.png and /data/images/pasted-456.png
+# Use a typed path with Claude
+analyze /data/images/pasted-1732374829123-1a2b3c4d.png
+summarise '/config/uploads/my report.pdf'
 ```
-
-##### Technical Details
-
-**Architecture:**
-- Node.js image upload service runs on port 7680 (main web interface)
-- ttyd terminal on port 7681, bound to the container's loopback only and reached through the wrapper
-- Handles uploads via paste, drag-drop, or button click
-- Saves to `/data/images/` (persistent storage)
-
-**Dependencies:**
-- Express v5.2.1 (HTTP server with security improvements)
-- Multer v2.3.0 (multipart/form-data handling, fixes critical CVEs)
-- ARM-compatible for Raspberry Pi
-
-**Resource Usage:**
-- Memory: ~10-15MB for Node.js service
-- CPU: Minimal (only active during uploads)
-- Storage: `/data/images/`
-
-**Security:**
-- MIME type validation (images only)
-- 10MB file size limit
-- Isolated storage directory
-- No execution permissions on uploaded files
 
 ##### Troubleshooting
 
-**Image not uploading:**
-- Check browser console for errors (F12)
-- Verify file is an image (JPEG, PNG, GIF, WebP, SVG)
-- Ensure file is under 10MB
-- Check app logs
+**A file did not upload:** the status bar says why. The add-on's log may say
+more; check that the disk is not full (`df -h /data /config`).
 
-**Can't see uploaded images:**
-```bash
-ls -la /data/images/          # List images
-ls -ld /data/images/          # Check permissions
-df -h /data                   # Check disk space
-```
+**A paste uploads nothing, or a copied file pastes as its name:** the
+clipboard holds plain text as well as the file, and plain text wins (see
+above). Some browsers put a copied file's name on the clipboard that way.
+Drop the file or pick it with 📎 (Upload file) instead.
 
-**Paste not working:**
-- Click on page first to focus it
-- Check browser clipboard permissions
-- Try drag-drop or upload button instead
-
-**Browser Compatibility:**
-- ✅ Chrome/Edge 90+, Firefox 90+, Safari 14+
-- ⚠️ Older browsers: use drag-drop or upload button
+**Browsers:** tested in Chromium-based browsers and Safari (WebKit).
 
 #### Files Sidebar
 
@@ -609,7 +576,7 @@ In the Home Assistant Companion app, the app's web view may preview a download
 instead of saving it. If a download does not save, open Home Assistant in a
 browser and download it from there.
 
-**Uploads.** Files go into `/config` from your device in three ways:
+**Uploads.** Files go into `/config` from your device in these ways:
 
 - **⬆️ Upload** in the sidebar's toolbar puts them in the inbox,
   `/config/uploads`, which is made the first time it is needed. A name that is
@@ -624,6 +591,9 @@ browser and download it from there.
 - **Dropping files** on a folder row means Upload here; dropping them anywhere
   else on the sidebar sends them to the inbox. Folders themselves cannot be
   dropped: drop the files inside them.
+- **From the terminal**, 📎, a paste or a drop puts anything but a small
+  image in the inbox and types its path at the prompt (see Uploading Files
+  from the Terminal).
 
 You can pick or drop several files at once; they upload one after another, a
 progress bar shows how far each has got, and a question about a taken name
@@ -632,8 +602,8 @@ in the sidebar; if you are typing in the terminal, or have a preview open, it
 waits in the sidebar and the notice asks you to answer there, so a keystroke
 meant for the terminal never answers it. Once they are in, the last file is
 shown in the tree. Its preview opens only if you are still in the sidebar, and
-not when any file in the batch was refused. Nothing is typed into the
-terminal. A file whose name marks it as protected (a certificate such as
+not when any file in the batch was refused. A sidebar upload types nothing
+into the terminal. A file whose name marks it as protected (a certificate such as
 `fullchain.pem`, say) is shown in the tree but not opened unless **Show
 protected files** is on.
 
