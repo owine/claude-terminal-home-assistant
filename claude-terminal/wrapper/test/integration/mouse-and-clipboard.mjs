@@ -821,6 +821,37 @@ async function checkZipMenu(browser, url) {
         await context.unroute(isFixturePreflight);
         await context.unroute(isOtherPreflight);
 
+        // Nor may an older zip's late refusal hide a newer zip's good news.
+        // Only progress lines ("Preparing …") move the notice on; a refusal
+        // used to as well, so the newer zip's "Downloading …", arriving
+        // after it, was dropped while its download started with no word.
+        // The older one is faked; the newer one is real, held, then let go.
+        const [refusalGate, releaseRefusal] = gateOf();
+        const [planGate, releasePlan] = gateOf();
+        await context.route(isFixturePreflight, async (route) => {
+            await refusalGate;
+            await route.fulfill({ status: 413, contentType: 'application/json',
+                body: JSON.stringify({ error: 'This folder holds 300 MB, over the 200 MB zip limit. Largest: late.bin (300 MB)' }) });
+        });
+        await context.route(isOtherPreflight, async (route) => {
+            await planGate;
+            await route.continue().catch(() => {});
+        });
+        await menuButton(fixtureName).click();
+        await zipItem.click();
+        await menuButton(OTHER).click();
+        await zipBudget(2);
+        await zipItem.click();
+        releaseRefusal();
+        check('fixture: the older zip\'s late refusal shows',
+            await waitFor(async () => /late\.bin/.test((await notice()).text)), true);
+        const newer = await expectDownload(page, async () => { releasePlan(); });
+        check('fixture: the newer zip downloads', newer && newer.suggestedFilename(), `${OTHER}.zip`);
+        check('an older zip\'s late refusal does not hide a newer zip\'s Downloading line',
+            await waitFor(async () => /^Downloading ctp-other\.zip/.test((await notice()).text)), true);
+        await context.unroute(isFixturePreflight);
+        await context.unroute(isOtherPreflight);
+
         // Positive control for every refusal above, driven by the keyboard
         // alone, with its preflight held back so that more can happen while
         // it is out:
@@ -871,8 +902,9 @@ async function checkZipMenu(browser, url) {
             preflightsOf(SIDEBAR_DIR) - fixturePreflights, 1);
         check('a late answer does not overwrite a newer zip\'s notice', (await notice()).text,
             (v) => /^Downloading ctp-other\.zip/.test(v));
+        // ctp-other twice: once behind the late refusal, once by keyboard.
         check('no refusal (404, protected, 429, network, not a plan) started a download, nor a second zip',
-            zipPaths(since).sort(), (v) => JSON.stringify(v) === JSON.stringify([SIDEBAR_DIR, `${SIDEBAR_DIR}/${OTHER}`]));
+            zipPaths(since).sort(), (v) => JSON.stringify(v) === JSON.stringify([SIDEBAR_DIR, `${SIDEBAR_DIR}/${OTHER}`, `${SIDEBAR_DIR}/${OTHER}`]));
         check('the notice can be dismissed', await (async () => {
             await wrapper.locator('#files-notice-close').click();
             return (await notice()).text;

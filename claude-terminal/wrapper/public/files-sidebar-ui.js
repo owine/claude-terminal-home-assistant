@@ -248,20 +248,33 @@
         }
 
         // kind: '' (news), 'busy' (try again shortly) or 'error'.
-        // Returns the notice's generation, bumped by every showNotice
-        // (a dismissal included), for showNoticeIf.
-        let noticeGen = 0;
-        function showNotice(text, kind = '') {
+        function setNotice(text, kind) {
             noticeText.textContent = text;
             notice.className = kind;
             notice.hidden = !text;
+        }
+        // The notice's generation. Only what starts something new advances
+        // it: a progress line ("Preparing …") and a dismissal. An
+        // operation's later lines go through showNoticeIf with the
+        // generation its progress line got, so an older zip's news cannot
+        // overwrite a newer one's.
+        let noticeGen = 0;
+        function showProgress(text) {
+            setNotice(text, '');
             return ++noticeGen;
         }
-        // Only if nothing has replaced notice `gen` since: an older zip's
-        // good news must not overwrite a newer one's. Refusals do not
-        // use it; they always show.
+        // Refusals and results always show, and leave the generation alone:
+        // an older zip's late refusal used to take it, and with it the
+        // newer zip's "Downloading …" line that came after.
+        function showNotice(text, kind = '') {
+            setNotice(text, kind);
+        }
         function showNoticeIf(gen, text, kind = '') {
-            if (gen === noticeGen) showNotice(text, kind);
+            if (gen === noticeGen) setNotice(text, kind);
+        }
+        function dismissNotice() {
+            setNotice('', '');
+            ++noticeGen;
         }
 
         // What a refused zip preflight says in the notice. 429 is the
@@ -304,7 +317,7 @@
             if (zipsPreparing.has(entry.path)) return;
             zipsPreparing.add(entry.path);
             const zipName = entry.name + '.zip';
-            const gen = showNotice('Preparing ' + zipName + '…');
+            const gen = showProgress('Preparing ' + zipName + '…');
             let plan;
             try {
                 plan = await getJson(helpers.downloadUrl(entry.path, { zip: true, check: true }));
@@ -644,7 +657,7 @@
             closeMenu();
         });
         window.addEventListener('blur', () => closeMenu({ restoreFocus: false }));
-        document.getElementById('files-notice-close').addEventListener('click', () => showNotice(''));
+        document.getElementById('files-notice-close').addEventListener('click', dismissNotice);
 
         // previewPath is read at click time: a blanked preview has none,
         // and a protected file never goes out with the toggle off (by
