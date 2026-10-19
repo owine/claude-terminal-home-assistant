@@ -962,6 +962,49 @@ test('upload: a record that cannot be written refuses the upload before any byte
     assert.deepStrictEqual(partsUnder(), []);
 });
 
+test('upload: a part made but never identified stays in the record, and the next start removes it', async () => {
+    // openPart made the file (O_EXCL), then the stat that names it by inode
+    // failed. Without the inode nothing may delete it by its path now, so
+    // it stays recorded, emptied, for the next start's sweep - never
+    // dropped from the record, which would leave it hidden for good.
+    const own = path.join(data, 'parts-unidentified');
+    fs.writeFileSync(own, '[]\n');
+    const ownRecord = createPartRecord({ file: own, root, log: () => {} });
+    const name = '.ctp-upload-00000000000000bb.part';
+    const part = path.join(root, 'blueprints', name);
+    let partIno = null;
+    const logged = [];
+    const blind = createUploads({
+        api, record: ownRecord, partName: () => name,
+        openPart: async (p) => {
+            const handle = await fs.promises.open(p, 'wx', 0o644);
+            partIno = (await handle.stat()).ino;
+            await handle.write('stale');   // emptied through the descriptor, all the same
+            return {
+                stat: async () => { throw Object.assign(new Error('simulated EIO'), { code: 'EIO' }); },
+                truncate: (n) => handle.truncate(n),
+                close: () => handle.close(),
+            };
+        },
+    });
+    await withServer({ uploads: blind, log: (m) => logged.push(m) }, async (url) => {
+        const res = await post(url, { name: 'blind.txt', dest: 'blueprints' }, 'x');
+        assert.strictEqual(res.status, 500);
+        await res.arrayBuffer();
+    });
+    assert.ok(partIno !== null, 'positive control: the part was made');
+    assert.ok(await until(() => openFds(partIno) === 0), 'descriptor left open');
+    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'blind.txt')), false);
+    assert.strictEqual(fs.statSync(part).size, 0);
+    assert.deepStrictEqual(ownRecord.list(), [part]);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(own, 'utf8')), [part]);
+    assert.ok(logged.some((m) => m.includes(`${part} was made but not identified`)), logged.join('\n'));
+    const next = createPartRecord({ file: own, root, log: () => {} });
+    assert.strictEqual(await next.start(), 1);
+    assert.strictEqual(fs.existsSync(part), false);
+    assert.deepStrictEqual(partsUnder(), []);
+});
+
 test('routes: an unexpected error is a 500 JSON, not a thrown exception', async () => {
     const escapes = [];
     const broken = { plan: async () => { throw new TypeError('bug'); }, maxBytes: 1024, tooBig: () => new Error('x') };

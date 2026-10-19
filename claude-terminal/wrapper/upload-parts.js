@@ -35,12 +35,14 @@ async function lstatOrNull(p) {
  * add() rejects when the record cannot be written, and the upload is then
  * refused: a part nobody recorded could outlive a crash forever.
  *
- * `open` is a test seam for the temp file's open.
+ * `open` and `unlink` are test seams: the temp file's open, and the sweep's
+ * delete.
  */
-function createPartRecord({ file, root, log = console.error, open = fsp.open }) {
+function createPartRecord({ file, root, log = console.error, open = fsp.open, unlink = fsp.unlink }) {
     const parts = new Set();
-    // A record start() could not sweep (its root was not there yet): carried
-    // into every write, so the next start still finds it.
+    // What start() could not sweep - the whole record, its root not there
+    // yet, or the parts it could not judge (judge): carried into every
+    // write, so the next start still finds them.
     let carried = [];
     let chain = Promise.resolve();
     const queue = (job) => {
@@ -63,22 +65,29 @@ function createPartRecord({ file, root, log = console.error, open = fsp.open }) 
         await fsp.rename(tmp, file);
     };
 
-    // Deleted only when it is still a regular file named like a part, in a
-    // folder that is still a real folder inside the root. Nothing else is
-    // searched: what the record does not name is never touched.
-    async function removable(p, rootReal) {
-        if (typeof p !== 'string' || !path.isAbsolute(p) || path.resolve(p) !== p) return false;
-        if (!PARTIAL_FILE.test(path.basename(p))) return false;
+    // What the sweep does with a recorded path: 'remove' it when it is still
+    // a regular file named like a part, in a folder that is still a real
+    // folder inside the root. Nothing else is searched: what the record does
+    // not name is never touched. 'keep' it named, for a later start, when a
+    // part may be there but cannot be judged now: /config resolving
+    // somewhere else this time, a folder swapped for a link, a folder that
+    // cannot be read. 'drop' it when it never could be removed (not a part's
+    // path) or nothing is there.
+    async function judge(p, rootReal) {
+        if (typeof p !== 'string' || !path.isAbsolute(p) || path.resolve(p) !== p) return 'drop';
+        if (!PARTIAL_FILE.test(path.basename(p))) return 'drop';
         const dir = path.dirname(p);
         let realDir;
         try {
             realDir = await fsp.realpath(dir);
-        } catch {
-            return false;
+        } catch (err) {
+            return err.code === 'ENOENT' || err.code === 'ENOTDIR' ? 'drop' : 'keep';
         }
-        if (realDir !== dir || !inside(rootReal, dir)) return false;
         const st = await lstatOrNull(p);
-        return Boolean(st && st.isFile());
+        if (!st) return 'drop';
+        if (realDir !== dir || !inside(rootReal, dir)) return 'keep';
+        // A link or a folder in the part's place is not the part.
+        return st.isFile() ? 'remove' : 'drop';
     }
 
     async function sweep() {
@@ -100,15 +109,27 @@ function createPartRecord({ file, root, log = console.error, open = fsp.open }) 
             return 0;
         }
         let removed = 0;
+        const kept = [];
         for (const p of Array.isArray(listed) ? listed : []) {
-            if (!(await removable(p, rootReal))) continue;
+            const verdict = await judge(p, rootReal);
+            if (verdict === 'keep') kept.push(p);
+            if (verdict !== 'remove') continue;
             try {
-                await fsp.unlink(p);
+                await unlink(p);
                 removed++;
-            } catch { /* gone meanwhile */ }
+            } catch (err) {
+                if (err.code === 'ENOENT') continue;   // gone meanwhile
+                log(`Upload parts: could not remove ${p}: ${err.message}`);
+                kept.push(p);
+            }
         }
+        // Carried through every write, as for a root not there yet.
+        carried = kept;
         await write([]);
         if (removed) log(`Upload parts: removed ${removed} left by an earlier run`);
+        if (kept.length) {
+            log(`Upload parts: ${kept.length} left in the record, not removable now (outside ${root}, or not in a real folder); tried again at the next start`);
+        }
         return removed;
     }
 

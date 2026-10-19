@@ -575,7 +575,15 @@ function createUploads({
             // rename it is gone already; after a failure it is the emptied
             // file. Removed by its path only while that path still names it.
             if (id && await samePart(part, id).catch(() => false)) await fsp.unlink(part).catch(() => {});
-            await record.remove(part).catch((err) => log(`Upload parts: record not updated: ${err.message}`));
+            if (handle && !id) {
+                // Made (O_EXCL) but never identified: its stat failed. Not
+                // deleted by its path alone, which may name another file by
+                // now; left in the record, emptied above, for the next
+                // start's sweep, which deletes it under that sweep's checks.
+                log(`Upload parts: ${part} was made but not identified; left for the next start to remove`);
+            } else {
+                await record.remove(part).catch((err) => log(`Upload parts: record not updated: ${err.message}`));
+            }
         }
     }
 
