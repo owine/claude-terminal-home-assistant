@@ -1171,6 +1171,7 @@ async function checkUploads(browser, url) {
             text: document.getElementById('files-notice').hidden ? '' : document.getElementById('files-notice-text').textContent,
             kind: document.getElementById('files-notice').className,
             bar: !document.getElementById('files-notice-progress').hidden,
+            close: !document.getElementById('files-notice-close').hidden,
         })`).then(JSON.parse);
         const selected = () => wrapper.evaluate('document.querySelector("#files-list .files-row.selected")?.dataset.path ?? null');
         const closePreview = async () => {
@@ -1442,6 +1443,8 @@ async function checkUploads(browser, url) {
                 const n = await notice();
                 return n.text === 'Uploading slow.bin…' && n.bar;
             }), true);
+        // Dismissing cannot cancel an upload, so it is not offered then.
+        check('and no dismiss button while it runs, which would look like cancel', (await notice()).close, false);
         // Meanwhile the user goes back to the terminal: the file is
         // revealed when it is in, but no preview springs up over the
         // terminal they are typing in.
@@ -1453,6 +1456,7 @@ async function checkUploads(browser, url) {
                 return n.text === `Uploaded slow.bin to ${INBOX_DIR}.` && !n.bar;
             }), true);
         check('the bar moved before it went', await wrapper.evaluate('window.ctpBarMax'), (v) => v > 0);
+        check('and the result can be dismissed again', await waitFor(async () => (await notice()).close), true);
         check('with focus back in the terminal, the file is revealed but not previewed',
             { selected: await selected(), preview: (await previewState(wrapper)).active,
                 focus: await wrapper.evaluate('document.activeElement && document.activeElement.id') },

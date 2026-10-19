@@ -63,6 +63,7 @@
         const notice = document.getElementById('files-notice');
         const noticeText = document.getElementById('files-notice-text');
         const noticeProgress = document.getElementById('files-notice-progress');
+        const noticeClose = document.getElementById('files-notice-close');
         const uploadBtn = document.getElementById('files-upload-btn');
         const uploadInput = document.getElementById('files-upload-input');
         const prompt = document.getElementById('files-prompt');
@@ -706,25 +707,38 @@
             if (entry && !problems.length && stillInSidebar()) openPreview(entry.path, entry.sensitive);
         }
 
+        // The notice's dismiss button goes while a batch runs: dismissing
+        // cannot cancel an upload (not offered yet), and an × beside
+        // "Uploading …" reads as one. Focus on it moves to Upload.
+        function setUploading(on) {
+            if (on && document.activeElement === noticeClose) uploadBtn.focus({ preventScroll: true });
+            noticeClose.hidden = on;
+        }
+
         async function runBatch(files, dest) {
             const results = [];
             const problems = [];
             const skipped = [];
             let started = 0;
+            setUploading(true);
             try {
-                for (let i = 0; i < files.length; i++) {
-                    filesWaiting--;
-                    started++;
-                    const counter = files.length > 1 ? ' (' + (i + 1) + ' of ' + files.length + ')' : '';
-                    const done = await uploadOne(files[i], dest, counter);
-                    if (done.result) results.push(done.result);
-                    else if (done.problem) problems.push(done.problem);
-                    else skipped.push(done.skipped);
+                try {
+                    for (let i = 0; i < files.length; i++) {
+                        filesWaiting--;
+                        started++;
+                        const counter = files.length > 1 ? ' (' + (i + 1) + ' of ' + files.length + ')' : '';
+                        const done = await uploadOne(files[i], dest, counter);
+                        if (done.result) results.push(done.result);
+                        else if (done.problem) problems.push(done.problem);
+                        else skipped.push(done.skipped);
+                    }
+                } finally {
+                    filesWaiting -= files.length - started;   // what a failure left unstarted
                 }
+                await finishBatch(results, problems, skipped);
             } finally {
-                filesWaiting -= files.length - started;   // what a failure left unstarted
+                setUploading(false);
             }
-            await finishBatch(results, problems, skipped);
         }
 
         // Batches queue behind each other, so their prompts come one at a
