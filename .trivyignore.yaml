@@ -22,12 +22,13 @@ vulnerabilities:
   # Go stdlib and x/crypto CVEs in tempio, the templating binary baked into the
   # Home Assistant base image. Not fixable here - tempio is not an apk package and
   # is not recompiled by this add-on; only a new HA base image release can resolve
-  # these. Verified 2026-09-14 against base:3.24 digest 93ef607 - still the digest
+  # these. Verified 2026-10-19 against base:3.24 digest 8fde417 - still the digest
   # the `3.24` tag resolves to upstream, so there is no newer base to bump to.
-  # tempio there is built on go1.26.5 with x/crypto v0.31.0 (confirmed with
-  # `go version -m` on the extracted binary). The stdlib entries below need
-  # go >= 1.26.6; the x/crypto entries need x/crypto >= 0.55.0. Re-scan and prune
-  # when the base image digest moves.
+  # tempio there is built on go1.26.5 with x/crypto v0.31.0 (per the binary's
+  # build info, as Trivy reads it). The stdlib entries need go >= 1.26.9 (the
+  # 2026-10 batch: CVE-2026-78667, -78669, -97031) or >= 1.26.6 (the rest); the
+  # x/crypto entries need x/crypto >= 0.55.0. Re-scan and prune when the base
+  # image digest moves.
   - id: CVE-2025-22869
     paths:
       - "usr/bin/tempio"
@@ -73,14 +74,6 @@ vulnerabilities:
   - id: CVE-2026-56853
     paths:
       - "usr/bin/tempio"
-  # x/crypto/ssh source-address bypass. Trivy flags this at *module* granularity -
-  # it reads `golang.org/x/crypto v0.31.0` out of the build info - but the
-  # vulnerable package is not linked into tempio at all. The only x/crypto packages
-  # embedded in the binary are cryptobyte, bcrypt, blowfish, scrypt and pbkdf2,
-  # pulled in by Masterminds/sprig's password/hash template helpers; `x/crypto/ssh`
-  # appears nowhere (verified 2026-09-14 by grepping package paths out of the
-  # stripped binary - `go tool nm` returns nothing on it, so use `strings`). The fix
-  # landed in x/crypto 0.55.0, which only a base image rebuild can deliver.
   - id: CVE-2026-56854
     paths:
       - "usr/bin/tempio"
@@ -96,74 +89,53 @@ vulnerabilities:
   - id: CVE-2026-56862
     paths:
       - "usr/bin/tempio"
+  - id: CVE-2026-78667
+    paths:
+      - "usr/bin/tempio"
+  - id: CVE-2026-78669
+    paths:
+      - "usr/bin/tempio"
+  - id: CVE-2026-97031
+    paths:
+      - "usr/bin/tempio"
 
   # --- usr/bin/ha (Home Assistant CLI) ---
-  # Go stdlib, x/net and x/text CVEs compiled into the ha-cli binary. We already
-  # pin HA_CLI_VERSION to the latest release (5.3.0). Verified 2026-08-19 that
-  # 5.3.1 is an identical build - same go1.25.12, same x/net 0.55.0, same x/text
-  # 0.37.0 - so bumping the pin fixes none of these. Needs an upstream ha-cli
-  # rebuild on go >= 1.25.13 with x/net >= 0.56.0 and x/text >= 0.39.0.
-  - id: CVE-2026-33818
-    paths:
-      - "usr/bin/ha"
-  - id: CVE-2026-39821
-    paths:
-      - "usr/bin/ha"
+  # Go stdlib, x/net and x/text CVEs compiled into the ha-cli binary. HA_CLI_VERSION
+  # is pinned to 5.5.0, the latest release (2026-09-03), built on go1.26.7 with
+  # x/net 0.55.0 and x/text 0.37.0, so there is nothing to bump to. Needs an
+  # upstream ha-cli rebuild on go >= 1.26.9 with x/net >= 0.60.0 and
+  # x/text >= 0.41.0.
   - id: CVE-2026-46600
+    paths:
+      - "usr/bin/ha"
+  - id: CVE-2026-56851
     paths:
       - "usr/bin/ha"
   - id: CVE-2026-56852
     paths:
       - "usr/bin/ha"
-  - id: CVE-2026-56853
+  - id: CVE-2026-78667
     paths:
       - "usr/bin/ha"
-  - id: CVE-2026-56858
+  - id: CVE-2026-78669
     paths:
       - "usr/bin/ha"
-  - id: CVE-2026-56859
-    paths:
-      - "usr/bin/ha"
-  - id: CVE-2026-56860
-    paths:
-      - "usr/bin/ha"
-  - id: CVE-2026-56862
+  - id: CVE-2026-97031
     paths:
       - "usr/bin/ha"
 
   # --- usr/bin/gh (GitHub CLI) ---
-  # Go stdlib and x/mod CVEs compiled into the gh binary. GH_CLI_VERSION is
-  # pinned to 2.97.0, which is the latest release (published 2026-07-31, before
-  # the Go security batch landed), so there is nothing to bump to. Needs an
-  # upstream cli/cli rebuild on go >= 1.26.6 with x/mod >= 0.40.0.
-  - id: CVE-2026-33818
+  # Go stdlib and x/net CVEs compiled into the gh binary. GH_CLI_VERSION is pinned
+  # to 2.102.0, the latest release (2026-09-30), built on go1.27.1 with x/net
+  # 0.58.0 - before the 2026-10 Go security batch - so there is nothing to bump
+  # to. Needs an upstream cli/cli rebuild on go >= 1.27.2 with x/net >= 0.60.0.
+  - id: CVE-2026-78667
     paths:
       - "usr/bin/gh"
-  - id: CVE-2026-39821
+  - id: CVE-2026-78669
     paths:
       - "usr/bin/gh"
-  - id: CVE-2026-46600
-    paths:
-      - "usr/bin/gh"
-  - id: CVE-2026-56853
-    paths:
-      - "usr/bin/gh"
-  - id: CVE-2026-56858
-    paths:
-      - "usr/bin/gh"
-  - id: CVE-2026-56859
-    paths:
-      - "usr/bin/gh"
-  - id: CVE-2026-56860
-    paths:
-      - "usr/bin/gh"
-  - id: CVE-2026-56862
-    paths:
-      - "usr/bin/gh"
-  - id: CVE-2026-56864
-    paths:
-      - "usr/bin/gh"
-  - id: CVE-2026-56865
+  - id: CVE-2026-97031
     paths:
       - "usr/bin/gh"
 
