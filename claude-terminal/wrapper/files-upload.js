@@ -112,15 +112,20 @@ function sanitizeUploadName(raw, { now = Date.now } = {}) {
 // second (128 kbit/s), and the least time any upload gets.
 const SLOWEST_LINK_BYTES_PER_S = 16000;
 const MIN_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
+// And the most: past about 660 MB a bigger cap no longer stretches it, so
+// no request (an upload or anything else; the timeout is server-wide) can
+// hold a connection open for days.
+const MAX_REQUEST_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 
 /**
  * How long a request may take to arrive whole, for server.requestTimeout:
  * 30 minutes, or longer when the cap is big enough that a file at the cap
  * would not fit through a 128 kbit/s link in that time (Node answers 408 to
- * a request still arriving at the timeout).
+ * a request still arriving at the timeout), but never over 12 hours.
  */
 function uploadRequestTimeoutMs(maxBytes) {
-    return Math.max(MIN_REQUEST_TIMEOUT_MS, Math.ceil(maxBytes / SLOWEST_LINK_BYTES_PER_S) * 1000);
+    const atSlowestLink = Math.ceil(maxBytes / SLOWEST_LINK_BYTES_PER_S) * 1000;
+    return Math.min(MAX_REQUEST_TIMEOUT_MS, Math.max(MIN_REQUEST_TIMEOUT_MS, atSlowestLink));
 }
 
 /** `name (n).ext`: the suffix goes before the last extension. */

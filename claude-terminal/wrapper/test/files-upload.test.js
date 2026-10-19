@@ -120,6 +120,15 @@ test('the request timeout fits a file at the cap through 128 kbit/s, and is neve
     assert.ok(uploadRequestTimeoutMs(500 * MB) > 9 * 3600 * 1000);
 });
 
+test('the request timeout is never over 12 hours, however big the cap', () => {
+    const MB = 1024 * 1024;
+    const H12 = 12 * 3600 * 1000;
+    assert.strictEqual(uploadRequestTimeoutMs(9999999 * MB), H12);   // the largest UPLOAD_MAX_MB taken
+    assert.strictEqual(uploadRequestTimeoutMs(1000 * MB), H12);      // 18.2 h at 128 kbit/s
+    // positive control: a cap just under the ceiling keeps its own time
+    assert.strictEqual(uploadRequestTimeoutMs(659 * MB), 43189 * 1000);
+});
+
 test('withSuffix numbers before the last extension', () => {
     assert.strictEqual(withSuffix('a b.txt', 1), 'a b (1).txt');
     assert.strictEqual(withSuffix('archive.tar.gz', 2), 'archive.tar (2).gz');
