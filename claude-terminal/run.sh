@@ -720,6 +720,15 @@ export_login_notification() {
     fi
 }
 
+# Hand the upload_max_mb option (whole megabytes) to the wrapper, which caps
+# Files sidebar uploads with it (wrapper/files-upload.js). Passed on as read:
+# the wrapper falls back to 25 for anything but a positive whole number,
+# including the "" bashio returns when the Supervisor cannot be reached.
+export_upload_max_mb() {
+    UPLOAD_MAX_MB=$(bashio::config 'upload_max_mb' '25')
+    export UPLOAD_MAX_MB
+}
+
 # Directory the terminal session starts in.
 #
 # Defaults to /config, which is what the container already used: the Dockerfile
@@ -784,30 +793,29 @@ get_claude_launch_command() {
 }
 
 
-# prune_uploaded_images [dir]
+# prune_old_files <dir> <option> <name pattern> <what>
 #
-# Delete pasted/dropped images older than the image_retention_days option
-# (default 30; 0 keeps them all). Nothing else ever removed them, and /data is
-# in every Home Assistant backup, so the folder grew those without bound.
-#
-# Only the wrapper's own `pasted-*` files are candidates - anything a user put
-# in the folder is left alone. A value that is not a whole number deletes
-# nothing: guessing wrong here is the one mistake that cannot be undone.
-prune_uploaded_images() {
-    local dir="${1:-/data/images}"
+# Delete the regular files at the top level of <dir> whose names match
+# <pattern> and that are older than <option> days (default 30; 0 keeps them
+# all). Never a subfolder, nor anything in one, nor a symlink: `find -type f`
+# does not match a link, and without -L it is not followed. A value that is
+# not a whole number deletes nothing: guessing wrong here is the one mistake
+# that cannot be undone.
+prune_old_files() {
+    local dir="$1" option="$2" pattern="$3" what="$4"
     local days
-    days=$(bashio::config 'image_retention_days' '30')
+    days=$(bashio::config "$option" '30')
 
     # bashio::config yields "" rather than the default when the Supervisor API
     # is unreachable. For every other option the safe reading of a missing
     # value is its default; for a deletion it is "delete nothing".
     case "$days" in
         '')
-            bashio::log.info "image_retention_days could not be read; keeping all uploads this boot"
+            bashio::log.info "${option} could not be read; keeping all ${what} this boot"
             return 0
             ;;
         *[!0-9]*)
-            bashio::log.warning "image_retention_days is not a whole number (${days}); keeping all uploads"
+            bashio::log.warning "${option} is not a whole number (${days}); keeping all ${what}"
             return 0
             ;;
     esac
@@ -816,12 +824,52 @@ prune_uploaded_images() {
     fi
 
     # -mmin rather than -mtime: -mtime counts whole 24h periods and rounds,
-    # which makes "older than N days" off by up to a day.
-    local removed
-    removed=$(find "$dir" -maxdepth 1 -type f -name 'pasted-*' -mmin +$((days * 1440)) -print -delete | wc -l | tr -d ' ')
-    if [ "$removed" -gt 0 ]; then
-        bashio::log.info "Uploaded images: removed ${removed} older than ${days} day(s) from ${dir}"
+    # which makes "older than N days" off by up to a day. -delete before
+    # -print, so GNU find counts only what it deleted (busybox counts what it
+    # tried). A find that fails - a folder it cannot read, an I/O error - must
+    # not take startup down under bashio's errexit and pipefail (the inbox is
+    # the user's folder): it is logged, and startup goes on.
+    local removed status=0
+    removed=$(find "$dir" -maxdepth 1 -type f -name "$pattern" -mmin +$((days * 1440)) -delete -print | wc -l | tr -d ' ') || status=$?
+    if [ "$status" -ne 0 ]; then
+        bashio::log.warning "${what}: could not sweep all of ${dir} (find exited ${status}); continuing"
     fi
+    if [ "$removed" -gt 0 ]; then
+        bashio::log.info "${what}: removed ${removed} older than ${days} day(s) from ${dir}"
+    fi
+}
+
+# prune_uploaded_images [dir]
+#
+# Delete pasted/dropped images older than the image_retention_days option.
+# Nothing else ever removed them, and /data is in every Home Assistant backup,
+# so the folder grew those without bound. Only the wrapper's own `pasted-*`
+# files are candidates - anything a user put in the folder is left alone.
+prune_uploaded_images() {
+    prune_old_files "${1:-/data/images}" image_retention_days 'pasted-*' "uploaded images"
+}
+
+# prune_upload_inbox [dir]
+#
+# Delete the Files sidebar inbox's files older than upload_retention_days.
+# The inbox is disposable by contract (DOCS.md): every regular file at its top
+# level goes once it is old enough, whatever its name and whoever put it
+# there. A folder chosen with "Upload here" is never swept.
+#
+# An inbox that is a symlink, or not a folder at all, is left alone and said
+# so: `[ -d ]` follows a link, so without this a symlinked inbox would pass
+# for one, and its target be swept.
+prune_upload_inbox() {
+    local dir="${1:-/config/uploads}"
+    if [ -L "$dir" ]; then
+        bashio::log.warning "${dir} is a symlink, not a plain folder; not sweeping it (upload_retention_days)"
+        return 0
+    fi
+    if [ -e "$dir" ] && [ ! -d "$dir" ]; then
+        bashio::log.warning "${dir} is not a folder; not sweeping it (upload_retention_days)"
+        return 0
+    fi
+    prune_old_files "$dir" upload_retention_days '*' "upload inbox files"
 }
 
 # Start wrapper service (UI, terminal proxy, image uploads, clipboard delivery)
@@ -1050,7 +1098,9 @@ main() {
     init_environment
     export_oauth_token
     export_login_notification
+    export_upload_max_mb
     prune_uploaded_images
+    prune_upload_inbox
 
     # Serve the UI before anything that reaches the network. Package installs,
     # Docker CLI setup and ha-mcp registration can take minutes on a slow

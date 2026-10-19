@@ -167,6 +167,32 @@ assert_contains "turning it off is logged" "$logged" "disabled"
 unset LOGIN_NOTIFICATION
 
 # ---------------------------------------------------------------------------
+# export_upload_max_mb
+# ---------------------------------------------------------------------------
+# Passed to the wrapper as read; the wrapper owns the fallback to 25
+# (files-upload.js, uploadMaxBytes), so an unreadable value must arrive as
+# the empty string, not as a guess.
+printf '\n%s\n' "export_upload_max_mb"
+
+reset_config
+unset UPLOAD_MAX_MB
+export_upload_max_mb 2>/dev/null
+assert_eq "unset defaults to 25" "25" "${UPLOAD_MAX_MB:-}"
+
+reset_config
+set_config upload_max_mb "100"
+export_upload_max_mb 2>/dev/null
+assert_eq "a set value is exported" "100" "${UPLOAD_MAX_MB:-}"
+assert_eq "and reaches a child process" "100" "$(bash -c 'printf %s "$UPLOAD_MAX_MB"')"
+
+reset_config
+set_config upload_max_mb ""
+export_upload_max_mb 2>/dev/null
+assert_eq "an unreadable value is passed on empty" "set:" "${UPLOAD_MAX_MB+set}:${UPLOAD_MAX_MB:-}"
+unset UPLOAD_MAX_MB
+reset_config
+
+# ---------------------------------------------------------------------------
 # prune_claude_versions
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "prune_claude_versions"

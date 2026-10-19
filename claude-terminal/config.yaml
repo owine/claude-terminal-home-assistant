@@ -83,6 +83,14 @@ options:
   #   deleted at startup (only the add-on's own pasted-* files in /data/images).
   #   0 keeps them forever. /data is in every HA backup, so this bounds both.
   image_retention_days: 30
+  # upload_max_mb: Largest file the Files sidebar uploads into /config, in
+  #   megabytes. Pasted and dropped images keep their own 10 MB limit.
+  upload_max_mb: 25
+  # upload_retention_days: Files in the sidebar's inbox, /config/uploads,
+  #   older than this are deleted at startup: every file at its top level,
+  #   whoever put it there. 0 keeps them forever. A folder chosen with
+  #   "Upload here" is never swept.
+  upload_retention_days: 30
   persistent_apk_packages: []
   persistent_pip_packages: []
   # init_commands: Shell commands run as root, in order, on every start - after
@@ -104,6 +112,8 @@ schema:
   tmux_mouse_mode: bool?
   persist_npm_cache: bool?
   image_retention_days: int(0,)?
+  upload_max_mb: int(1,)?
+  upload_retention_days: int(0,)?
   persistent_apk_packages:
     - str?
   persistent_pip_packages:
