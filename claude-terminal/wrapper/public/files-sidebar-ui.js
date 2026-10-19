@@ -284,12 +284,33 @@
         // region, and an upload's progress must not be read out at every
         // step (the bar carries it).
         function setNotice(text, kind, fraction) {
+            const changed = noticeText.textContent !== text || notice.hidden !== !text;
             if (noticeText.textContent !== text) noticeText.textContent = text;
             notice.className = kind;
             notice.hidden = !text;
             noticeProgress.hidden = fraction === null;
             if (fraction !== null) noticeProgress.value = fraction;
+            if (changed) fitNoticeScroll();
         }
+        // A long notice scrolls (its max-height, in index.html). Safari puts
+        // a scrolling box in the Tab order only with a tabindex, so without
+        // one the keyboard cannot read what is below. It gets one while it
+        // overflows, and only then: a tab stop on a line that fits would be
+        // one for nothing. Checked when the text changes (at once: a
+        // ResizeObserver can run frames later), and when the box changes
+        // size for any other reason: the sidebar reopened (closed, nothing
+        // scrolls), resized, or the window. Focus on it when it stops
+        // scrolling goes to Upload, not the page.
+        function fitNoticeScroll() {
+            if (noticeText.scrollHeight > noticeText.clientHeight) {
+                noticeText.setAttribute('tabindex', '0');
+            } else if (noticeText.hasAttribute('tabindex')) {
+                const hadFocus = document.activeElement === noticeText;
+                noticeText.removeAttribute('tabindex');
+                if (hadFocus) uploadBtn.focus({ preventScroll: true });
+            }
+        }
+        new ResizeObserver(fitNoticeScroll).observe(noticeText);
         // The notice's generation. Only what starts something new advances
         // it: a progress line ("Preparing …", "Uploading …") and a
         // dismissal. An operation's later lines go through showNoticeIf
@@ -599,7 +620,13 @@
                     const hadFocus = prompt.contains(document.activeElement);
                     prompt.hidden = true;
                     promptText.textContent = '';
-                    if (hadFocus && returnTo && returnTo.isConnected) returnTo.focus({ preventScroll: true });
+                    // Back where it came from; from nowhere (the page
+                    // body), or from something gone since (a row the tree
+                    // drew again), to Upload rather than the page.
+                    if (hadFocus) {
+                        const back = returnTo && returnTo !== document.body && returnTo.isConnected ? returnTo : uploadBtn;
+                        back.focus({ preventScroll: true });
+                    }
                     resolve(choice);
                 };
                 if (takeFocus) promptKeep.focus({ preventScroll: true });

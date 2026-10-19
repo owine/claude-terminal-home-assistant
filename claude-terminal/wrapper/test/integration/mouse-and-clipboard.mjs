@@ -1340,6 +1340,34 @@ async function checkUploads(browser, url) {
         if (await promptShown()) await wrapper.locator('#files-prompt-cancel').click();
         check('the file is still the replaced one', read(`${SIDEBAR_DIR}/${COLLIDE}`), 'replaced: 4\n');
 
+        // Answered, the question gives focus back where it took it from.
+        // From nowhere (the page body), or from something gone meanwhile
+        // (a row the tree drew again), that is Upload: never the page,
+        // where the next Tab would start from the top.
+        const focusedId = () => wrapper.evaluate('document.activeElement ? document.activeElement.id || document.activeElement.tagName : null');
+        await wrapper.evaluate('document.activeElement && document.activeElement.blur()');
+        await dropOn({ folder: fixtureName }, COLLIDE, 'dropped: 7\n');
+        await waitFor(promptShown);
+        check('fixture: a question asked from nowhere takes focus', (await promptState()).focus, 'files-prompt-keep');
+        await page.keyboard.press('Escape');
+        check('answered, a question asked from nowhere gives focus to Upload, not the page',
+            await waitFor(async () => !(await promptShown()) && (await focusedId()) === 'files-upload-btn'), true);
+        await menuButton(fixtureName).focus();
+        await wrapper.evaluate('document.activeElement.dataset.ctpOld = "1"');
+        await dropOn({ folder: fixtureName }, COLLIDE, 'dropped: 8\n');
+        await waitFor(promptShown);
+        check('fixture: a question asked from a row\'s ⋯ takes focus', (await promptState()).focus, 'files-prompt-keep');
+        // A refresh draws every row again: the ⋯ focus came from is gone.
+        // Clicked from script, so focus stays on the question.
+        await wrapper.evaluate('document.getElementById("files-refresh").click()');
+        check('fixture: the ⋯ focus came from is gone, and the row is back',
+            await waitFor(async () => await wrapper.evaluate('!document.querySelector("[data-ctp-old]")')
+                && await menuButton(fixtureName).count() === 1), true);
+        await page.keyboard.press('Escape');
+        check('answered after the tree was drawn again, it gives focus to Upload, not the page',
+            await waitFor(async () => !(await promptShown()) && (await focusedId()) === 'files-upload-btn'), true);
+        check('and the file is still the replaced one', read(`${SIDEBAR_DIR}/${COLLIDE}`), 'replaced: 4\n');
+
         // Drops (synthetic, see dropOn above).
         // Positive control: an image dropped on the terminal shows its
         // overlay and goes to the terminal's image upload, which is what a
@@ -1491,11 +1519,50 @@ async function checkUploads(browser, url) {
             await waitFor(async () => (await notice()).text === `Uploaded 2 files to ${INBOX_DIR}.`
                 && read(`${INBOX_DIR}/m1.txt`) === '1' && read(`${INBOX_DIR}/m2.txt`) === '2'), true);
         await closePreview();
+        // A notice too long for its box scrolls, and Safari puts a scrolling
+        // box in the Tab order only with a tabindex: it gets one while it
+        // overflows, and only then.
+        const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
+        // A function of its own, so its unroute leaves the 429 route alone.
+        const isAskLong = (u) => isAsk(u);
+        const noticeTabindex = () => wrapper.evaluate('document.getElementById("files-notice-text").getAttribute("tabindex")');
+        check('a short notice is no tab stop', await noticeTabindex(), null);
+        const LONG = 'This refusal is long enough to scroll. '.repeat(30).trim();
+        await context.route(isAskLong, (route) => route.fulfill({ status: 403, contentType: 'application/json',
+            body: JSON.stringify({ error: LONG }) }));
+        await pick(uploadButton, local('long.txt', 'x'));
+        check('fixture: the long refusal is in the notice',
+            await waitFor(async () => (await notice()).text.includes(LONG)), true);
+        check('a notice that overflows its box is a tab stop, so the keyboard can scroll it', await noticeTabindex(), '0');
+        // Focus on it when it stops scrolling (the next file's short
+        // "Checking" line) goes to Upload, not the page. The refusal is held
+        // back, so the short line shows for a few frames.
+        await context.unroute(isAskLong);
+        await context.route(isAskLong, async (route) => {
+            await sleep(500);
+            await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: LONG }) });
+        });
+        await wrapper.evaluate('document.getElementById("files-notice-text").focus()');
+        check('fixture: the scrolling notice has focus', await focusedId(), 'files-notice-text');
+        await dropOn('#files-footer', 'long2.txt', 'x');
+        check('a notice that stops scrolling with focus on it gives focus to Upload, not the page',
+            await waitFor(async () => (await focusedId()) === 'files-upload-btn'), true);
+        await waitFor(async () => (await notice()).text.includes(LONG));
+        // Arriving while the sidebar is closed, it has nothing to scroll;
+        // the sidebar reopened, it does again.
+        await dropOn('#files-footer', 'long3.txt', 'x');
+        await wrapper.locator('#files-hide').click();
+        check('fixture: the long refusal arrives while the sidebar is closed',
+            await waitFor(async () => (await notice()).text.includes(LONG)), true);
+        check('a notice in the closed sidebar is no tab stop', await noticeTabindex(), null);
+        await wrapper.locator('#files-btn').click();
+        check('the sidebar reopened, the long notice is a tab stop again',
+            await waitFor(async () => (await noticeTabindex()) === '0'), true);
+        await context.unroute(isAskLong);
         // Too many uploads (429, faked): the batch stops at the first one,
         // and one line covers every file it left, instead of a refusal per
         // file each spending another request.
         let busyChecks = 0;
-        const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
         await context.route(isAsk, (route) => {
             busyChecks++;
             return route.fulfill({ status: 429, contentType: 'application/json',
@@ -1505,6 +1572,7 @@ async function checkUploads(browser, url) {
         check('a batch stops at the first 429, under one line for all it left',
             await waitFor(async () => (await notice()).text === '⏳ 3 not uploaded: too many uploads, try again in a minute.'), true);
         check('and asks nothing more after it', busyChecks, 1);
+        check('a notice that fits again is no tab stop again', await noticeTabindex(), null);
         await context.unroute(isAsk);
         // (UPLOAD_PART is the download checks' stand-in, not a real one.)
         check('no upload part is left anywhere',
