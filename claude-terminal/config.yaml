@@ -98,7 +98,8 @@ options:
   # init_commands: Shell commands run as root, in order, on every start - after
   #   packages and the Docker CLI are installed, before the terminal. Each
   #   shell gets 120 seconds (programs it started may outlive it); start
-  #   services in the background with their output redirected (nohup ... &).
+  #   services in the background with their output redirected
+  #   (nohup cmd > file.log 2>&1 &).
   #   Command and output go to the app log, and a failing command only warns.
   init_commands: []
   enable_docker: false

@@ -102,7 +102,9 @@ init_commands:
   shell started may keep running: in `npm ci && npm run build`, a stuck build
   outlives the timeout.
 - A service must put itself in the background with `nohup ... &` **and**
-  redirect its own output, as above.
+  redirect its own output, as above (`> file.log 2>&1`). Without the redirect
+  its output is lost: it goes to a temporary file that is deleted once the
+  command returns, while the service keeps writing to it.
 - Output goes to the app log (the last 200 lines per command). A command that
   fails logs a warning, and startup carries on.
 - The command text and its output are logged, so keep secrets out of both:

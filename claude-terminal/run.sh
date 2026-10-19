@@ -556,12 +556,20 @@ auto_install_packages() {
 #
 # Each command's shell gets INIT_COMMAND_TIMEOUT seconds, then SIGTERM, then
 # SIGKILL INIT_COMMAND_KILL_AFTER seconds later if it ignores that - so a
-# mistake cannot hold the terminal back. Only that shell is signalled: BusyBox
-# timeout targets one PID, and a group kill is not an option because init
-# commands share run.sh's process group with the wrapper supervisor. Programs
-# the shell started (`sleep 30; true`, `npm ci && npm run build`) may keep
-# running after it is stopped. Long-running services must background
-# themselves (nohup ... &) and redirect their own output.
+# mistake cannot hold the terminal back. What else is signalled depends on
+# which timeout is first on PATH:
+# - BusyBox's (the image's) signals that shell's PID only. Programs it started
+#   (`sleep 30; true`, `npm ci && npm run build`) keep running after it is
+#   stopped.
+# - GNU coreutils' (if coreutils is a persistent package, /data/packages/bin
+#   comes first) moves itself and the command into a new process group and
+#   signals the whole group, so those programs stop too - and so does any
+#   service the command backgrounded before it ran out of time.
+# Neither reaches run.sh's own process group, which the wrapper supervisor
+# shares: BusyBox never signals a group, and GNU's group is its own.
+# Long-running services must background themselves and redirect their own
+# output (nohup cmd > log 2>&1 &): unredirected, it goes to the temporary
+# file below, which is deleted once replayed.
 #
 # ADDON_OPTIONS_FILE and INIT_COMMANDS_DIR are test seams; production uses the
 # defaults.
@@ -591,6 +599,8 @@ run_init_commands() {
         bashio::log.info "  Running: ${command//\\/\\\\}"
         # Output goes to a file, not a pipe: a service started in the
         # background inherits stdout, and a pipe reader would wait for it.
+        # The file is removed after replay; a service still writing to it
+        # writes to an unlinked file nobody can read.
         if ! output_file=$(mktemp 2>/dev/null); then
             bashio::log.warning "  Skipped, could not create a temporary file: ${command//\\/\\\\}"
             continue
@@ -604,7 +614,7 @@ run_init_commands() {
         # 124 from coreutils timeout, 143 (SIGTERM) from BusyBox's, 137 when
         # the shell ignored SIGTERM and was killed
         if [ "$status" -eq 124 ] || [ "$status" -eq 143 ] || [ "$status" -eq 137 ]; then
-            bashio::log.warning "  Stopped after ${timeout_seconds}s (use 'nohup ... &' for services): ${command//\\/\\\\}"
+            bashio::log.warning "  Stopped after ${timeout_seconds}s (run a service as 'nohup <command> > <log file> 2>&1 &'): ${command//\\/\\\\}"
         elif [ "$status" -ne 0 ]; then
             bashio::log.warning "  Exited with status ${status}: ${command//\\/\\\\}"
         fi
