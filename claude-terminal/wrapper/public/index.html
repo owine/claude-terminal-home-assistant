@@ -1764,16 +1764,20 @@
         // files, and only those: a text paste still goes to xterm, and
         // nothing there listens to the mouse. Kept apart from
         // registerTerminalHandlers, which bails out when the clipboard
-        // script is missing; uploads must not depend on that.
+        // script is missing; uploads must not depend on that. The page's own
+        // timers run the watch that takes a quiet drag's overlay down: they
+        // outlive a frame that reloads mid-drag. A drag with no files (a
+        // link) is left to the browser here, as it always was.
         function catchTerminalFiles(win) {
-            if (!uploadClient) return;
             try {
+                if (!uploadClient) return;
                 uploadClient.catchFrameFiles(win, {
                     onFiles: ({ files, folders }) => uploadToTerminal(files, folders),
                     onDragging: (on) => {
                         frameDragging = on;
                         showDropZone();
                     },
+                    timers: window,
                 });
             } catch (e) {
                 console.error('[wrapper] could not take files pasted or dropped on the terminal:', e);

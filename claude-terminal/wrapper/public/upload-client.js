@@ -248,23 +248,44 @@
     // reconnect) is a new window without it.
     const FRAME_CAUGHT = Symbol('uploadClientFrameFiles');
     const carriesFiles = (e) => Array.from((e.dataTransfer && e.dataTransfer.types) || []).includes('Files');
+    // During a drag the browser sends dragover every few tens of
+    // milliseconds, even with the pointer still. This long without one, the
+    // drag has ended somewhere the frame never heard of.
+    const FRAME_DRAG_IDLE_MS = 350;
 
     /**
      * Take the pastes and drops that carry files inside the terminal's
      * frame. A paste while the terminal has focus, and a drop over it, land
      * in the frame's document, where the page's own listeners never see
      * them. Capture phase on the frame's window, so these run before
-     * xterm's own listeners; only events carrying files are stopped, so a
-     * text paste still reaches xterm. Drag and paste events only, never a
-     * mouse, pointer, wheel or key listener: mouse reporting is tmux's alone
+     * xterm's own listeners; only events carrying files are touched, so a
+     * text paste, and a drag of a link or of text, still reach xterm and the
+     * browser as before. Drag and paste events only, never a mouse,
+     * pointer, wheel or key listener: mouse reporting is tmux's alone
      * (CLAUDE.md, "Mouse ownership"). Once per frame window; returns whether
      * it registered.
      *   onFiles({ files, folders })  files were dropped or pasted
      *   onDragging(on)               a file drag entered or left the frame
+     *   timers                       setTimeout/clearTimeout for the watch
+     *                                that takes a quiet drag's overlay down
+     *                                (default: the frame window's)
      */
-    function catchFrameFiles(win, { onFiles, onDragging = () => {} }) {
+    function catchFrameFiles(win, { onFiles, onDragging = () => {}, timers = win }) {
         if (!win || win[FRAME_CAUGHT]) return false;
         let depth = 0;
+        let quiet = null;
+        const stopWatch = () => {
+            if (quiet !== null) timers.clearTimeout(quiet);
+            quiet = null;
+        };
+        const watch = () => {
+            stopWatch();
+            quiet = timers.setTimeout(() => {
+                quiet = null;
+                depth = 0;
+                onDragging(false);
+            }, FRAME_DRAG_IDLE_MS);
+        };
         const take = (e) => {
             e.preventDefault();
             e.stopImmediatePropagation();
@@ -272,21 +293,32 @@
         win.addEventListener('dragenter', (e) => {
             if (!carriesFiles(e)) return;
             take(e);
+            watch();
             if (++depth === 1) onDragging(true);
         }, true);
         win.addEventListener('dragover', (e) => {
             if (!carriesFiles(e)) return;
             take(e);
             e.dataTransfer.dropEffect = 'copy';
+            watch();
+            // A drag that only paused past the watch: light it again.
+            if (depth === 0) {
+                depth = 1;
+                onDragging(true);
+            }
         }, true);
         win.addEventListener('dragleave', (e) => {
             if (!carriesFiles(e)) return;
             e.stopImmediatePropagation();
-            if (depth > 0 && --depth === 0) onDragging(false);
+            if (depth > 0 && --depth === 0) {
+                stopWatch();
+                onDragging(false);
+            }
         }, true);
         win.addEventListener('drop', (e) => {
             if (!carriesFiles(e)) return;
             take(e);
+            stopWatch();
             depth = 0;
             onDragging(false);
             onFiles(droppedFiles(e.dataTransfer));

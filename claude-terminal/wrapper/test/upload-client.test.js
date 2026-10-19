@@ -414,6 +414,33 @@ test('clipboardFiles: the files of a paste, and none when it also holds plain te
 // registered on it. xterm is stood in for by a listener added after, which
 // is the order that matters: on the page, capture listeners on the frame's
 // window run before any listener on xterm's elements.
+// Its setTimeout and clearTimeout are a fake clock, so the stuck-overlay
+// watchdog is tested without real waits.
+function fakeClock() {
+    let now = 0;
+    let nextId = 1;
+    const timers = new Map();
+    return {
+        setTimeout(fn, ms) {
+            timers.set(nextId, { at: now + ms, fn });
+            return nextId++;
+        },
+        clearTimeout(id) {
+            timers.delete(id);
+        },
+        tick(ms) {
+            const end = now + ms;
+            for (;;) {
+                const due = [...timers].filter(([, t]) => t.at <= end).sort(([, a], [, b]) => a.at - b.at)[0];
+                if (!due) break;
+                timers.delete(due[0]);
+                now = due[1].at;
+                due[1].fn();
+            }
+            now = end;
+        },
+    };
+}
 function frameWindow() {
     const win = new EventTarget();
     const registered = [];
@@ -422,7 +449,10 @@ function frameWindow() {
         registered.push([type, capture === true]);
         add(type, fn, capture);
     };
-    return { win, registered };
+    const clock = fakeClock();
+    win.setTimeout = clock.setTimeout;
+    win.clearTimeout = clock.clearTimeout;
+    return { win, registered, clock };
 }
 function event(type, field, value) {
     const e = new Event(type, { cancelable: true });
@@ -467,7 +497,11 @@ test('a file drop in the frame is taken before xterm sees it, and its files hand
 test('a file drag that leaves the frame says so; a drag with no files is left alone', () => {
     const { win } = frameWindow();
     const dragging = [];
-    client.catchFrameFiles(win, { onFiles() {}, onDragging: (on) => dragging.push(on) });
+    const got = [];
+    client.catchFrameFiles(win, { onFiles: (x) => got.push(x), onDragging: (on) => dragging.push(on) });
+    // xterm's stand-in, registered after: it runs unless the event is stopped.
+    const reached = [];
+    for (const type of ['dragenter', 'dragover', 'dragleave', 'drop']) win.addEventListener(type, (e) => reached.push(e.type), true);
     const files = transfer(['Files'], [file('a')]);
     win.dispatchEvent(event('dragenter', 'dataTransfer', files));
     win.dispatchEvent(event('dragenter', 'dataTransfer', files));   // into a child element
@@ -475,11 +509,93 @@ test('a file drag that leaves the frame says so; a drag with no files is left al
     assert.deepStrictEqual(dragging, [true]);
     win.dispatchEvent(event('dragleave', 'dataTransfer', files));   // out of the frame
     assert.deepStrictEqual(dragging, [true, false]);
-    let reached = 0;
-    win.addEventListener('dragover', () => reached++);
-    const text = event('dragover', 'dataTransfer', transfer(['text/plain']));
-    win.dispatchEvent(text);
-    assert.deepStrictEqual([text.defaultPrevented, reached, dragging.length], [false, 1, 2]);
+    assert.deepStrictEqual(reached, [], 'file drags, leaves included, never reach xterm');
+
+    // A drag with no files (a link, selected text) is none of ours, at any
+    // step: not cancelled, not stopped, no overlay, and its drop is no upload.
+    for (const type of ['dragenter', 'dragover', 'dragleave', 'drop']) {
+        const text = event(type, 'dataTransfer', transfer(['text/plain']));
+        win.dispatchEvent(text);
+        assert.strictEqual(text.defaultPrevented, false, type);
+        assert.strictEqual(reached.at(-1), type, `${type} goes on to xterm`);
+    }
+    assert.deepStrictEqual(dragging, [true, false]);
+    assert.strictEqual(got.length, 0);
+
+    // A drop ends the drag: the next file drag lights the overlay again.
+    win.dispatchEvent(event('dragenter', 'dataTransfer', files));
+    win.dispatchEvent(event('drop', 'dataTransfer', files));
+    win.dispatchEvent(event('dragenter', 'dataTransfer', files));
+    assert.deepStrictEqual(dragging.slice(2), [true, false, true]);
+});
+
+// Some browsers send a dragleave after the drop; it must not leave the count
+// below zero, where the next drag would never light the overlay.
+test('a stray file dragleave, with no drag in the frame, does not throw the count off', () => {
+    const { win } = frameWindow();
+    const dragging = [];
+    client.catchFrameFiles(win, { onFiles() {}, onDragging: (on) => dragging.push(on) });
+    const files = transfer(['Files'], [file('a')]);
+    win.dispatchEvent(event('dragleave', 'dataTransfer', files));
+    assert.deepStrictEqual(dragging, []);
+    win.dispatchEvent(event('dragenter', 'dataTransfer', files));
+    assert.deepStrictEqual(dragging, [true]);
+});
+
+// A drag can end with no dragleave or drop in the frame (the frame reloads,
+// or the browser loses the drag on its way out); the overlay must not stay
+// up. During a drag the browser sends dragover every few tens of
+// milliseconds, even when the pointer is still.
+test('a file drag that goes quiet in the frame takes the overlay down; dragovers keep it up', () => {
+    const { win, clock } = frameWindow();
+    const dragging = [];
+    client.catchFrameFiles(win, { onFiles() {}, onDragging: (on) => dragging.push(on) });
+    const files = transfer(['Files'], [file('a')]);
+    win.dispatchEvent(event('dragenter', 'dataTransfer', files));
+    for (let i = 0; i < 40; i++) {
+        clock.tick(50);
+        win.dispatchEvent(event('dragover', 'dataTransfer', files));
+    }
+    assert.deepStrictEqual(dragging, [true], 'two seconds of dragovers');
+    clock.tick(300);
+    assert.deepStrictEqual(dragging, [true]);
+    clock.tick(100);
+    assert.deepStrictEqual(dragging, [true, false], 'no dragover for 400 ms');
+    // The count went back to zero with it: a new drag lights it again...
+    win.dispatchEvent(event('dragenter', 'dataTransfer', files));
+    assert.deepStrictEqual(dragging, [true, false, true]);
+    // ...and a drag that only paused comes back on its next dragover.
+    clock.tick(400);
+    win.dispatchEvent(event('dragover', 'dataTransfer', files));
+    assert.deepStrictEqual(dragging, [true, false, true, false, true]);
+});
+
+test('a drop or a leave out of the frame ends the watch: no second "not dragging" later', () => {
+    for (const end of ['drop', 'dragleave']) {
+        const { win, clock } = frameWindow();
+        const dragging = [];
+        client.catchFrameFiles(win, { onFiles() {}, onDragging: (on) => dragging.push(on) });
+        const files = transfer(['Files'], [file('a')]);
+        win.dispatchEvent(event('dragenter', 'dataTransfer', files));
+        win.dispatchEvent(event('dragover', 'dataTransfer', files));
+        win.dispatchEvent(event(end, 'dataTransfer', files));
+        clock.tick(5000);
+        assert.deepStrictEqual(dragging, [true, false], end);
+    }
+});
+
+// The page passes its own clock, which keeps running if the frame reloads
+// mid-drag and takes the frame's timers with it.
+test('the watch runs on the timers it is given, else on the frame window\'s', () => {
+    const { win, clock: frameClock } = frameWindow();
+    const page = fakeClock();
+    const dragging = [];
+    client.catchFrameFiles(win, { onFiles() {}, onDragging: (on) => dragging.push(on), timers: page });
+    win.dispatchEvent(event('dragenter', 'dataTransfer', transfer(['Files'], [file('a')])));
+    frameClock.tick(5000);
+    assert.deepStrictEqual(dragging, [true]);
+    page.tick(5000);
+    assert.deepStrictEqual(dragging, [true, false]);
 });
 
 test('a file paste in the frame is taken; a text paste, or text with a file, goes on to xterm', () => {
