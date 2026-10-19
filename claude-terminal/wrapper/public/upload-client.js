@@ -244,10 +244,68 @@
         return files.length ? files : Array.from(clipboardData.files || []);
     }
 
+    // Marks a frame window as already caught. A reloaded frame (a ttyd
+    // reconnect) is a new window without it.
+    const FRAME_CAUGHT = Symbol('uploadClientFrameFiles');
+    const carriesFiles = (e) => Array.from((e.dataTransfer && e.dataTransfer.types) || []).includes('Files');
+
+    /**
+     * Take the pastes and drops that carry files inside the terminal's
+     * frame. A paste while the terminal has focus, and a drop over it, land
+     * in the frame's document, where the page's own listeners never see
+     * them. Capture phase on the frame's window, so these run before
+     * xterm's own listeners; only events carrying files are stopped, so a
+     * text paste still reaches xterm. Drag and paste events only, never a
+     * mouse, pointer, wheel or key listener: mouse reporting is tmux's alone
+     * (CLAUDE.md, "Mouse ownership"). Once per frame window; returns whether
+     * it registered.
+     *   onFiles({ files, folders })  files were dropped or pasted
+     *   onDragging(on)               a file drag entered or left the frame
+     */
+    function catchFrameFiles(win, { onFiles, onDragging = () => {} }) {
+        if (!win || win[FRAME_CAUGHT]) return false;
+        let depth = 0;
+        const take = (e) => {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+        };
+        win.addEventListener('dragenter', (e) => {
+            if (!carriesFiles(e)) return;
+            take(e);
+            if (++depth === 1) onDragging(true);
+        }, true);
+        win.addEventListener('dragover', (e) => {
+            if (!carriesFiles(e)) return;
+            take(e);
+            e.dataTransfer.dropEffect = 'copy';
+        }, true);
+        win.addEventListener('dragleave', (e) => {
+            if (!carriesFiles(e)) return;
+            e.stopImmediatePropagation();
+            if (depth > 0 && --depth === 0) onDragging(false);
+        }, true);
+        win.addEventListener('drop', (e) => {
+            if (!carriesFiles(e)) return;
+            take(e);
+            depth = 0;
+            onDragging(false);
+            onFiles(droppedFiles(e.dataTransfer));
+        }, true);
+        win.addEventListener('paste', (e) => {
+            const files = clipboardFiles(e.clipboardData);
+            if (!files.length) return;
+            take(e);
+            onFiles({ files, folders: [] });
+        }, true);
+        win[FRAME_CAUGHT] = true;
+        return true;
+    }
+
     const api = {
         ask, send, uploadOne, runBatch, droppedFiles,
         IMAGE_TYPES, IMAGE_MAX_BYTES, terminalRoute, sendImage, uploadForTerminal,
         typedPaths, terminalStatus, clipboardFiles,
+        catchFrameFiles,
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.UploadClient = api;

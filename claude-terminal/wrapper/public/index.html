@@ -1264,6 +1264,7 @@
                             indicator.style.background = '#4ec9b0';
                             indicator.title = 'Terminal ready';
                             keepTerminalFitted(iframe.contentWindow.term);
+                            catchTerminalFiles(iframe.contentWindow);
                             registerTerminalHandlers(iframe.contentWindow.term);
                         }
                     } catch (e) {
@@ -1754,6 +1755,29 @@
         let frameDragging = false;
         function showDropZone() {
             dropZone.classList.toggle('active', dragCounter > 0 || frameDragging);
+        }
+
+        // A paste while the terminal has focus, and a drop over it (the drop
+        // zone lets the pointer through to the frame), happen in the
+        // terminal frame's document, where the listeners above never see
+        // them. UploadClient.catchFrameFiles takes the ones that carry
+        // files, and only those: a text paste still goes to xterm, and
+        // nothing there listens to the mouse. Kept apart from
+        // registerTerminalHandlers, which bails out when the clipboard
+        // script is missing; uploads must not depend on that.
+        function catchTerminalFiles(win) {
+            if (!uploadClient) return;
+            try {
+                uploadClient.catchFrameFiles(win, {
+                    onFiles: ({ files, folders }) => uploadToTerminal(files, folders),
+                    onDragging: (on) => {
+                        frameDragging = on;
+                        showDropZone();
+                    },
+                });
+            } catch (e) {
+                console.error('[wrapper] could not take files pasted or dropped on the terminal:', e);
+            }
         }
 
         document.addEventListener('dragenter', (e) => {

@@ -407,3 +407,108 @@ test('clipboardFiles: the files of a paste, and none when it also holds plain te
     assert.deepStrictEqual(names({ types: ['Files'], items: [], files: [shot] }), ['image.png']);
     assert.deepStrictEqual(names(null), []);
 });
+
+// --- catchFrameFiles: pastes and drops inside the terminal's frame ---
+
+// A stand-in frame window: a real EventTarget that records what is
+// registered on it. xterm is stood in for by a listener added after, which
+// is the order that matters: on the page, capture listeners on the frame's
+// window run before any listener on xterm's elements.
+function frameWindow() {
+    const win = new EventTarget();
+    const registered = [];
+    const add = win.addEventListener.bind(win);
+    win.addEventListener = (type, fn, capture) => {
+        registered.push([type, capture === true]);
+        add(type, fn, capture);
+    };
+    return { win, registered };
+}
+function event(type, field, value) {
+    const e = new Event(type, { cancelable: true });
+    Object.defineProperty(e, field, { value });
+    return e;
+}
+const transfer = (types, files = []) => ({
+    types,
+    files,
+    dropEffect: 'none',
+    items: files.map((f) => ({ kind: 'file', getAsFile: () => f, webkitGetAsEntry: () => null })),
+});
+
+// Mouse reporting is tmux's alone (CLAUDE.md, "Mouse ownership").
+test('catchFrameFiles listens for drags and pastes only, all in the capture phase: never the mouse', () => {
+    const { win, registered } = frameWindow();
+    assert.strictEqual(client.catchFrameFiles(win, { onFiles() {} }), true);
+    assert.deepStrictEqual(registered.map(([type]) => type).sort(), ['dragenter', 'dragleave', 'dragover', 'drop', 'paste']);
+    assert.ok(registered.every(([, capture]) => capture), JSON.stringify(registered));
+});
+
+test('a file drop in the frame is taken before xterm sees it, and its files handed on', () => {
+    const { win } = frameWindow();
+    const got = [];
+    const dragging = [];
+    client.catchFrameFiles(win, { onFiles: (x) => got.push(x), onDragging: (on) => dragging.push(on) });
+    let xterm = 0;
+    for (const type of ['dragenter', 'dragover', 'drop']) win.addEventListener(type, () => xterm++);
+    const a = file('a.txt');
+    const dt = transfer(['Files'], [a]);
+    const events = ['dragenter', 'dragover', 'drop'].map((type) => event(type, 'dataTransfer', dt));
+    for (const e of events) win.dispatchEvent(e);
+    assert.deepStrictEqual(events.map((e) => e.defaultPrevented), [true, true, true]);
+    assert.strictEqual(xterm, 0);
+    assert.strictEqual(dt.dropEffect, 'copy');
+    assert.deepStrictEqual(dragging, [true, false]);
+    assert.strictEqual(got.length, 1);
+    assert.strictEqual(got[0].files[0], a);
+    assert.deepStrictEqual(got[0].folders, []);
+});
+
+test('a file drag that leaves the frame says so; a drag with no files is left alone', () => {
+    const { win } = frameWindow();
+    const dragging = [];
+    client.catchFrameFiles(win, { onFiles() {}, onDragging: (on) => dragging.push(on) });
+    const files = transfer(['Files'], [file('a')]);
+    win.dispatchEvent(event('dragenter', 'dataTransfer', files));
+    win.dispatchEvent(event('dragenter', 'dataTransfer', files));   // into a child element
+    win.dispatchEvent(event('dragleave', 'dataTransfer', files));   // out of the one before
+    assert.deepStrictEqual(dragging, [true]);
+    win.dispatchEvent(event('dragleave', 'dataTransfer', files));   // out of the frame
+    assert.deepStrictEqual(dragging, [true, false]);
+    let reached = 0;
+    win.addEventListener('dragover', () => reached++);
+    const text = event('dragover', 'dataTransfer', transfer(['text/plain']));
+    win.dispatchEvent(text);
+    assert.deepStrictEqual([text.defaultPrevented, reached, dragging.length], [false, 1, 2]);
+});
+
+test('a file paste in the frame is taken; a text paste, or text with a file, goes on to xterm', () => {
+    const { win } = frameWindow();
+    const got = [];
+    client.catchFrameFiles(win, { onFiles: (x) => got.push(x) });
+    let xterm = 0;
+    win.addEventListener('paste', () => xterm++);
+    const shot = file('image.png', 'image/png');
+    const filePaste = event('paste', 'clipboardData', transfer(['Files'], [shot]));
+    win.dispatchEvent(filePaste);
+    assert.deepStrictEqual([filePaste.defaultPrevented, xterm, got.length], [true, 0, 1]);
+    assert.strictEqual(got[0].files[0], shot);
+    for (const types of [['text/plain'], ['text/plain', 'Files']]) {
+        const paste = event('paste', 'clipboardData', transfer(types, types.includes('Files') ? [shot] : []));
+        win.dispatchEvent(paste);
+        assert.strictEqual(paste.defaultPrevented, false, types.join());
+    }
+    assert.deepStrictEqual([xterm, got.length], [2, 1]);
+});
+
+// Like registerTerminalHandlers' guard: the page may find the same frame
+// window more than once, and twice must not mean every file twice.
+test('catchFrameFiles takes a frame window once', () => {
+    const { win } = frameWindow();
+    const got = [];
+    assert.strictEqual(client.catchFrameFiles(win, { onFiles: (x) => got.push(x) }), true);
+    assert.strictEqual(client.catchFrameFiles(win, { onFiles: (x) => got.push(x) }), false);
+    win.dispatchEvent(event('drop', 'dataTransfer', transfer(['Files'], [file('a')])));
+    assert.strictEqual(got.length, 1);
+    assert.strictEqual(client.catchFrameFiles(null, { onFiles() {} }), false);
+});
