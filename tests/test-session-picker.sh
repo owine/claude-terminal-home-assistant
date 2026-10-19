@@ -258,6 +258,22 @@ wait_for() {
     done
 }
 
+# screen_with <text> - capture the pane until it shows <text>, up to 5 s, and
+# print the last capture. A marker file written by the pane proves only that
+# the pane's script got that far, not that tmux has parsed the output before
+# it - on a slow runner the capture could miss the end of it.
+screen_with() {
+    local i=0 screen
+    while :; do
+        screen=$(tmux capture-pane -p -t picker 2>/dev/null)
+        case "$screen" in *"$1"*) break ;; esac
+        [ "$i" -ge 50 ] && break
+        command sleep 0.1
+        i=$((i + 1))
+    done
+    printf '%s\n' "$screen"
+}
+
 # `stty sane` turns iutf8 off - BusyBox's, GNU's and macOS's alike - and tmux
 # had turned it on. Without it the tty driver's erase removes one byte, not
 # one character, so Backspace over `é` in the menu's canonical-mode `read`
@@ -297,10 +313,8 @@ chmod +x "$pane_tmp/claude"
 in_pane "CLAUDE_BIN=$pane_tmp/claude"'
 launch_claude
 show_return_message
-echo END > "$OUT/out.done"
 '
-wait_for "$pane_tmp/out.done"
-screen=$(tmux capture-pane -p -t picker 2>/dev/null)
+screen=$(screen_with "Session ended")
 for i in 1 2 3 4 5 6; do
     assert_contains "Claude's last output survives the exit message (line $i)" \
         "${nl}${screen}${nl}" "${nl}final output $i${nl}"
@@ -319,10 +333,8 @@ EOF
 in_pane "CLAUDE_BIN=$pane_tmp/claude"'
 launch_claude
 show_return_message
-echo END > "$OUT/out.done"
 '
-wait_for "$pane_tmp/out.done"
-screen=$(tmux capture-pane -p -t picker 2>/dev/null)
+screen=$(screen_with "Session ended")
 assert_not_contains "a killed full-screen Claude leaves the alternate screen" "$screen" "full-screen UI"
 assert_contains "and the exit message follows the main screen's output directly" \
     "$screen" "final output 3${nl}${nl}────"
