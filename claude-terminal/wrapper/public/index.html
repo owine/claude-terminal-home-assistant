@@ -1097,8 +1097,8 @@
             <button id="voice-btn" class="header-btn" title="Voice Input">
                 <span>&#127908;</span>
             </button>
-            <button id="upload-btn" class="header-btn" title="Upload Image">
-                <span>&#128206;</span>
+            <button id="upload-btn" class="header-btn" title="Upload file" aria-label="Upload file">
+                <span aria-hidden="true">&#128206;</span>
             </button>
             <button id="files-btn" class="header-btn" type="button"
                     title="Files: browse /config, recent changes, check the HA configuration"
@@ -1126,7 +1126,7 @@
                 <iframe id="terminal-frame" src="about:blank"></iframe>
                 <div id="touch-scroll-overlay"></div>
                 <div id="drop-zone">
-                    <div id="drop-zone-text">Drop image here to upload</div>
+                    <div id="drop-zone-text">Drop file here</div>
                 </div>
             </div>
             <aside id="files-sidebar" class="collapsed" aria-label="Files">
@@ -1179,7 +1179,8 @@
             </aside>
         </div>
     </div>
-    <input type="file" id="file-input" accept="image/*">
+    <!-- The terminal's paperclip: any file, several at once (see uploadToTerminal). -->
+    <input type="file" id="file-input" multiple>
     <!-- The Files sidebar's uploads (Upload, Upload here): any file, several at once. -->
     <input type="file" id="files-upload-input" multiple hidden>
 
@@ -1511,8 +1512,14 @@
             // leave the button lit with nothing behind it.
             status.textContent = message;
             status.className = type;
+            // Each message's own timer clears only that message: an older
+            // one's must not blank a newer line, a persistent one above all
+            // (a refusal right after "Sent to terminal: …", say). A property
+            // of the function, not a `let`, because the function is hoisted
+            // and may run before this script reaches any declaration.
+            const shown = setStatus.shown = (setStatus.shown || 0) + 1;
             if (message && !persistent) {
-                setTimeout(() => setStatus(''), 5000);
+                setTimeout(() => { if (setStatus.shown === shown) setStatus(''); }, 5000);
             }
         }
 
@@ -1637,66 +1644,76 @@
             }
         });
 
-        async function uploadImage(file) {
-            if (!file || !file.type.startsWith('image/')) {
-                setStatus('Please select an image file', 'error');
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('image', file);
-
-            uploadBtn.innerHTML = '<span class="spinner"></span><span>Uploading...</span>';
-            uploadBtn.disabled = true;
-
-            try {
-                // Use relative path for Home Assistant ingress compatibility
-                const response = await fetch('upload', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                // Check if response is ok (status 200-299)
-                if (!response.ok) {
-                    const text = await response.text();
-                    let errorMessage = 'Upload failed';
-                    try {
-                        const errorJson = JSON.parse(text);
-                        errorMessage = errorJson.error || errorMessage;
-                    } catch {
-                        errorMessage = text || errorMessage;
-                    }
-                    throw new Error(errorMessage);
-                }
-
-                const result = await response.json();
-
-                if (result.success) {
-                    const filePath = result.path;
-                    console.log('Image uploaded:', filePath);
-
-                    // Try injecting path directly into terminal, fall back to clipboard
-                    if (!injectIntoTerminal(filePath)) {
-                        const copied = await copyToClipboard(filePath);
-                        if (copied) {
-                            setStatus('Copied path: ' + filePath + ' — paste in terminal', 'success');
-                        } else {
-                            setStatus('Path: ' + filePath, 'success', true);
-                        }
-                    }
-                } else {
-                    setStatus(result.error || 'Upload failed', 'error');
-                }
-            } catch (error) {
-                console.error('Upload error:', error);
-                setStatus('Upload failed: ' + error.message, 'error');
-            } finally {
-                uploadBtn.innerHTML = '<span>📎</span><span>Upload Image</span>';
-                uploadBtn.disabled = false;
-            }
+        // ========================================
+        // Uploads from the terminal: the paperclip, paste and drop
+        // ========================================
+        //
+        // Any file, several at once. UploadClient (upload-client.js) decides
+        // where each goes: a small image (PNG, JPEG, GIF, WebP or SVG, at
+        // most 10 MB) to the image upload, /data/images, as always; anything
+        // else to the Files inbox, /config/uploads, asked about first. The
+        // inbox numbers a taken name, so nothing here ever asks about one.
+        // The paths that came back are typed at the prompt in the order the
+        // files came, each quoted where it needs it, without Enter; when the
+        // terminal cannot take them they go on the clipboard instead.
+        // Batches queue behind each other, so their paths are typed in order,
+        // and never wait for the Files sidebar's uploads or questions.
+        // Without upload-client.js (a 404 mid-update) the paperclip goes.
+        // None of this touches the terminal's mouse handling.
+        const uploadClient = window.UploadClient;
+        const uploadBtnIdle = uploadBtn.innerHTML;
+        let terminalUploads = Promise.resolve();
+        let terminalUploadsWaiting = 0;
+        if (!uploadClient) {
+            console.error('[wrapper] upload-client.js did not load');
+            uploadBtn.style.display = 'none';
         }
 
-        // Upload button click
+        function setUploadBusy(busy) {
+            uploadBtn.innerHTML = busy ? '<span class="spinner"></span><span>Uploading...</span>' : uploadBtnIdle;
+            uploadBtn.disabled = busy;
+        }
+
+        async function runTerminalBatch(files, folders) {
+            const outcome = await uploadClient.runBatch(files, (file, counter) =>
+                uploadClient.uploadForTerminal(file, {
+                    counter,
+                    onLine: (line, fraction) => setStatus(
+                        fraction === null ? line : line + ' ' + Math.round(fraction * 100) + '%', '', true),
+                }));
+            const typed = uploadClient.typedPaths(outcome.results);
+            let delivered = 'terminal';
+            if (typed && !injectIntoTerminal(typed)) {
+                delivered = (await copyToClipboard(typed)) ? 'clipboard' : 'none';
+            }
+            const line = uploadClient.terminalStatus({
+                ...outcome, folders, typed, delivered, count: outcome.results.length,
+            });
+            if (line) setStatus(line.message, line.type, line.persistent);
+            else if (!typed) setStatus('');
+        }
+
+        // `folders`: what a drop left out, named in the status line.
+        function uploadToTerminal(files, folders = []) {
+            if (!uploadClient) {
+                setStatus('Uploads are unavailable: reload the page', 'error');
+                return;
+            }
+            const batch = Array.from(files);
+            if (!batch.length && !folders.length) return;
+            terminalUploadsWaiting++;
+            setUploadBusy(true);
+            terminalUploads = terminalUploads
+                .then(() => runTerminalBatch(batch, folders))
+                .catch((err) => {
+                    console.error('[wrapper] upload failed:', err);
+                    setStatus('Upload failed: ' + err.message, 'error');
+                })
+                .finally(() => {
+                    if (--terminalUploadsWaiting === 0) setUploadBusy(false);
+                });
+        }
+
         uploadBtn.addEventListener('click', () => {
             fileInput.click();
         });
@@ -1709,84 +1726,66 @@
         // nothing until a reload. Orion on macOS did that even for a different
         // image. From empty, every pick is a change.
         fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
+            const files = Array.from(e.target.files || []);
             e.target.value = '';
-            if (file) {
-                uploadImage(file);
-            }
+            uploadToTerminal(files);
         });
 
-        // Paste handling
-        document.addEventListener('paste', async (e) => {
-            console.log('Paste event detected');
-            const items = e.clipboardData?.items;
-
-            if (!items) {
-                console.log('No clipboard items found');
-                return;
-            }
-
-            console.log('Clipboard items:', Array.from(items).map(i => i.type));
-
-            for (let item of items) {
-                if (item.type.startsWith('image/')) {
-                    console.log('Image found in clipboard:', item.type);
-                    e.preventDefault();
-                    const file = item.getAsFile();
-                    if (file) {
-                        console.log('File extracted from clipboard:', file.name, file.size);
-                        await uploadImage(file);
-                    } else {
-                        console.error('Failed to extract file from clipboard item');
-                    }
-                    break;
-                }
-            }
+        // Files pasted while this page has focus (the paste bar, a button).
+        // A paste while the terminal has focus happens in its frame's
+        // document instead: see catchTerminalFiles. A clipboard that also
+        // holds plain text is a text paste, left to whatever has focus.
+        document.addEventListener('paste', (e) => {
+            if (!uploadClient) return;
+            const files = uploadClient.clipboardFiles(e.clipboardData);
+            if (!files.length) return;
+            e.preventDefault();
+            uploadToTerminal(files);
         });
 
-        // Also handle paste on window for better compatibility
-        window.addEventListener('paste', async (e) => {
-            // This ensures paste works even when iframe has focus
-            console.log('Window paste event detected');
-        });
-
-        // Drag and drop handling
+        // Files dragged over the page. The overlay shows while a file drag
+        // is over the page or inside the terminal's frame (catchTerminalFiles
+        // reports that), and only for drags that carry files. Every dragover
+        // and drop is still cancelled, as before, so nothing dropped here (a
+        // link, say) navigates away from the terminal. The Files sidebar and
+        // the preview stop their own file drags, so none of theirs get here.
+        const carriesFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
         let dragCounter = 0;
+        let frameDragging = false;
+        function showDropZone() {
+            dropZone.classList.toggle('active', dragCounter > 0 || frameDragging);
+        }
 
         document.addEventListener('dragenter', (e) => {
             e.preventDefault();
+            if (!carriesFiles(e)) return;
             dragCounter++;
-            if (dragCounter === 1) {
-                dropZone.classList.add('active');
-            }
+            showDropZone();
         });
 
         document.addEventListener('dragleave', (e) => {
             e.preventDefault();
-            dragCounter--;
-            if (dragCounter === 0) {
-                dropZone.classList.remove('active');
-            }
+            if (!carriesFiles(e)) return;
+            dragCounter = Math.max(0, dragCounter - 1);
+            showDropZone();
         });
 
         document.addEventListener('dragover', (e) => {
             e.preventDefault();
         });
 
-        document.addEventListener('drop', async (e) => {
+        document.addEventListener('drop', (e) => {
             e.preventDefault();
             dragCounter = 0;
-            dropZone.classList.remove('active');
-
-            const files = e.dataTransfer?.files;
-            if (files && files.length > 0) {
-                const file = files[0];
-                if (file.type.startsWith('image/')) {
-                    await uploadImage(file);
-                } else {
-                    setStatus('Please drop an image file', 'error');
-                }
+            frameDragging = false;
+            showDropZone();
+            if (!carriesFiles(e)) return;
+            if (!uploadClient) {
+                setStatus('Uploads are unavailable: reload the page', 'error');
+                return;
             }
+            const { files, folders } = uploadClient.droppedFiles(e.dataTransfer);
+            uploadToTerminal(files, folders);
         });
 
         // Helper to copy text to clipboard
