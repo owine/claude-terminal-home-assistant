@@ -413,6 +413,23 @@ test('uses the caller-supplied message when rejecting', () => {
     assert.deepStrictEqual(run(limiter, makeReq()).body, { error: 'slow down' });
 });
 
+test('peek answers what the limiter would, without spending a request', () => {
+    // check=1 asks whether an upload would go through: it must hear the
+    // upload limiter's 429, but asking must not use up an upload.
+    let clock = 1000;
+    const limiter = createRateLimiter({ windowMs: 1000, max: 2, message: 'Too many uploads', now: () => clock });
+    const req = makeReq();
+    for (let i = 0; i < 5; i++) assert.strictEqual(run(limiter.peek, req).allowed, true, `peek ${i + 1}`);
+    assert.strictEqual(run(limiter, req).allowed, true);
+    assert.strictEqual(run(limiter, req).allowed, true);
+    assert.deepStrictEqual(run(limiter.peek, req), { allowed: false, status: 429, body: { error: 'Too many uploads' } });
+    assert.strictEqual(run(limiter, req).allowed, false);
+    // per client address, and the window slides for it too
+    assert.strictEqual(run(limiter.peek, makeReq({ ip: '10.0.0.2' })).allowed, true);
+    clock += 1001;
+    assert.strictEqual(run(limiter.peek, req).allowed, true);
+});
+
 test('falls back to the socket address when req.ip is unset', () => {
     // Express only populates req.ip once trust proxy is resolved; behind the
     // ingress proxy it can be undefined. Without the fallback every client

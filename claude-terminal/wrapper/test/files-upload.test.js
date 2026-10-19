@@ -502,15 +502,24 @@ test('upload: refusals are JSON with the right status, and write nothing', async
     assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'a.txt')), false);
 });
 
-test('upload: a cross-site request is refused before anything else', async () => {
-    await withServer({}, async (url) => {
-        const res = await fetch(`${url}/upload?${q({ name: 'x.txt', dest: 'blueprints' })}`, {
-            method: 'POST', body: 'x', headers: { 'Sec-Fetch-Site': 'cross-site' },
-        });
-        assert.strictEqual(res.status, 403);
-        assert.match((await res.json()).error, /^Uploads cannot be started from another site/);
+test('upload: a cross-site request is refused before anything else, and costs no budget', async () => {
+    await withServer({
+        uploadLimiter: createRateLimiter({ max: 1 }),
+        checkLimiter: createRateLimiter({ max: 1 }),
+    }, async (url) => {
+        for (const params of [{ name: 'x.txt', dest: 'blueprints' }, { name: 'x.txt', dest: 'blueprints', check: '1', size: '1' }]) {
+            const res = await fetch(`${url}/upload?${q(params)}`, {
+                method: 'POST', body: 'x', headers: { 'Sec-Fetch-Site': 'cross-site' },
+            });
+            assert.strictEqual(res.status, 403);
+            assert.match((await res.json()).error, /^Uploads cannot be started from another site/);
+        }
+        assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'x.txt')), false);
+        // Each limiter's one request is still there.
+        assert.strictEqual((await post(url, { name: 'x.txt', dest: 'blueprints', check: '1', size: '1' })).status, 200);
+        assert.strictEqual((await post(url, { name: 'x.txt', dest: 'blueprints' }, 'x')).status, 200);
     });
-    assert.strictEqual(fs.existsSync(path.join(root, 'blueprints', 'x.txt')), false);
+    fs.unlinkSync(path.join(root, 'blueprints', 'x.txt'));
 });
 
 test('upload: its own limiter for uploads; check=1 counts against the other one', async () => {
@@ -518,14 +527,54 @@ test('upload: its own limiter for uploads; check=1 counts against the other one'
         uploadLimiter: createRateLimiter({ max: 1, message: 'Too many uploads' }),
         checkLimiter: createRateLimiter({ max: 1000 }),
     }, async (url) => {
+        // Asking does not spend an upload: three checks, then the upload.
+        for (let i = 0; i < 3; i++) {
+            assert.strictEqual((await post(url, { name: 'r1.txt', dest: 'blueprints', check: '1', size: '1' })).status, 200);
+        }
         assert.strictEqual((await post(url, { name: 'r1.txt', dest: 'blueprints' }, 'x')).status, 200);
         const res = await post(url, { name: 'r2.txt', dest: 'blueprints' }, 'x');
         assert.strictEqual(res.status, 429);
         assert.deepStrictEqual(await res.json(), { error: 'Too many uploads' });
-        // asking first is still possible
-        assert.strictEqual((await post(url, { name: 'r2.txt', dest: 'blueprints', check: '1', size: '1' })).status, 200);
     });
     fs.unlinkSync(path.join(root, 'blueprints', 'r1.txt'));
+});
+
+test('check=1 answers the 429 the upload would get once the upload budget is spent, and spends no read', async () => {
+    // Uploads have their own limiter; check=1 counts against the read one.
+    // Past the upload budget, a check that said yes would be followed by a
+    // 429 sent mid-body, which behind ingress is often lost: the UI would
+    // say it could not reach the add-on, for every file left. So check=1
+    // asks the upload limiter too, without spending it, and before the
+    // read limiter, so a refused check costs no read either.
+    let uploadClock = 1e9;
+    const readClock = 1e9;
+    await withServer({
+        uploadLimiter: createRateLimiter({ max: 2, message: 'Too many uploads', now: () => uploadClock }),
+        checkLimiter: createRateLimiter({ max: 1, message: 'Too many file requests', now: () => readClock }),
+    }, async (url) => {
+        for (const name of ['p1.txt', 'p2.txt']) {
+            assert.strictEqual((await post(url, { name, dest: 'blueprints' }, 'x')).status, 200);
+        }
+        for (let i = 0; i < 3; i++) {
+            const res = await post(url, { name: 'p3.txt', dest: 'blueprints', check: '1', size: '1' });
+            assert.strictEqual(res.status, 429);
+            assert.deepStrictEqual(await res.json(), { error: 'Too many uploads' });
+        }
+        // The upload budget back, the one read the checks were allowed is
+        // still there: none of the refused checks spent it.
+        uploadClock += 60001;
+        assert.strictEqual((await post(url, { name: 'p3.txt', dest: 'blueprints', check: '1', size: '1' })).status, 200);
+        const res = await post(url, { name: 'p3.txt', dest: 'blueprints', check: '1', size: '1' });
+        assert.strictEqual(res.status, 429);
+        assert.deepStrictEqual(await res.json(), { error: 'Too many file requests' });
+    });
+    for (const name of ['p1.txt', 'p2.txt']) fs.unlinkSync(path.join(root, 'blueprints', name));
+});
+
+test('upload: an upload limiter without peek is refused when the router is made', () => {
+    assert.throws(() => createUploadRouter({
+        uploads, uploadLimiter: (req, res, next) => next(), checkLimiter: createRateLimiter({ max: 1 }),
+    }), /peek/);
 });
 
 // --- check=1 ---
@@ -1165,6 +1214,46 @@ test('race: Replace refuses a name that became a folder or a link mid-upload', a
     assert.deepStrictEqual(recorded(), []);
 });
 
+test('race: Replace onto a name that becomes a folder between its last look and the rename is a 409, not a 500', async () => {
+    // commit()'s lstat saw a file; the rename then meets a folder. Linux and
+    // macOS raise EISDIR for any folder; POSIX also allows ENOTEMPTY for one
+    // that is not empty (raised here by the seam, as is a bare EISDIR).
+    const f = raceFixture('race-isdir');
+    const target = path.join(f.dir, 't.txt');
+    const toFolder = (withFile) => async (a, b) => {
+        fs.unlinkSync(b);
+        fs.mkdirSync(b);
+        if (withFile) fs.writeFileSync(path.join(b, 'inside'), 'kept');
+        return fs.promises.rename(a, b);
+    };
+    const refuses = (code) => async () => { throw Object.assign(new Error(`${code}: rename refused`), { code }); };
+    const logged = [];
+    try {
+        for (const [rename, left] of [
+            [toFolder(false), {}], [toFolder(true), { inside: 'kept' }], [refuses('EISDIR'), 'old'], [refuses('ENOTEMPTY'), 'old'],
+        ]) {
+            fs.rmSync(target, { recursive: true, force: true });
+            fs.writeFileSync(target, 'old');
+            const uploads = createUploads({ api, record, fsOps: { rename } });
+            await withServer({ uploads, log: (m) => logged.push(m) }, async (url) => {
+                const res = await post(url, { name: 't.txt', dest: 'race-isdir', onConflict: 'replace' }, 'new');
+                assert.strictEqual(res.status, 409, JSON.stringify(left));
+                const body = await res.json();
+                assert.strictEqual(body.reason, 'changed');
+                assert.match(body.error, /nothing was saved/);
+            });
+            // what is at the name is left as it is, and no part anywhere
+            assert.deepStrictEqual(typeof left === 'string' ? fs.readFileSync(target, 'utf8') : filesIn(target), left);
+            assert.deepStrictEqual(partsUnder(f.dir), []);
+        }
+        assert.ok(logged.some((m) => /EISDIR/.test(m)), logged.join('\n'));
+        assert.ok(logged.some((m) => /ENOTEMPTY/.test(m)), logged.join('\n'));
+    } finally {
+        f.cleanup();
+    }
+    assert.deepStrictEqual(recorded(), []);
+});
+
 test('race: a folder swapped for a file mid-upload is not a plain folder', async () => {
     const f = raceFixture('race-file');
     const swapping = createUploads({
@@ -1259,20 +1348,32 @@ test('race: a part swapped in the moment before it is put in place is a logged 4
     // stays (not this upload's to remove). A link() only gave it a second
     // name, which this upload made and so takes back: the other file stays
     // at the part's name, as it was.
+    // And what each says: after a link() the part's name no longer named
+    // this upload's file, so the link put another file there and nothing
+    // was saved. After a rename the part is gone, so which file it was
+    // cannot be told: neither "saved" nor "nothing was saved".
+    const linkSays = (error) => assert.match(error, /nothing was saved/);
+    const renameSays = (name) => (error) => {
+        assert.doesNotMatch(error, /nothing was saved|was saved in|overwritten/);
+        assert.match(error, new RegExp(`^${name.replace('.', '\\.')} in .*race-place is not the upload`));
+    };
     const cases = [
-        [viaLink, { name: 'l.txt' }, { [PART]: 'not the upload', 'old.txt': 'old' }, 'l.txt'],
-        [viaRename, { name: 'old.txt', onConflict: 'replace' }, { 'old.txt': 'not the upload' }, 'old.txt'],
-        [noLinks, { name: 'n.txt' }, { 'n.txt': 'not the upload', 'old.txt': 'old' }, 'n.txt'],
+        [viaLink, { name: 'l.txt' }, { [PART]: 'not the upload', 'old.txt': 'old' }, 'l.txt', linkSays],
+        [viaRename, { name: 'old.txt', onConflict: 'replace' }, { 'old.txt': 'not the upload' }, 'old.txt',
+            (error) => assert.match(error, /was overwritten/)],
+        [noLinks, { name: 'n.txt' }, { 'n.txt': 'not the upload', 'old.txt': 'old' }, 'n.txt', renameSays('n.txt')],
     ];
     try {
-        for (const [uploads, params, left, named] of cases) {
+        for (const [uploads, params, left, named, says] of cases) {
             fs.rmSync(f.dir, { recursive: true, force: true });
             fs.mkdirSync(f.dir);
             fs.writeFileSync(path.join(f.dir, 'old.txt'), 'old');
             await withServer({ uploads, log: (m) => logged.push(m) }, async (url) => {
                 const res = await post(url, { dest: 'race-place', ...params }, 'content');
                 assert.strictEqual(res.status, 409, JSON.stringify(params));
-                assert.strictEqual((await res.json()).reason, 'changed');
+                const body = await res.json();
+                assert.strictEqual(body.reason, 'changed');
+                says(body.error);
             });
             // never this upload's bytes, anywhere
             assert.deepStrictEqual(filesIn(f.dir), left, JSON.stringify(params));
@@ -1366,19 +1467,30 @@ test('race: a file moved away the moment it is put in place keeps every byte', a
             rename: async (a, b) => { await fs.promises.rename(a, b); take(b); },
         },
     });
+    // After a link() the part's name still names this upload's file: the
+    // link was right and the file was saved, then taken. A rename leaves
+    // no part to ask, so it says neither; Replace says the old file is gone.
     const cases = [
-        [viaLink, { name: 'l.txt' }],
-        [viaReplace, { name: 'old.txt', onConflict: 'replace' }],
-        [noLinks, { name: 'n.txt' }],
+        [viaLink, { name: 'l.txt' }, (error) => {
+            assert.match(error, /^l\.txt was saved in .*race-taken, but it was moved or replaced the moment it was put there/);
+            assert.doesNotMatch(error, /nothing was saved/);
+        }],
+        [viaReplace, { name: 'old.txt', onConflict: 'replace' }, (error) => assert.match(error, /was overwritten/)],
+        [noLinks, { name: 'n.txt' }, (error) => {
+            assert.match(error, /^n\.txt in .*race-taken is not the upload/);
+            assert.doesNotMatch(error, /nothing was saved|was saved in/);
+        }],
     ];
     try {
-        for (const [uploads, params] of cases) {
+        for (const [uploads, params, says] of cases) {
             fs.rmSync(away, { force: true });
             fs.writeFileSync(path.join(f.dir, 'old.txt'), 'old');
             await withServer({ uploads, log: (m) => logged.push(m) }, async (url) => {
                 const res = await post(url, { dest: 'race-taken', ...params }, 'USER CONTENT');
                 assert.strictEqual(res.status, 409, JSON.stringify(params));
-                assert.strictEqual((await res.json()).reason, 'changed');
+                const body = await res.json();
+                assert.strictEqual(body.reason, 'changed');
+                says(body.error);
             });
             assert.strictEqual(fs.readFileSync(away, 'utf8'), 'USER CONTENT', JSON.stringify(params));
             assert.deepStrictEqual(Object.keys(filesIn(f.dir)).filter((n) => n !== 'old.txt'), [], JSON.stringify(params));
@@ -1453,6 +1565,62 @@ test('race: a folder swapped for a file, or a link loop, as the part is put in p
             assert.deepStrictEqual(filesIn(f.dir), { 'old.txt': 'old' }, JSON.stringify(params));
         }
         assert.ok(logged.some((m) => /ENOTDIR/.test(m)), logged.join('\n'));
+        assert.ok(logged.some((m) => /ELOOP/.test(m)), logged.join('\n'));
+    } finally {
+        if (fs.existsSync(away)) restore();
+        f.cleanup();
+    }
+    assert.deepStrictEqual(partsUnder(), []);
+    assert.deepStrictEqual(recorded(), []);
+});
+
+test('race: a link loop met just after the file is put in place never says nothing was saved', async () => {
+    // The rename or link went through, then the folder became a link that
+    // points at itself: the check after it (an lstat of the name) raises
+    // ELOOP. A Replace has overwritten the old file by then, and either
+    // way the file may be the upload, so "nothing was saved" would be untrue.
+    const f = raceFixture('race-afterloop');
+    const away = path.join(base, 'away-race-afterloop');
+    const toLoop = () => { fs.renameSync(f.dir, away); fs.symlinkSync(f.dir, f.dir); };
+    const restore = () => { fs.unlinkSync(f.dir); fs.renameSync(away, f.dir); };
+    const viaReplace = createUploads({
+        api, record, fsOps: { rename: async (a, b) => { await fs.promises.rename(a, b); toLoop(); } },
+    });
+    const viaLink = createUploads({
+        api, record, fsOps: { link: async (a, b) => { await fs.promises.link(a, b); toLoop(); } },
+    });
+    const logged = [];
+    fs.writeFileSync(path.join(f.dir, 'old.txt'), 'old');
+    try {
+        await withServer({ uploads: viaReplace, log: (m) => logged.push(m) }, async (url) => {
+            const res = await post(url, { dest: 'race-afterloop', name: 'old.txt', onConflict: 'replace' }, 'USER CONTENT');
+            assert.strictEqual(res.status, 409);
+            const body = await res.json();
+            assert.strictEqual(body.reason, 'changed');
+            assert.strictEqual(body.replaced, true);
+            assert.match(body.error, /old\.txt in .*race-afterloop was overwritten/);
+            assert.doesNotMatch(body.error, /nothing was saved/);
+        });
+        restore();
+        assert.deepStrictEqual(filesIn(f.dir), { 'old.txt': 'USER CONTENT' });
+        await withServer({ uploads: viaLink, log: (m) => logged.push(m) }, async (url) => {
+            const res = await post(url, { dest: 'race-afterloop', name: 'n.txt' }, 'USER CONTENT');
+            assert.strictEqual(res.status, 409);
+            const body = await res.json();
+            assert.strictEqual(body.reason, 'changed');
+            assert.strictEqual(body.replaced, undefined);
+            assert.match(body.error, /^n\.txt in .*race-afterloop is not the upload/);
+            assert.doesNotMatch(body.error, /nothing was saved/);
+        });
+        restore();
+        // Every byte kept. The part went with the folder, out of the
+        // unlink's reach: a second name for the file, never emptied.
+        const left = filesIn(f.dir);
+        assert.strictEqual(left['n.txt'], 'USER CONTENT');
+        for (const n of Object.keys(left).filter((n) => /^\.ctp-upload-.*\.part$/.test(n))) {
+            assert.strictEqual(left[n], 'USER CONTENT');
+            fs.unlinkSync(path.join(f.dir, n));
+        }
         assert.ok(logged.some((m) => /ELOOP/.test(m)), logged.join('\n'));
     } finally {
         if (fs.existsSync(away)) restore();

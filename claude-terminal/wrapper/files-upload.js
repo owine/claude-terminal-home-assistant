@@ -17,9 +17,10 @@
  * deleted on the next start (upload-parts.js).
  *
  * `check=1` asks the same questions with no body: the UI calls it first, so a
- * refusal (a name collision, the size cap, a protected folder) reaches it as
- * a JSON answer. An answer sent before a big body has been read is often lost
- * behind a proxy such as HA ingress; the browser reports a network error.
+ * refusal (a name collision, the size cap, a protected folder, the uploads a
+ * minute used up) reaches it as a JSON answer. An answer sent before a big
+ * body has been read is often lost behind a proxy such as HA ingress; the
+ * browser reports a network error.
  *
  * No listener and no side effects at require time, so tests import it
  * directly (same reason as http-guards.js).
@@ -57,9 +58,11 @@ const MAX_SUFFIX = 999;
 const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EMLINK']);
 // What a link or rename that puts a part in place raises when a path to it
 // changed under it: no part or folder there any more (ENOENT), the folder
-// swapped for a file (ENOTDIR) or for a link that loops (ELOOP). The
-// folder changed; not a fault.
-const PATH_CHANGED = new Set(['ENOENT', 'ENOTDIR', 'ELOOP']);
+// swapped for a file (ENOTDIR) or for a link that loops (ELOOP), or the name
+// a Replace renames onto made a folder since its last look (EISDIR, or
+// ENOTEMPTY, which POSIX allows for one with files in it). The folder
+// changed; not a fault.
+const PATH_CHANGED = new Set(['ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR', 'ENOTEMPTY']);
 // Failures that are the file system's, not a bug: answered as what they are
 // (the global answer would be "Internal error"), and still logged.
 const DISK_FULL_TEXT = 'The disk is full, so the file was not saved. Free some space and try again.';
@@ -212,6 +215,18 @@ function createUploads({
     const partChanged = (display) => new FilesError(409,
         `The upload's temporary file in ${display} was moved or replaced during the upload, so nothing was saved.`,
         { reason: 'changed' });
+    // A link that put this upload's file at `name` (the part's name still
+    // names it), which was then moved or replaced at once.
+    const savedThenMoved = (name, display) => new FilesError(409,
+        `${name} was saved in ${display}, but it was moved or replaced the moment it was put there, so it is not there now.`,
+        { reason: 'changed' });
+    // A rename that put something at `name`, which is not this upload's file
+    // now. The part's name is gone after a rename, so whether the file put
+    // there was the upload cannot be told: neither "saved" nor "nothing was".
+    const notTheUpload = (name, display) => new FilesError(409,
+        `${name} in ${display} is not the upload: it was moved or replaced as it was put in place. `
+        + 'It may have been saved first and then moved elsewhere.',
+        { reason: 'changed' });
     // A Replace whose rename went through: the old file is overwritten,
     // whatever is at its name now, so "nothing was saved" would be untrue.
     const replacedChanged = (name, display) => new FilesError(409,
@@ -337,7 +352,7 @@ function createUploads({
     async function placeNew(part, target, progress) {
         try {
             await fsOps.link(part, target);
-            progress.put = true;
+            Object.assign(progress, { put: true, at: target });
             return 'link';
         } catch (err) {
             if (err.code === 'EEXIST') return null;
@@ -345,7 +360,7 @@ function createUploads({
         }
         if (await lstatOrNull(target)) return null;
         await fsOps.rename(part, target);
-        progress.put = true;
+        Object.assign(progress, { put: true, at: target });
         return 'rename';
     }
 
@@ -403,9 +418,21 @@ function createUploads({
     // another file, made by this call alone; that name is taken back and
     // the file left at the part's name. `how` is placeNew's answer, or
     // 'replace'; `overwrote` whether a Replace's rename overwrote a file.
+    //
+    // What is said: a Replace that overwrote a file says the old one is
+    // gone. After a link(), a part's name that still names this upload's
+    // file (asked straight after the mismatch) says the link was right: the
+    // file was saved, then moved or replaced at once. One that does not
+    // says the link put another file there, so nothing was saved. After a
+    // rename the part's name is gone, so it cannot be told: neither.
     async function mustHavePlaced(target, id, planned, log, { part, how, overwrote = false }) {
         if (await samePart(target, id)) return;
-        const what = `Upload not saved: ${target} is not the uploaded file (moved or replaced as it was put in place)`;
+        const name = path.basename(target);
+        if (how === 'link' && await samePart(part, id)) {
+            log(`Upload saved at ${target}, then moved or replaced at once; left as it is`);
+            throw savedThenMoved(name, planned.display);
+        }
+        const what = `Upload not in place: ${target} is not the uploaded file (moved or replaced as it was put in place)`;
         if (how === 'link' && await sameFileAsPart(target, part)) {
             try {
                 await fsp.unlink(target);
@@ -416,7 +443,8 @@ function createUploads({
         } else {
             log(`${what}; left as it is`);
         }
-        throw overwrote ? replacedChanged(planned.name, planned.display) : partChanged(planned.display);
+        if (overwrote) throw replacedChanged(planned.name, planned.display);
+        throw how === 'link' ? partChanged(planned.display) : notTheUpload(name, planned.display);
     }
 
     // `handle` is the part's open descriptor, still open: Replace sets the
@@ -433,7 +461,7 @@ function createUploads({
             if (old) await handle.chmod(old.mode & 0o777);
             await mustBeOurs(part, id, planned);
             await fsOps.rename(part, target);   // swaps the whole file in at once
-            progress.put = true;
+            Object.assign(progress, { put: true, at: target, overwrote: Boolean(old) });
             await mustHavePlaced(target, id, planned, log, { part, how: 'replace', overwrote: Boolean(old) });
             return { path: target, name: planned.name, replaced: Boolean(old) };
         }
@@ -472,11 +500,12 @@ function createUploads({
         // there before), by device and inode. Null until then, and only
         // that file is ever emptied or deleted.
         let id = null;
-        // Set the moment a link or rename puts the part at its name. From
-        // then on the file can be the user's upload somewhere, whatever any
-        // later check says: moved away the moment it landed, it is still
-        // their bytes, so never emptied.
-        const progress = { put: false };
+        // `put` is set the moment a link or rename puts the part at its
+        // name (`at`). From then on the file can be the user's upload
+        // somewhere, whatever any later check says: moved away the moment
+        // it landed, it is still their bytes, so never emptied.
+        // `overwrote`: that was a Replace's rename onto a file.
+        const progress = { put: false, at: null, overwrote: false };
         try {
             handle = await openPart(part);
             const opened = await handle.stat({ bigint: true });
@@ -494,11 +523,21 @@ function createUploads({
                 placed = await commit(part, planned, handle, id, log, progress);
             } catch (err) {
                 // A link or rename that finds no part, or no folder, at
-                // the path (PATH_CHANGED): the folder was moved or swapped
-                // for a file or a link since its last check.
+                // the path, or a folder at the name (PATH_CHANGED): the
+                // folder was moved or swapped for a file or a link since its
+                // last check. Or the check of the name after a link or rename
+                // that went through met the same (an lstat's ELOOP): then
+                // "nothing was saved" would be untrue, so a Replace that
+                // overwrote a file says the old one is gone, and anything
+                // else says neither.
                 if (!PATH_CHANGED.has(err.code)) throw err;
-                log(`Upload not saved: ${err.message}`);
-                throw partChanged(planned.display);
+                if (!progress.put) {
+                    log(`Upload not saved: ${err.message}`);
+                    throw partChanged(planned.display);
+                }
+                log(`Upload put at ${progress.at}, then its folder changed: ${err.message}`);
+                throw progress.overwrote ? replacedChanged(planned.name, planned.display)
+                    : notTheUpload(path.basename(progress.at), planned.display);
             }
             return { ...placed, size, dir: planned.display, inbox: planned.inbox };
         } finally {
@@ -541,7 +580,17 @@ function asFilesError(err, log) {
  * before the limiters, so a refused request costs no one's budget.
  *
  * check=1 (no body) goes to `checkLimiter`, the upload itself to
- * `uploadLimiter`, so asking first does not halve the uploads a minute.
+ * `uploadLimiter`, so asking first does not halve the uploads a minute. But
+ * check=1 first asks `uploadLimiter` too, through its peek (createRateLimiter),
+ * which spends nothing: once the uploads a minute are used up, the check
+ * answers the upload's own 429. Said yes, the upload would get that 429 while
+ * its body is still arriving, which behind HA ingress is often lost, and the
+ * UI would say it could not reach the add-on, for every file left. Asked
+ * before checkLimiter, so a refused check costs no read either. An upload
+ * can still meet the 429 mid-body when another one from the same address
+ * (behind ingress, every browser's) took the last place since its check;
+ * one browser sends its files one at a time.
+ *
  * Every failure is a JSON answer from here, never the global error handler
  * (which words everything as an image upload error). A refusal sent before
  * the body was read closes the connection rather than read the rest.
@@ -552,7 +601,13 @@ function createUploadRouter({ uploads, uploadLimiter, checkLimiter, log = consol
         log,
         message: 'Uploads cannot be started from another site. Use the Files sidebar.',
     });
-    const limiter = (req, res, next) => (req.query.check === '1' ? checkLimiter : uploadLimiter)(req, res, next);
+    if (typeof uploadLimiter?.peek !== 'function') {
+        throw new TypeError('uploadLimiter must have a peek (a createRateLimiter limiter), for check=1');
+    }
+    const limiter = (req, res, next) => {
+        if (req.query.check !== '1') return uploadLimiter(req, res, next);
+        return uploadLimiter.peek(req, res, () => checkLimiter(req, res, next));
+    };
 
     router.post('/upload', sameSite, limiter, async (req, res) => {
         res.set('Cache-Control', 'no-store');

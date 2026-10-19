@@ -13,7 +13,9 @@
  * this runs on a Raspberry Pi and the whole policy is "a handful of requests a
  * minute".
  *
- * `now` is injectable so the window can be tested without sleeping.
+ * `now` is injectable so the window can be tested without sleeping. The
+ * middleware's `peek` is a second middleware that answers the same 429 when
+ * the client's budget is spent but spends none of it.
  */
 function createRateLimiter({
     windowMs = 60000,
@@ -34,12 +36,14 @@ function createRateLimiter({
     }, windowMs);
     cleanup.unref(); // Don't prevent process exit
 
-    return (req, res, next) => {
-        // req.ip is undefined until Express has resolved trust proxy, which
-        // behind ingress it may not. Falling back to the socket address keeps
-        // clients in separate buckets; collapsing them into one 'unknown' key
-        // would let a single uploader rate-limit everyone.
-        const key = req.ip || req.socket?.remoteAddress || 'unknown';
+    // req.ip is undefined until Express has resolved trust proxy, which
+    // behind ingress it may not. Falling back to the socket address keeps
+    // clients in separate buckets; collapsing them into one 'unknown' key
+    // would let a single uploader rate-limit everyone.
+    const keyOf = (req) => req.ip || req.socket?.remoteAddress || 'unknown';
+
+    const limiter = (req, res, next) => {
+        const key = keyOf(req);
         const timestamp = now();
         const cutoff = timestamp - windowMs;
 
@@ -53,6 +57,18 @@ function createRateLimiter({
         hits.set(key, timestamps);
         next();
     };
+
+    // The same answer, without spending: for a request that asks whether
+    // another one, counted here, would be let through (the Files upload's
+    // check=1). Nothing is recorded, so asking costs nothing here.
+    limiter.peek = (req, res, next) => {
+        const cutoff = now() - windowMs;
+        const used = (hits.get(keyOf(req)) || []).filter(t => t > cutoff).length;
+        if (used >= max) return res.status(429).json({ error: message });
+        next();
+    };
+
+    return limiter;
 }
 
 /**

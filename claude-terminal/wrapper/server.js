@@ -60,7 +60,8 @@ const haCheckLimiter = createRateLimiter({ windowMs: 60000, max: 6, message: 'To
 // test/integration/mouse-and-clipboard.mjs); change both together.
 const zipLimiter = createRateLimiter({ windowMs: 60000, max: 20, message: 'Too many zip downloads, try again in a minute' });
 // Files sidebar uploads, one file per request: a dropped handful must not meet
-// the image limiter's 10. Their check=1 preflights count against filesLimiter.
+// the image limiter's 10. Their check=1 preflights count against filesLimiter,
+// and answer this limiter's 429 (asked without spending) once it is used up.
 // The integration test budgets its uploads against this max (UPLOAD_LIMIT in
 // test/integration/mouse-and-clipboard.mjs); change both together.
 const filesUploadLimiter = createRateLimiter({ windowMs: 60000, max: 60, message: 'Too many uploads, try again in a minute' });

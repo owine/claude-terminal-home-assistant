@@ -112,8 +112,11 @@ async function zipBudget(n) {
 
 // The server's Files upload limiter, budgeted the same way: 60 uploads per
 // sliding minute, one bucket for all four runs. Every REAL upload body takes
-// its share first. A check=1 preflight counts against the read limiter
-// instead, and routed fakes never reach the server.
+// its share first, and routed fakes never reach the server. A check=1
+// preflight counts against the read limiter, but is also refused (429) while
+// this bucket is full, which it asks without spending. So the budget keeps
+// one upload's room free: a preflight never meets a full bucket, even one
+// made for an upload that is then refused or cancelled and so took no share.
 // Must match filesUploadLimiter's max in server.js; if that changes, change this.
 const UPLOAD_LIMIT = 60;
 const uploadHits = [];
@@ -122,7 +125,7 @@ async function uploadBudget(n) {
     const start = Date.now();
     for (;;) {
         while (uploadHits.length && uploadHits[0] <= Date.now() - ZIP_WINDOW_MS) uploadHits.shift();
-        if (uploadHits.length + n <= UPLOAD_LIMIT) break;
+        if (uploadHits.length + n <= UPLOAD_LIMIT - 1) break;
         await sleep(250);
     }
     for (let i = 0; i < n; i++) uploadHits.push(Date.now());
