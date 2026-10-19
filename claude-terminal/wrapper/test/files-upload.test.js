@@ -19,7 +19,7 @@ const { once } = require('node:events');
 const express = require('express');
 const { createFilesApi, INBOX_MARKER } = require('../files-api.js');
 const { createDownloads } = require('../files-download.js');
-const { createRateLimiter } = require('../http-guards.js');
+const { createRateLimiter, createOriginGuard } = require('../http-guards.js');
 const { createPartRecord } = require('../upload-parts.js');
 const {
     createUploads,
@@ -639,6 +639,63 @@ test('upload: a cross-site request is refused before anything else, and costs no
         assert.strictEqual((await post(url, { name: 'x.txt', dest: 'blueprints' }, 'x')).status, 200);
     });
     fs.unlinkSync(path.join(root, 'blueprints', 'x.txt'));
+});
+
+// A refusal before the route reads the body: the origin guard (app-wide in
+// server.js), the cross-site guard and the limiter. Kept alive, the
+// connection had Node read and discard the whole body, 50 MiB of it, before
+// anything else could use it. Each now closes it once the answer is out, as
+// the route's own early refusals do. Counted at the server's socket.
+test('upload: a refusal before the body is read closes the connection rather than reading the rest', async () => {
+    const total = 50 * 1024 * 1024;
+    const app = express();
+    app.use(createOriginGuard({ log: () => {} }));
+    app.use('/api/files', createUploadRouter({
+        uploads,
+        uploadLimiter: createRateLimiter({ max: 0, message: 'Too many uploads' }),
+        checkLimiter: createRateLimiter({ max: 1000 }),
+        log: () => {},
+    }));
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const read = [];
+    server.on('connection', (s) => s.on('close', () => read.push(s.bytesRead)));
+    const url = `http://127.0.0.1:${server.address().port}/api/files`;
+    try {
+        for (const [what, headers, status] of [
+            ['origin', 'Origin: http://evil.example\r\n', 403],
+            ['cross-site', 'Sec-Fetch-Site: cross-site\r\n', 403],
+            ['rate limit', '', 429],
+        ]) {
+            read.length = 0;
+            const sock = await rawUpload(url, { name: 'big.bin', dest: 'blueprints' }, { length: total, headers });
+            let text = '';
+            sock.on('data', (d) => { text += d; });
+            const closed = new Promise((resolve) => sock.on('close', resolve));
+            // The answer first: a hang-up while the client is still sending
+            // can reset the socket before the client has read it.
+            assert.ok(await until(() => text.includes('\r\n\r\n')), `the ${what} answer`);
+            // Then keep sending, as a browser would, until the server hangs up.
+            const chunk = Buffer.alloc(64 * 1024);
+            let sent = 0;
+            const pump = () => {
+                while (sent < total && !sock.destroyed) {
+                    sent += chunk.length;
+                    if (!sock.write(chunk)) return sock.once('drain', pump);
+                }
+            };
+            pump();
+            await within(closed, `the ${what} socket closed`, 20000);
+            assert.ok(await until(() => read.length === 1), `the server's ${what} socket closed`);
+            assert.ok(read[0] < total / 2, `${what}: the server read ${read[0]} of ${total} bytes`);
+            assert.match(text, new RegExp(`^HTTP/1\\.1 ${status} `), what);
+            assert.match(text, /Connection: close/i, what);
+        }
+    } finally {
+        server.closeAllConnections();
+        await new Promise((r) => server.close(r));
+    }
+    assert.deepStrictEqual(partsUnder(), []);
 });
 
 test('upload: its own limiter for uploads; check=1 counts against the other one', async () => {

@@ -34,8 +34,10 @@ function makeRes() {
     return {
         statusCode: null,
         body: null,
+        headers: {},
         status(code) { this.statusCode = code; return this; },
         json(payload) { this.body = payload; return this; },
+        set(name, value) { this.headers[name.toLowerCase()] = value; return this; },
     };
 }
 
@@ -497,6 +499,51 @@ test('falls back to the socket address when req.ip is unset', () => {
     run(limiter, a);
     assert.strictEqual(run(limiter, b).allowed, true);
 });
+
+// ---------------------------------------------------------------------------
+// A refusal of a request that still has its body to come
+// ---------------------------------------------------------------------------
+//
+// Answered with the connection kept alive, a refused upload's body is read
+// and thrown away by Node, all of it: a 50 MiB POST refused by the origin
+// guard was read to the end. With Connection: close the socket goes once the
+// answer is out, as files-upload.js does with its own early refusals. A
+// request with no body keeps its connection.
+
+const bodies = {
+    'a Content-Length': { 'Content-Length': String(50 * 1024 * 1024) },
+    'chunked': { 'Transfer-Encoding': 'chunked' },
+};
+
+// Every refusal in this file that an upload can meet, by name.
+const refusals = {
+    'origin guard': (headers) => refusedConnection(createOriginGuard(silent),
+        makeReq({ method: 'POST', headers: { Host: 'ha.local', Origin: 'http://evil.example', ...headers } })),
+    'cross-site guard': (headers) => refusedConnection(createCrossSiteGuard(silent),
+        makeReq({ method: 'POST', headers: { 'Sec-Fetch-Site': 'cross-site', ...headers } })),
+    'rate limiter': (headers) => refusedConnection(createRateLimiter({ max: 0 }), makeReq({ method: 'POST', headers })),
+    'rate limiter peek': (headers) => refusedConnection(createRateLimiter({ max: 0 }).peek, makeReq({ method: 'POST', headers })),
+};
+function refusedConnection(middleware, req) {
+    const res = makeRes();
+    let nexted = false;
+    middleware(req, res, () => { nexted = true; });
+    assert.strictEqual(nexted, false);
+    assert.ok([403, 429].includes(res.statusCode), String(res.statusCode));
+    return res.headers.connection;
+}
+
+for (const [guard, refuse] of Object.entries(refusals)) {
+    for (const [kind, headers] of Object.entries(bodies)) {
+        test(`${guard}: refusing a request with ${kind} body closes the connection`, () => {
+            assert.strictEqual(refuse(headers), 'close');
+        });
+    }
+    test(`${guard}: refusing a request with no body keeps the connection`, () => {
+        assert.strictEqual(refuse({}), undefined);
+        assert.strictEqual(refuse({ 'Content-Length': '0' }), undefined);
+    });
+}
 
 // ---------------------------------------------------------------------------
 // errorResponseFor

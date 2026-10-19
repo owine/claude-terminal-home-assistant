@@ -9,6 +9,25 @@
  */
 
 /**
+ * Answer a refusal. A request that declares a body (a Content-Length over 0,
+ * or any Transfer-Encoding) and is refused before anything reads it also gets
+ * `Connection: close`: kept alive, the connection would have Node read and
+ * discard the whole body, 50 MiB of a refused upload, before the socket could
+ * carry another request. Closed, the socket goes once the answer is out, as
+ * with files-upload.js's own early refusals. A request with no body keeps its
+ * connection.
+ */
+function declaresBody(req) {
+    const length = req.get('content-length');
+    return req.get('transfer-encoding') !== undefined || (length !== undefined && Number(length) > 0);
+}
+
+function refuse(req, res, status, body) {
+    if (declaresBody(req)) res.set('Connection', 'close');
+    return res.status(status).json(body);
+}
+
+/**
  * Sliding-window rate limiter, keyed by client address. No external dependency:
  * this runs on a Raspberry Pi and the whole policy is "a handful of requests a
  * minute".
@@ -50,7 +69,7 @@ function createRateLimiter({
         const timestamps = (hits.get(key) || []).filter(t => t > cutoff);
 
         if (timestamps.length >= max) {
-            return res.status(429).json({ error: message });
+            return refuse(req, res, 429, { error: message });
         }
 
         timestamps.push(timestamp);
@@ -64,7 +83,7 @@ function createRateLimiter({
     limiter.peek = (req, res, next) => {
         const cutoff = now() - windowMs;
         const used = (hits.get(keyOf(req)) || []).filter(t => t > cutoff).length;
-        if (used >= max) return res.status(429).json({ error: message });
+        if (used >= max) return refuse(req, res, 429, { error: message });
         next();
     };
 
@@ -141,7 +160,7 @@ function createOriginGuard({ log = console.warn } = {}) {
         if (allowed) return next();
 
         log(`Blocked cross-origin POST from: ${source}`);
-        return res.status(403).json({ error: 'Cross-origin requests are not allowed' });
+        return refuse(req, res, 403, { error: 'Cross-origin requests are not allowed' });
     };
 }
 
@@ -206,7 +225,7 @@ function createCrossSiteGuard({
         if (site !== 'cross-site') return next();
 
         report(`Blocked cross-site request for ${JSON.stringify(`${req.baseUrl || ''}${req.path || ''}`)}`);
-        return res.status(403).json({ error: message });
+        return refuse(req, res, 403, { error: message });
     };
 }
 
