@@ -1734,19 +1734,26 @@ async function checkUploads(browser, url) {
     }
 }
 
-// 8b. A collision question left waiting in a hidden sidebar. The question
-//     lives in the sidebar, so hidden it held up the batch unseen until the
-//     sidebar came back. Now a dot on the 🗂️ button and on the rail's 📁,
-//     the button's name and a live region outside the sidebar say one is
-//     waiting, and opening the sidebar puts focus on Keep both. Covered: the
-//     sidebar hidden while a question waits, and a question that arrives
-//     while it is hidden (the check held until then). Every question is
-//     cancelled, so nothing is uploaded and no uploadBudget is spent. Its
-//     own context with service workers blocked, so context.route sees the
-//     check it holds.
+// 8b. A collision question left waiting where it cannot be seen. The
+//     question lives in the sidebar, so hidden it held up the batch unseen
+//     until the sidebar came back. Now a dot on the 🗂️ button and on the
+//     rail's 📁, both buttons' names and a live region outside the sidebar
+//     say one is waiting, and opening the sidebar puts focus on Keep both.
+//     Hidden means the sidebar collapsed, or the file preview over it: the
+//     preview covers the whole page, and finishBatch itself opens it, so a
+//     batch's next question can come up under it. Covered: the sidebar
+//     hidden while a question waits, a question that arrives while it is
+//     hidden (the check held until then), a held Enter on 🗂️ (its repeats
+//     must not answer), the sidebar opened with the preview still over it
+//     (no focus behind the preview), a question under the preview, closing
+//     the preview on it, and answering it from behind the preview. Every
+//     question is cancelled, so nothing is uploaded and no uploadBudget is
+//     spent. Its own context with service workers blocked, so context.route
+//     sees the check it holds.
 async function checkWaitingQuestion(browser, url) {
     const NAME = 'ctp-waiting.yaml';
-    dexec(['sh', '-c', 'printf "old\\n" > "$1"', 'sh', `${SIDEBAR_DIR}/${NAME}`]);
+    const KEPT = 'ctp-waiting (1).yaml';   // what a wrongly given Keep both would make
+    dexec(['sh', '-c', 'printf "old\\n" > "$1"; rm -f "$2"', 'sh', `${SIDEBAR_DIR}/${NAME}`, `${SIDEBAR_DIR}/${KEPT}`]);
     const pickDir = mkdtempSync(join(tmpdir(), 'ctp-waiting-'));
     const local = join(pickDir, NAME);
     writeFileSync(local, 'new\n');
@@ -1770,25 +1777,61 @@ async function checkWaitingQuestion(browser, url) {
         const promptShown = () => wrapper.evaluate('!document.getElementById("files-prompt").hidden');
         const collapsed = () => wrapper.evaluate('document.getElementById("files-sidebar").classList.contains("collapsed")');
         const focusedId = () => wrapper.evaluate('document.activeElement && document.activeElement.id');
+        const previewOpen = async () => (await previewState(wrapper)).active;
+        // Shown means on screen: a dot whose own display is block but whose
+        // button is in a hidden rail (the sidebar open) shows nothing.
         const waiting = () => wrapper.evaluate(`(() => {
             const shown = (sel) => {
                 const el = document.querySelector(sel);
-                return !!el && getComputedStyle(el).display !== 'none';
+                return !!el && el.getClientRects().length > 0;
             };
             return JSON.stringify({
                 header: shown('#files-btn .files-question-badge'),
                 rail: shown('#files-rail [data-open-tab="files"] .files-question-badge'),
                 label: document.getElementById('files-btn').getAttribute('aria-label'),
+                railLabel: document.querySelector('#files-rail [data-open-tab="files"]').getAttribute('aria-label'),
                 said: document.getElementById('files-question-announcer')?.textContent ?? null,
             });
         })()`);
-        const NONE = JSON.stringify({ header: false, rail: false, label: 'Files sidebar', said: '' });
-        const WAITING = JSON.stringify({ header: true, rail: true,
+        const WAITING_NAMES = {
             label: 'Files sidebar: an upload is waiting for your answer',
-            said: 'An upload is waiting for your answer in the Files sidebar.' });
+            railLabel: 'Files: an upload is waiting for your answer',
+            said: 'An upload is waiting for your answer in the Files sidebar.',
+        };
+        const NONE = JSON.stringify({ header: false, rail: false, label: 'Files sidebar', railLabel: 'Files', said: '' });
+        const WAITING = JSON.stringify({ header: true, rail: true, ...WAITING_NAMES });
+        // The sidebar open but the preview over it: the rail is not on
+        // screen then, so neither is its dot.
+        const UNDER_PREVIEW = JSON.stringify({ header: true, rail: false, ...WAITING_NAMES });
         const cancel = async () => {
+            if (!(await promptShown())) return;
             await wrapper.locator('#files-prompt-cancel').click();
             await waitFor(async () => !(await promptShown()));
+        };
+        const closePreview = async () => {
+            if (await previewOpen()) await wrapper.locator('#files-close-btn').click();
+        };
+        const openPreview = async () => {
+            await list.locator('.files-row', { hasText: SIDEBAR_FILE }).click();
+            return waitFor(async () => (await previewText(wrapper)) === 'sidebar: ok\n');
+        };
+        // The check, held until released, so the question comes when the
+        // test is ready for it.
+        const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
+        const holdAsk = async () => {
+            const gate = { held: 0 };
+            const opened = new Promise((r) => { gate.open = r; });
+            release = gate.open;
+            await context.route(isAsk, async (route) => {
+                gate.held++;
+                await opened;
+                await route.continue().catch(() => {});
+            });
+            gate.release = async () => {
+                gate.open();
+                await context.unroute(isAsk);
+            };
+            return gate;
         };
 
         // Hidden while the question waits.
@@ -1796,43 +1839,127 @@ async function checkWaitingQuestion(browser, url) {
         check('fixture: the question is asked', await waitFor(promptShown), true);
         check('no dot while the sidebar is open', await waiting(), NONE);
         await wrapper.locator('#files-hide').click();
-        check('hiding the sidebar while a question waits puts a dot on 🗂️ and the rail, and says so',
+        check('hiding the sidebar while a question waits puts a dot on 🗂️ and the rail, and both their names say so',
             await waitFor(async () => (await waiting()) === WAITING), true);
-        await wrapper.locator('#files-btn').click();
-        check('opening it again shows the question, with focus on Keep both',
-            await waitFor(async () => !(await collapsed()) && (await promptShown())
-                && (await focusedId()) === 'files-prompt-keep'), true);
+        check('the rail\'s 📁 is named for it, as 🗂️ is',
+            await wrapper.getByRole('button', { name: WAITING_NAMES.railLabel, exact: true }).count(), 1);
+        // A held Enter: its first press opens the sidebar and puts focus on
+        // Keep both, and the key's repeats then land there. One press, one
+        // action: they must not answer the question.
+        await wrapper.evaluate(`window.ctpRepeats = 0;
+            document.addEventListener('keydown', (e) => { if (e.repeat && e.key === 'Enter') window.ctpRepeats++; }, true);`);
+        await wrapper.locator('#files-btn').focus();
+        await page.keyboard.down('Enter');
+        await page.keyboard.down('Enter');
+        await page.keyboard.down('Enter');
+        await page.keyboard.up('Enter');
+        check('fixture: the held Enter repeated', await wrapper.evaluate('window.ctpRepeats'), (n) => n >= 2);
+        check('a held Enter on 🗂️ opens the sidebar on the question, with focus on Keep both',
+            await waitFor(async () => !(await collapsed()) && (await focusedId()) === 'files-prompt-keep'), true);
+        check('and its repeats answer nothing: the question still waits, and nothing is uploaded',
+            { shown: await promptShown(), old: dexec(['cat', `${SIDEBAR_DIR}/${NAME}`]),
+                kept: dexec(['sh', '-c', '[ -e "$1" ] && echo yes || echo no', 'sh', `${SIDEBAR_DIR}/${KEPT}`]).trim() },
+            (v) => v.shown && v.old === 'old\n' && v.kept === 'no');
         check('and the dot goes', await waiting(), NONE);
         await cancel();
+        await closePreview();   // only there if a repeat did answer, but then in the way
 
         // Asked while hidden: the check is held until the sidebar is closed.
-        const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
-        let held = 0;
-        const gate = new Promise((r) => { release = r; });
-        await context.route(isAsk, async (route) => {
-            held++;
-            await gate;
-            await route.continue().catch(() => {});
-        });
+        let gate = await holdAsk();
         await askAbout();
-        check('fixture: the check is held', await waitFor(() => held === 1), true);
+        check('fixture: the check is held', await waitFor(() => gate.held === 1), true);
         await wrapper.locator('#files-hide').click();
-        release();
+        await gate.release();
         check('a question that comes while the sidebar is hidden puts the dot up',
             await waitFor(async () => (await waiting()) === WAITING), true);
         check('and leaves the sidebar hidden', await collapsed(), true);
-        await context.unroute(isAsk);
         await wrapper.locator('#files-rail [data-open-tab="files"]').click();
         check('the rail\'s 📁 opens it on the question, with focus on Keep both',
             await waitFor(async () => !(await collapsed()) && (await focusedId()) === 'files-prompt-keep'), true);
         check('and the dot goes there too', await waiting(), NONE);
         await cancel();
-        check('nothing was uploaded', dexec(['cat', `${SIDEBAR_DIR}/${NAME}`]), 'old\n');
+
+        // A preview opened over a waiting question (a file row clicked
+        // while it waits) hides it as much as one it arrives under.
+        await askAbout();
+        await waitFor(promptShown);
+        check('fixture: a question waits, in view', await waiting(), NONE);
+        await openPreview();
+        check('a preview opened over a waiting question puts the dot up',
+            await waitFor(async () => (await waiting()) === UNDER_PREVIEW), true);
+        await closePreview();
+        check('and closing it takes the dot down', await waitFor(async () => (await waiting()) === NONE), true);
+        await cancel();
+
+        // Under the preview, with the sidebar open: finishBatch opens the
+        // preview, so the next question of a queued batch comes up under
+        // it. Nothing on screen asks for an answer but the dot.
+        gate = await holdAsk();
+        await askAbout();
+        check('fixture: the check is held', await waitFor(() => gate.held === 1), true);
+        check('fixture: the preview is open over the sidebar', await openPreview(), true);
+        await gate.release();
+        check('fixture: the question is asked under the preview',
+            await waitFor(async () => (await promptShown()) && (await previewOpen())), true);
+        check('a question under the preview puts the dot up, though the sidebar is open',
+            await waitFor(async () => (await waiting()) === UNDER_PREVIEW), true);
+        check('and takes no focus behind the preview', await focusedId(), (id) => id !== 'files-prompt-keep');
+        await wrapper.locator('#files-close-btn').click();
+        check('closing the preview shows the question, with focus on Keep both, and the dot goes',
+            await waitFor(async () => !(await previewOpen()) && (await focusedId()) === 'files-prompt-keep'
+                && (await waiting()) === NONE), true);
+        await cancel();
+
+        // Answered from the keyboard behind the preview (it does not trap
+        // focus): the dot goes with the question.
+        gate = await holdAsk();
+        await askAbout();
+        check('fixture: the check is held', await waitFor(() => gate.held === 1), true);
+        await openPreview();
+        await gate.release();
+        check('fixture: the dot is up for the question under the preview',
+            await waitFor(async () => (await waiting()) === UNDER_PREVIEW), true);
+        await wrapper.locator('#files-prompt-cancel').focus();
+        await page.keyboard.press('Enter');
+        check('answered from behind the preview, the question goes, and the dot with it',
+            await waitFor(async () => !(await promptShown()) && (await waiting()) === NONE), true);
+        await closePreview();
+
+        // Hidden AND under the preview, then opened from the keyboard (the
+        // preview does not trap focus, so 🗂️ is reachable behind it). The
+        // sidebar opens, but the question is still covered: focus must not
+        // go to Keep both behind the preview, where Escape would answer it
+        // instead of closing the preview. Escape closes the preview.
+        gate = await holdAsk();
+        await askAbout();
+        check('fixture: the check is held', await waitFor(() => gate.held === 1), true);
+        await openPreview();
+        await wrapper.locator('#files-hide').focus();
+        await page.keyboard.press('Enter');
+        check('fixture: the sidebar is hidden behind the preview', await waitFor(collapsed), true);
+        await gate.release();
+        check('fixture: the dot is up for the question',
+            await waitFor(async () => (await waiting()) === WAITING), true);
+        await wrapper.locator('#files-btn').focus();
+        await page.keyboard.press('Enter');
+        check('fixture: 🗂️ opens the sidebar behind the preview',
+            await waitFor(async () => !(await collapsed()) && (await previewOpen())), true);
+        check('opened under the preview, the question takes no focus, and the dot stays up',
+            { focus: await focusedId(), waiting: await waiting() },
+            (v) => v.focus === 'files-btn' && v.waiting === UNDER_PREVIEW);
+        await page.keyboard.press('Escape');
+        check('Escape then closes the preview, leaving the question, and the dot goes',
+            await waitFor(async () => !(await previewOpen()) && (await promptShown()) && (await waiting()) === NONE), true);
+        await cancel();
+        check('nothing was uploaded',
+            { old: dexec(['cat', `${SIDEBAR_DIR}/${NAME}`]),
+                kept: dexec(['sh', '-c', '[ -e "$1" ] && echo yes || echo no', 'sh', `${SIDEBAR_DIR}/${KEPT}`]).trim() },
+            (v) => v.old === 'old\n' && v.kept === 'no');
     } finally {
         release();
         await context.close();
         rmSync(pickDir, { recursive: true, force: true });
-        dexec(['rm', '-f', `${SIDEBAR_DIR}/${NAME}`]);
+        dexec(['rm', '-f', `${SIDEBAR_DIR}/${NAME}`, `${SIDEBAR_DIR}/${KEPT}`]);
     }
 }
 

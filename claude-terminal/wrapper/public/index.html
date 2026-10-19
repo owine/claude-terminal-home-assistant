@@ -159,7 +159,8 @@
         /* An upload question waiting in the hidden Files sidebar: a dot on
            the Files button and on the rail's Files button, in the amber of
            the question itself. files-sidebar-ui.js sets .has-question only
-           while the sidebar is collapsed. */
+           while the question cannot be seen: the sidebar collapsed, or the
+           file preview over it. */
         #files-btn,
         .files-rail-btn {
             position: relative;
@@ -1176,7 +1177,7 @@
                 <div id="files-resizer" title="Drag to resize"></div>
                 <div id="files-rail">
                     <button type="button" class="files-rail-btn" id="files-expand" title="Show the sidebar">&laquo;</button>
-                    <button type="button" class="files-rail-btn" data-open-tab="files" title="Files">&#128193;<span class="files-question-badge" aria-hidden="true"></span></button>
+                    <button type="button" class="files-rail-btn" data-open-tab="files" title="Files" aria-label="Files">&#128193;<span class="files-question-badge" aria-hidden="true"></span></button>
                     <button type="button" class="files-rail-btn" data-open-tab="recent" title="Recent changes">&#128338;</button>
                 </div>
                 <!-- Two views of one panel, #files-list. Only tabs belong in a

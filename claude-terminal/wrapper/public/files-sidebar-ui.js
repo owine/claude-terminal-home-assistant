@@ -599,26 +599,31 @@
         let answerPrompt = null;
 
         // The question lives in the sidebar, so with the sidebar hidden it
-        // would wait unseen and hold up every file behind it. While both
-        // hold, a dot on the Files button and on the rail's Files button
-        // says one is waiting, the button's name says it too, and a live
-        // region outside the sidebar announces it (the notice, a live region
-        // itself, is hidden with the sidebar). Recomputed where either
-        // changes: a question asked (askCollision) and the sidebar shown or
-        // hidden (setOpen). An answer needs no call: it can only be given
-        // with the sidebar open, where the dot is already off.
+        // would wait unseen and hold up every file behind it. So it would
+        // under the file preview, which covers the whole page, and which
+        // finishBatch itself opens: a queued batch's next question comes up
+        // under it. While a question waits unseen, a dot on the Files
+        // button and on the rail's Files button says one is waiting, both
+        // buttons' names say it too, and a live region outside the sidebar
+        // announces it (the notice, a live region itself, is hidden with the
+        // sidebar). Recomputed wherever any of it changes: a question asked
+        // (askCollision) or answered (answerPrompt), the sidebar shown or
+        // hidden (setOpen), the preview opened or closed.
         const QUESTION_WAITING = 'an upload is waiting for your answer';
         const filesLabel = filesBtn.getAttribute('aria-label');
         const filesTitle = filesBtn.title;
         const railTitle = railFiles ? railFiles.title : '';
+        const railLabel = railFiles ? railFiles.getAttribute('aria-label') || railTitle : '';
+        const previewOpen = () => preview.classList.contains('active');
         function syncQuestionBadge() {
-            const on = Boolean(answerPrompt) && sidebar.classList.contains('collapsed');
+            const on = Boolean(answerPrompt) && (sidebar.classList.contains('collapsed') || previewOpen());
             if (filesBtn.classList.contains('has-question') === on) return;
             filesBtn.classList.toggle('has-question', on);
             filesBtn.setAttribute('aria-label', on ? filesLabel + ': ' + QUESTION_WAITING : filesLabel);
             filesBtn.title = on ? 'Files: ' + QUESTION_WAITING : filesTitle;
             if (railFiles) {
                 railFiles.classList.toggle('has-question', on);
+                railFiles.setAttribute('aria-label', on ? railLabel + ': ' + QUESTION_WAITING : railLabel);
                 railFiles.title = on ? 'Files: ' + QUESTION_WAITING : railTitle;
             }
             if (questionAnnouncer) {
@@ -629,7 +634,7 @@
         function askCollision(text, replaceable) {
             return new Promise((resolve) => {
                 const returnTo = document.activeElement;
-                const takeFocus = !preview.classList.contains('active')
+                const takeFocus = !previewOpen()
                     && (!returnTo || returnTo === document.body || sidebar.contains(returnTo));
                 showProgress(text + ' Answer in the Files sidebar.'
                     + (filesWaiting ? ' ' + filesWaiting + ' more waiting.' : ''));
@@ -638,6 +643,9 @@
                 prompt.hidden = false;
                 answerPrompt = (choice) => {
                     answerPrompt = null;
+                    // Answered from behind the preview (it does not trap
+                    // focus), the dot is up: it goes with the question.
+                    syncQuestionBadge();
                     const hadFocus = prompt.contains(document.activeElement);
                     prompt.hidden = true;
                     promptText.textContent = '';
@@ -805,6 +813,7 @@
             previewMeta.textContent = '';
             previewBody.textContent = 'Loading…';
             preview.classList.add('active');
+            syncQuestionBadge();
             try {
                 const data = await getJson('api/files/preview?path=' + encodeURIComponent(filePath)
                     + (showProtected.checked ? '&protected=1' : ''));
@@ -835,9 +844,23 @@
         // A protected file's text does not outlive its preview: closing
         // it clears the dialog, rather than leaving the secret hidden in
         // the DOM.
-        function closePreview() {
+        //
+        // A question that waited under it is in view now, with the sidebar
+        // open: focus goes to its Keep both when it would have gone there
+        // had the preview not been in the way (askCollision's rule), so from
+        // the preview itself, the sidebar, or nowhere; never from the
+        // terminal or the header. `focusQuestion` false leaves focus alone:
+        // Insert path, which hands it to the terminal.
+        function closePreview({ focusQuestion = true } = {}) {
+            const hadFocus = preview.contains(document.activeElement);
             preview.classList.remove('active');
             if (previewSensitive) blankPreview();
+            syncQuestionBadge();
+            if (!focusQuestion || !answerPrompt || sidebar.classList.contains('collapsed')) return;
+            const active = document.activeElement;
+            if (hadFocus || !active || active === document.body || sidebar.contains(active)) {
+                promptKeep.focus({ preventScroll: true });
+            }
         }
 
         // Bumping previewGen also drops an answer still in flight: the
@@ -859,8 +882,12 @@
             if (persist) save(STORE.open, open ? '1' : '0');
             if (open && !list.childElementCount) refresh();
             syncQuestionBadge();
-            // Opened with a question waiting: that is what the user came for.
-            if (open && answerPrompt) promptKeep.focus({ preventScroll: true });
+            // Opened with a question waiting: that is what the user came
+            // for. Not with the preview over it (reached from the keyboard
+            // behind it): focus behind the preview would let Escape answer
+            // the question instead of closing the preview. Closing it gives
+            // the question focus then (closePreview).
+            if (open && answerPrompt && !previewOpen()) promptKeep.focus({ preventScroll: true });
         }
 
         function switchTab(tab) {
@@ -936,7 +963,7 @@
         document.getElementById('files-insert-btn').addEventListener('click', async () => {
             if (!previewPath) return;
             const text = helpers.shellQuote(previewPath);
-            closePreview();
+            closePreview({ focusQuestion: false });
             if (PHONE.matches) setOpen(false);
             if (injectIntoTerminal(text)) {
                 try { document.getElementById('terminal-frame').contentWindow.term.focus(); } catch { /* not ready */ }
@@ -1011,6 +1038,14 @@
         promptKeep.addEventListener('click', () => answerPrompt?.('keep-both'));
         promptCancel.addEventListener('click', () => answerPrompt?.(null));
         prompt.addEventListener('keydown', (e) => {
+            // A held key's repeats. Enter on the Files button (or the
+            // rail's) opening the sidebar on a question puts focus on Keep
+            // both, where the key's next repeat would answer it: one press,
+            // one action.
+            if (isRepeatedActivation(e)) {
+                e.preventDefault();
+                return;
+            }
             if (e.key !== 'Escape') return;
             e.preventDefault();
             e.stopPropagation();
