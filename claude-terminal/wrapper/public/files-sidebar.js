@@ -99,7 +99,8 @@
         return url;
     }
 
-    // The inbox, below the root. Its sweep is run.sh's (upload_retention_days).
+    // The inbox, below the root. Its sweep is run.sh's (upload_retention_days),
+    // and only for a folder the add-on made: one holding its .ctp-inbox marker.
     const INBOX = 'uploads';
 
     /**
@@ -128,8 +129,9 @@
         if (rel === INBOX) {
             return {
                 disabled: false,
-                hint: 'Cleared after upload_retention_days',
-                title: 'Files here are deleted once they are older than the upload_retention_days option (30 days unless changed).',
+                hint: 'Cleared after upload_retention_days if the add-on made it',
+                title: 'If the add-on made this folder (it holds .ctp-inbox), files here are deleted once they are older '
+                    + 'than the upload_retention_days option (30 days unless changed). A folder you made is never cleared.',
             };
         }
         return { disabled: false, hint: '', title: 'Upload files into this folder' };
@@ -168,7 +170,7 @@
      * what was uploaded (`results`, the server's answers), what the user
      * cancelled (`skipped`), the folders a drop left out (`folders`), every
      * refusal (`problems`, uploadErrorText lines), and what a 429 left
-     * untried (`busy`: the batch stops at the first one, so they get one
+     * untried (`busy`: a route stops at its first one, so they get one
      * line together rather than a refusal each).
      */
     function uploadSummary({ results = [], skipped = [], folders = [], problems = [], busy = [] } = {}) {
@@ -211,9 +213,37 @@
         }
     }
 
+    /**
+     * Whether a listing's answer (api/files/list or api/files/recent) is
+     * one: an object with an entries array. getJson reads a 200 that is not
+     * JSON (a proxy's page, say) as {}, which is not.
+     */
+    function isListing(data) {
+        return !!data && typeof data === 'object' && Array.isArray(data.entries);
+    }
+
+    /**
+     * What a view says about the names the server could not read (not
+     * valid UTF-8) and so left out: its `unreadableNames` count. '' when
+     * there are none, or no count (an older server). `kind`: 'zip' (a
+     * sentence for the zip's notice), 'folder' (a note under a folder), or
+     * 'recent' (a note under Recent changes, whose count covers every name
+     * the walk passed, of whatever age, so it claims nothing about when
+     * they changed).
+     */
+    function unreadableNote(n, kind) {
+        if (!Number.isInteger(n) || n <= 0) return '';
+        const names = n + (n === 1 ? ' name' : ' names');
+        const verb = n === 1 ? 'is' : 'are';
+        if (kind === 'zip') return names + ' could not be read (not valid UTF-8) and ' + verb + ' left out.';
+        if (kind === 'folder') return names + ' here could not be read (not valid UTF-8) and ' + verb + ' not shown';
+        return names + ' could not be read (not valid UTF-8)';
+    }
+
     const api = {
         shellQuote, formatSize, formatAgo, clampWidth, relativeTo, downloadUrl,
         uploadUrl, uploadTarget, uploadErrorText, displayName, uploadSummary, tabKeyTarget,
+        isListing, unreadableNote,
         INBOX, DEFAULT_WIDTH,
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

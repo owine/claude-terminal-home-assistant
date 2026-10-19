@@ -208,6 +208,92 @@ test('uploadOne: a failed upload, or an answer with no path, is a problem', asyn
     assert.deepStrictEqual(await client.uploadOne(file('a.txt'), { fetchImpl, XHRImpl }), { problem: 'a.txt: upload failed (HTTP 200).', status: 200 });
 });
 
+// The name was free when asked about and taken by the time the upload was
+// put in place (the server's commit answers 409 'exists'). With someone to
+// ask, that is the same question as a name taken from the start, and the
+// file goes again with the answer.
+for (const answer of ['replace', 'keep-both']) {
+    test(`uploadOne: a name taken during the upload asks, and ${answer} sends the file again with it`, async () => {
+        const asked = [];
+        let sends = 0;
+        const { fetchImpl } = fakeFetch({ status: 200, data: {} });
+        const { XHRImpl, sent } = fakeXHR(
+            { status: 409, data: { reason: 'exists', replaceable: true, error: 'x.txt already exists in /config/f.' } },
+            { status: 200, data: { path: '/config/f/x.txt', name: 'x.txt' } });
+        const f = file('x.txt');
+        const got = await client.uploadOne(f, {
+            dest: '/config/f',
+            askCollision: async (text, replaceable) => { asked.push([text, replaceable]); return answer; },
+            onSend: () => { sends++; },
+            fetchImpl,
+            XHRImpl,
+        });
+        assert.deepStrictEqual(asked, [['x.txt already exists in /config/f.', true]]);
+        assert.deepStrictEqual(sent.map((x) => x.url), [
+            'api/files/upload?name=x.txt&dest=%2Fconfig%2Ff',
+            'api/files/upload?name=x.txt&dest=%2Fconfig%2Ff&onConflict=' + answer,
+        ]);
+        assert.strictEqual(sent[1].body, f);
+        assert.strictEqual(sends, 2, 'each send gets its own progress line');
+        assert.deepStrictEqual(got, { result: { path: '/config/f/x.txt', name: 'x.txt' } });
+    });
+}
+
+test('uploadOne: a name taken during the upload, then Cancel, skips the file and sends nothing more', async () => {
+    const { fetchImpl } = fakeFetch({ status: 200, data: {} });
+    const { XHRImpl, sent } = fakeXHR({ status: 409, data: { reason: 'exists', replaceable: false } });
+    const asked = [];
+    const got = await client.uploadOne(file('x.txt'), {
+        dest: '/config/f',
+        askCollision: async (text, replaceable) => { asked.push([text, replaceable]); return null; },
+        fetchImpl,
+        XHRImpl,
+    });
+    assert.deepStrictEqual(asked, [['x.txt already exists.', false]]);
+    assert.deepStrictEqual(got, { skipped: 'x.txt' });
+    assert.strictEqual(sent.length, 1);
+});
+
+// The terminal never asks (no askCollision): a 409 from the upload itself
+// stays a refusal, as one from the question does.
+test('uploadOne: with nothing to ask, a name taken during the upload is a refusal', async () => {
+    const { fetchImpl } = fakeFetch({ status: 200, data: {} });
+    const { XHRImpl, sent } = fakeXHR({ status: 409, data: { reason: 'exists', replaceable: true, error: 'x.txt already exists in /config/uploads.' } });
+    const got = await client.uploadOne(file('x.txt'), { fetchImpl, XHRImpl });
+    assert.deepStrictEqual(got, { problem: 'x.txt already exists in /config/uploads.', status: 409 });
+    assert.strictEqual(sent.length, 1);
+});
+
+// Asked once per file: an answer the server still refuses as taken (Keep
+// both past its numbering cap, Replace onto what became a folder) is that
+// refusal, not the same question again.
+test('uploadOne: a file sent with an answer and refused as taken again is a refusal, not asked twice', async () => {
+    for (const first of ['upload', 'question']) {
+        const { fetchImpl } = fakeFetch(first === 'question'
+            ? { status: 409, data: { reason: 'exists', replaceable: true } }
+            : { status: 200, data: {} });
+        const tooMany = { status: 409, data: { reason: 'exists', replaceable: false, error: 'Too many files named like x.txt in /config/f.' } };
+        const replies = first === 'question' ? [tooMany] : [{ status: 409, data: { reason: 'exists', replaceable: true } }, tooMany];
+        const { XHRImpl, sent } = fakeXHR(...replies);
+        let asked = 0;
+        const got = await client.uploadOne(file('x.txt'), {
+            dest: '/config/f', askCollision: async () => { asked++; return 'keep-both'; }, fetchImpl, XHRImpl,
+        });
+        assert.strictEqual(asked, 1, first);
+        assert.deepStrictEqual(got, { problem: 'Too many files named like x.txt in /config/f.', status: 409 }, first);
+        assert.strictEqual(sent.length, replies.length, first);
+    }
+});
+
+test('uploadOne: a 409 from the upload that is not a taken name is a refusal, even with someone to ask', async () => {
+    const { fetchImpl } = fakeFetch({ status: 200, data: {} });
+    const { XHRImpl } = fakeXHR({ status: 409, data: { reason: 'changed', error: 'x.txt in /config/f became a folder during the upload, so nothing was saved.' } });
+    let asked = 0;
+    const got = await client.uploadOne(file('x.txt'), { dest: '/config/f', askCollision: async () => { asked++; return 'replace'; }, fetchImpl, XHRImpl });
+    assert.strictEqual(asked, 0);
+    assert.deepStrictEqual(got, { problem: 'x.txt in /config/f became a folder during the upload, so nothing was saved.', status: 409 });
+});
+
 // --- runBatch: one file after another ---
 
 test('runBatch: one file after another, each in its bucket, with a counter only when there are several', async () => {
@@ -233,6 +319,36 @@ test('runBatch stops at the first 429: that file and the rest are busy, and none
     });
     assert.deepStrictEqual(tried, ['a', 'b']);
     assert.deepStrictEqual(got, { results: [{ path: '/x/a' }], problems: [], skipped: [], busy: ['b', 'c', 'd'] });
+});
+
+// The terminal's files go two ways, each with its own limit: the image
+// upload (10 a minute) and the inbox (60). A 429 from one says nothing about
+// the other, so only the files bound for the refusing route stop.
+test('runBatch with routeOf: a 429 stops only the files bound for that route; the rest still go', async () => {
+    const tried = [];
+    const started = [];
+    const files = [file('a.png'), file('b.txt'), file('c.png'), file('d.txt'), file('e.png')];
+    const got = await client.runBatch(files, async (f, counter) => {
+        tried.push(f.name + counter);
+        return f.name === 'c.png' ? { problem: 'Too many uploads', status: 429 } : { result: { path: '/x/' + f.name } };
+    }, { routeOf: (f) => (f.name.endsWith('.png') ? 'image' : 'inbox'), onStart: (i) => started.push(i) });
+    assert.deepStrictEqual(tried, ['a.png (1 of 5)', 'b.txt (2 of 5)', 'c.png (3 of 5)', 'd.txt (4 of 5)']);
+    assert.deepStrictEqual(started, [0, 1, 2, 3]);
+    assert.deepStrictEqual(got, {
+        results: [{ path: '/x/a.png' }, { path: '/x/b.txt' }, { path: '/x/d.txt' }],
+        problems: [], skipped: [], busy: ['c.png', 'e.png'],
+    });
+});
+
+test('runBatch with routeOf: each route that answers 429 stops on its own; busy keeps the files\' order', async () => {
+    const tried = [];
+    const files = [file('a.png'), file('b.txt'), file('c.png'), file('d.txt')];
+    const got = await client.runBatch(files, async (f) => {
+        tried.push(f.name);
+        return { problem: 'Too many uploads', status: 429 };
+    }, { routeOf: (f) => (f.name.endsWith('.png') ? 'image' : 'inbox') });
+    assert.deepStrictEqual(tried, ['a.png', 'b.txt']);
+    assert.deepStrictEqual(got.busy, ['a.png', 'b.txt', 'c.png', 'd.txt']);
 });
 
 // --- droppedFiles ---

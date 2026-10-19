@@ -362,6 +362,64 @@ async function checkSidebarTabs(browser, url) {
     }
 }
 
+// 6c. The sidebar's width when the window changes. A stored width the
+//     window cannot fit is shown narrower, to leave the terminal its room,
+//     but the width the user chose is kept: the window wide again, it comes
+//     back. Only a drag stores a width; a bare click on the edge stores
+//     nothing (it used to store the narrowed width as the user's choice).
+//     Its own context, with its own storage and window size.
+async function checkSidebarWidth(browser, url) {
+    const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 720 } });
+    const page = await context.newPage();
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        let wrapper = await wrapperFrame(page);
+        await wrapper.evaluate(`localStorage.setItem('filesSidebar.width', '650');
+            localStorage.setItem('filesSidebar.open', '1');`);
+        await page.reload({ waitUntil: 'load' });
+        wrapper = await wrapperFrame(page);
+        const state = () => wrapper.evaluate(`JSON.stringify({
+            shown: Math.round(document.getElementById('files-sidebar').getBoundingClientRect().width),
+            stored: localStorage.getItem('filesSidebar.width'),
+            main: document.getElementById('main').clientWidth,
+        })`).then(JSON.parse);
+        check('fixture: a stored width that fits is shown as it is',
+            await waitFor(async () => (await state()).shown === 650), true);
+        await page.setViewportSize({ width: 760, height: 720 });
+        check('fixture: in a narrower window the sidebar is shown narrower, leaving the terminal its room',
+            await waitFor(async () => {
+                const v = await state();
+                return v.shown < 650 && v.shown === v.main - 200;
+            }), true);
+        check('and the stored width is left alone', (await state()).stored, '650');
+        const handle = await wrapper.locator('#files-resizer').boundingBox();
+        const edge = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
+        await page.mouse.click(edge.x, edge.y);
+        check('a bare click on the edge, with no drag, stores nothing', (await state()).stored, '650');
+        // Nor a click with a tremble in it: a pixel is not a drag.
+        await page.mouse.move(edge.x, edge.y);
+        await page.mouse.down();
+        await page.mouse.move(edge.x - 1, edge.y);
+        await page.mouse.up();
+        check('nor a click that trembles a pixel', await state(), (v) => v.stored === '650' && v.shown === v.main - 200);
+        await page.setViewportSize({ width: 1280, height: 720 });
+        check('in a wide window again, the width the user chose comes back',
+            await waitFor(async () => (await state()).shown === 650), true);
+        // Positive control: a real drag still stores what it was dragged to.
+        const before = (await state()).shown;
+        const grip = await wrapper.locator('#files-resizer').boundingBox();
+        const at = { x: grip.x + grip.width / 2, y: grip.y + grip.height / 2 };
+        await page.mouse.move(at.x, at.y);
+        await page.mouse.down();
+        await page.mouse.move(at.x - 50, at.y, { steps: 5 });
+        await page.mouse.up();
+        check('a drag stores the width it was dragged to',
+            await state(), (v) => Math.abs(v.shown - (before + 50)) <= 2 && v.stored === String(v.shown));
+    } finally {
+        await context.close();
+    }
+}
+
 // Opens the sidebar (it reopens by itself after a reload), lists dotfiles,
 // and expands the fixture folder. Returns the tree.
 async function openSidebarFixture(wrapper) {
@@ -1734,19 +1792,26 @@ async function checkUploads(browser, url) {
     }
 }
 
-// 8b. A collision question left waiting in a hidden sidebar. The question
-//     lives in the sidebar, so hidden it held up the batch unseen until the
-//     sidebar came back. Now a dot on the 🗂️ button and on the rail's 📁,
-//     the button's name and a live region outside the sidebar say one is
-//     waiting, and opening the sidebar puts focus on Keep both. Covered: the
-//     sidebar hidden while a question waits, and a question that arrives
-//     while it is hidden (the check held until then). Every question is
-//     cancelled, so nothing is uploaded and no uploadBudget is spent. Its
-//     own context with service workers blocked, so context.route sees the
-//     check it holds.
+// 8b. A collision question left waiting where it cannot be seen. The
+//     question lives in the sidebar, so hidden it held up the batch unseen
+//     until the sidebar came back. Now a dot on the 🗂️ button and on the
+//     rail's 📁, both buttons' names and a live region outside the sidebar
+//     say one is waiting, and opening the sidebar puts focus on Keep both.
+//     Hidden means the sidebar collapsed, or the file preview over it: the
+//     preview covers the whole page, and finishBatch itself opens it, so a
+//     batch's next question can come up under it. Covered: the sidebar
+//     hidden while a question waits, a question that arrives while it is
+//     hidden (the check held until then), a held Enter on 🗂️ (its repeats
+//     must not answer), the sidebar opened with the preview still over it
+//     (no focus behind the preview), a question under the preview, closing
+//     the preview on it, and answering it from behind the preview. Every
+//     question is cancelled, so nothing is uploaded and no uploadBudget is
+//     spent. Its own context with service workers blocked, so context.route
+//     sees the check it holds.
 async function checkWaitingQuestion(browser, url) {
     const NAME = 'ctp-waiting.yaml';
-    dexec(['sh', '-c', 'printf "old\\n" > "$1"', 'sh', `${SIDEBAR_DIR}/${NAME}`]);
+    const KEPT = 'ctp-waiting (1).yaml';   // what a wrongly given Keep both would make
+    dexec(['sh', '-c', 'printf "old\\n" > "$1"; rm -f "$2"', 'sh', `${SIDEBAR_DIR}/${NAME}`, `${SIDEBAR_DIR}/${KEPT}`]);
     const pickDir = mkdtempSync(join(tmpdir(), 'ctp-waiting-'));
     const local = join(pickDir, NAME);
     writeFileSync(local, 'new\n');
@@ -1770,25 +1835,61 @@ async function checkWaitingQuestion(browser, url) {
         const promptShown = () => wrapper.evaluate('!document.getElementById("files-prompt").hidden');
         const collapsed = () => wrapper.evaluate('document.getElementById("files-sidebar").classList.contains("collapsed")');
         const focusedId = () => wrapper.evaluate('document.activeElement && document.activeElement.id');
+        const previewOpen = async () => (await previewState(wrapper)).active;
+        // Shown means on screen: a dot whose own display is block but whose
+        // button is in a hidden rail (the sidebar open) shows nothing.
         const waiting = () => wrapper.evaluate(`(() => {
             const shown = (sel) => {
                 const el = document.querySelector(sel);
-                return !!el && getComputedStyle(el).display !== 'none';
+                return !!el && el.getClientRects().length > 0;
             };
             return JSON.stringify({
                 header: shown('#files-btn .files-question-badge'),
                 rail: shown('#files-rail [data-open-tab="files"] .files-question-badge'),
                 label: document.getElementById('files-btn').getAttribute('aria-label'),
+                railLabel: document.querySelector('#files-rail [data-open-tab="files"]').getAttribute('aria-label'),
                 said: document.getElementById('files-question-announcer')?.textContent ?? null,
             });
         })()`);
-        const NONE = JSON.stringify({ header: false, rail: false, label: 'Files sidebar', said: '' });
-        const WAITING = JSON.stringify({ header: true, rail: true,
+        const WAITING_NAMES = {
             label: 'Files sidebar: an upload is waiting for your answer',
-            said: 'An upload is waiting for your answer in the Files sidebar.' });
+            railLabel: 'Files: an upload is waiting for your answer',
+            said: 'An upload is waiting for your answer in the Files sidebar.',
+        };
+        const NONE = JSON.stringify({ header: false, rail: false, label: 'Files sidebar', railLabel: 'Files', said: '' });
+        const WAITING = JSON.stringify({ header: true, rail: true, ...WAITING_NAMES });
+        // The sidebar open but the preview over it: the rail is not on
+        // screen then, so neither is its dot.
+        const UNDER_PREVIEW = JSON.stringify({ header: true, rail: false, ...WAITING_NAMES });
         const cancel = async () => {
+            if (!(await promptShown())) return;
             await wrapper.locator('#files-prompt-cancel').click();
             await waitFor(async () => !(await promptShown()));
+        };
+        const closePreview = async () => {
+            if (await previewOpen()) await wrapper.locator('#files-close-btn').click();
+        };
+        const openPreview = async () => {
+            await list.locator('.files-row', { hasText: SIDEBAR_FILE }).click();
+            return waitFor(async () => (await previewText(wrapper)) === 'sidebar: ok\n');
+        };
+        // The check, held until released, so the question comes when the
+        // test is ready for it.
+        const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
+        const holdAsk = async () => {
+            const gate = { held: 0 };
+            const opened = new Promise((r) => { gate.open = r; });
+            release = gate.open;
+            await context.route(isAsk, async (route) => {
+                gate.held++;
+                await opened;
+                await route.continue().catch(() => {});
+            });
+            gate.release = async () => {
+                gate.open();
+                await context.unroute(isAsk);
+            };
+            return gate;
         };
 
         // Hidden while the question waits.
@@ -1796,43 +1897,416 @@ async function checkWaitingQuestion(browser, url) {
         check('fixture: the question is asked', await waitFor(promptShown), true);
         check('no dot while the sidebar is open', await waiting(), NONE);
         await wrapper.locator('#files-hide').click();
-        check('hiding the sidebar while a question waits puts a dot on 🗂️ and the rail, and says so',
+        check('hiding the sidebar while a question waits puts a dot on 🗂️ and the rail, and both their names say so',
             await waitFor(async () => (await waiting()) === WAITING), true);
-        await wrapper.locator('#files-btn').click();
-        check('opening it again shows the question, with focus on Keep both',
-            await waitFor(async () => !(await collapsed()) && (await promptShown())
-                && (await focusedId()) === 'files-prompt-keep'), true);
+        check('the rail\'s 📁 is named for it, as 🗂️ is',
+            await wrapper.getByRole('button', { name: WAITING_NAMES.railLabel, exact: true }).count(), 1);
+        // A held Enter: its first press opens the sidebar and puts focus on
+        // Keep both, and the key's repeats then land there. One press, one
+        // action: they must not answer the question.
+        await wrapper.evaluate(`window.ctpRepeats = 0;
+            document.addEventListener('keydown', (e) => { if (e.repeat && e.key === 'Enter') window.ctpRepeats++; }, true);`);
+        await wrapper.locator('#files-btn').focus();
+        await page.keyboard.down('Enter');
+        await page.keyboard.down('Enter');
+        await page.keyboard.down('Enter');
+        await page.keyboard.up('Enter');
+        check('fixture: the held Enter repeated', await wrapper.evaluate('window.ctpRepeats'), (n) => n >= 2);
+        check('a held Enter on 🗂️ opens the sidebar on the question, with focus on Keep both',
+            await waitFor(async () => !(await collapsed()) && (await focusedId()) === 'files-prompt-keep'), true);
+        check('and its repeats answer nothing: the question still waits, and nothing is uploaded',
+            { shown: await promptShown(), old: dexec(['cat', `${SIDEBAR_DIR}/${NAME}`]),
+                kept: dexec(['sh', '-c', '[ -e "$1" ] && echo yes || echo no', 'sh', `${SIDEBAR_DIR}/${KEPT}`]).trim() },
+            (v) => v.shown && v.old === 'old\n' && v.kept === 'no');
         check('and the dot goes', await waiting(), NONE);
         await cancel();
+        await closePreview();   // only there if a repeat did answer, but then in the way
 
         // Asked while hidden: the check is held until the sidebar is closed.
-        const isAsk = (u) => u.pathname.endsWith('/api/files/upload') && u.searchParams.has('check');
-        let held = 0;
-        const gate = new Promise((r) => { release = r; });
-        await context.route(isAsk, async (route) => {
-            held++;
-            await gate;
-            await route.continue().catch(() => {});
-        });
+        let gate = await holdAsk();
         await askAbout();
-        check('fixture: the check is held', await waitFor(() => held === 1), true);
+        check('fixture: the check is held', await waitFor(() => gate.held === 1), true);
         await wrapper.locator('#files-hide').click();
-        release();
+        await gate.release();
         check('a question that comes while the sidebar is hidden puts the dot up',
             await waitFor(async () => (await waiting()) === WAITING), true);
         check('and leaves the sidebar hidden', await collapsed(), true);
-        await context.unroute(isAsk);
         await wrapper.locator('#files-rail [data-open-tab="files"]').click();
         check('the rail\'s 📁 opens it on the question, with focus on Keep both',
             await waitFor(async () => !(await collapsed()) && (await focusedId()) === 'files-prompt-keep'), true);
         check('and the dot goes there too', await waiting(), NONE);
         await cancel();
-        check('nothing was uploaded', dexec(['cat', `${SIDEBAR_DIR}/${NAME}`]), 'old\n');
+
+        // A preview opened over a waiting question (a file row clicked
+        // while it waits) hides it as much as one it arrives under.
+        await askAbout();
+        await waitFor(promptShown);
+        check('fixture: a question waits, in view', await waiting(), NONE);
+        await openPreview();
+        check('a preview opened over a waiting question puts the dot up',
+            await waitFor(async () => (await waiting()) === UNDER_PREVIEW), true);
+        await closePreview();
+        check('and closing it takes the dot down', await waitFor(async () => (await waiting()) === NONE), true);
+        await cancel();
+
+        // Under the preview, with the sidebar open: finishBatch opens the
+        // preview, so the next question of a queued batch comes up under
+        // it. Nothing on screen asks for an answer but the dot.
+        gate = await holdAsk();
+        await askAbout();
+        check('fixture: the check is held', await waitFor(() => gate.held === 1), true);
+        check('fixture: the preview is open over the sidebar', await openPreview(), true);
+        await gate.release();
+        check('fixture: the question is asked under the preview',
+            await waitFor(async () => (await promptShown()) && (await previewOpen())), true);
+        check('a question under the preview puts the dot up, though the sidebar is open',
+            await waitFor(async () => (await waiting()) === UNDER_PREVIEW), true);
+        check('and takes no focus behind the preview', await focusedId(), (id) => id !== 'files-prompt-keep');
+        await wrapper.locator('#files-close-btn').click();
+        check('closing the preview shows the question, with focus on Keep both, and the dot goes',
+            await waitFor(async () => !(await previewOpen()) && (await focusedId()) === 'files-prompt-keep'
+                && (await waiting()) === NONE), true);
+        await cancel();
+
+        // Answered from the keyboard behind the preview (it does not trap
+        // focus): the dot goes with the question.
+        gate = await holdAsk();
+        await askAbout();
+        check('fixture: the check is held', await waitFor(() => gate.held === 1), true);
+        await openPreview();
+        await gate.release();
+        check('fixture: the dot is up for the question under the preview',
+            await waitFor(async () => (await waiting()) === UNDER_PREVIEW), true);
+        await wrapper.locator('#files-prompt-cancel').focus();
+        await page.keyboard.press('Enter');
+        check('answered from behind the preview, the question goes, and the dot with it',
+            await waitFor(async () => !(await promptShown()) && (await waiting()) === NONE), true);
+        await closePreview();
+
+        // Hidden AND under the preview, then opened from the keyboard (the
+        // preview does not trap focus, so 🗂️ is reachable behind it). The
+        // sidebar opens, but the question is still covered: focus must not
+        // go to Keep both behind the preview, where Escape would answer it
+        // instead of closing the preview. Escape closes the preview.
+        gate = await holdAsk();
+        await askAbout();
+        check('fixture: the check is held', await waitFor(() => gate.held === 1), true);
+        await openPreview();
+        await wrapper.locator('#files-hide').focus();
+        await page.keyboard.press('Enter');
+        check('fixture: the sidebar is hidden behind the preview', await waitFor(collapsed), true);
+        await gate.release();
+        check('fixture: the dot is up for the question',
+            await waitFor(async () => (await waiting()) === WAITING), true);
+        await wrapper.locator('#files-btn').focus();
+        await page.keyboard.press('Enter');
+        check('fixture: 🗂️ opens the sidebar behind the preview',
+            await waitFor(async () => !(await collapsed()) && (await previewOpen())), true);
+        check('opened under the preview, the question takes no focus, and the dot stays up',
+            { focus: await focusedId(), waiting: await waiting() },
+            (v) => v.focus === 'files-btn' && v.waiting === UNDER_PREVIEW);
+        await page.keyboard.press('Escape');
+        check('Escape then closes the preview, leaving the question, and the dot goes',
+            await waitFor(async () => !(await previewOpen()) && (await promptShown()) && (await waiting()) === NONE), true);
+        // The focus 🗂️ would have given the question, held back while the
+        // preview covered it, is given once the preview is gone.
+        check('and the focus 🗂️ owed the question goes to Keep both', await focusedId(), 'files-prompt-keep');
+        await cancel();
+
+        // A held Escape on the preview, a question under it. The first
+        // press closes the preview and puts focus on Keep both; the key's
+        // repeats then land on the question, and must not cancel it.
+        gate = await holdAsk();
+        await askAbout();
+        check('fixture: the check is held', await waitFor(() => gate.held === 1), true);
+        await openPreview();
+        await gate.release();
+        check('fixture: the question waits under the preview',
+            await waitFor(async () => (await waiting()) === UNDER_PREVIEW), true);
+        await wrapper.evaluate(`window.ctpEscRepeats = 0;
+            document.addEventListener('keydown', (e) => { if (e.repeat && e.key === 'Escape') window.ctpEscRepeats++; }, true);`);
+        await wrapper.locator('#files-close-btn').focus();
+        await page.keyboard.down('Escape');
+        await page.keyboard.down('Escape');
+        await page.keyboard.down('Escape');
+        await page.keyboard.up('Escape');
+        check('fixture: the held Escape repeated', await wrapper.evaluate('window.ctpEscRepeats'), (n) => n >= 2);
+        check('a held Escape closes the preview, and its repeats leave the question it uncovers, focus on Keep both',
+            await waitFor(async () => !(await previewOpen()) && (await promptShown())
+                && (await focusedId()) === 'files-prompt-keep'), true);
+        await cancel();
+
+        // A preview answer that comes after the preview was closed, and
+        // closes it again (it says the file is protected, with Show
+        // protected files off; faked here). Closing a closed preview must
+        // not move focus: a question waiting in view must not pull it from
+        // wherever the user went meanwhile.
+        const isLatePreview = (u) => u.pathname.endsWith('/api/files/preview')
+            && (u.searchParams.get('path') || '').endsWith('/' + SIDEBAR_FILE);
+        const late = { held: 0 };
+        const lateGate = new Promise((r) => { late.open = r; });
+        await context.route(isLatePreview, async (route) => {
+            late.held++;
+            await lateGate;
+            await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+                size: 5, mtime: Date.now(), content: 'late\n', binary: false, truncated: false, sensitive: true }) })
+                .catch(() => {});
+        });
+        try {
+            await askAbout();
+            check('fixture: a question waits, in view', await waitFor(async () => (await promptShown()) && !(await previewOpen())), true);
+            await list.locator('.files-row', { hasText: SIDEBAR_FILE }).click();
+            check('fixture: the preview\'s answer is held', await waitFor(() => late.held === 1), true);
+            await wrapper.locator('#files-close-btn').click();
+            await wrapper.locator('#files-refresh').focus();
+            check('fixture: the preview is closed, and focus is on Refresh',
+                { open: await previewOpen(), focus: await focusedId() }, (v) => !v.open && v.focus === 'files-refresh');
+            late.open();
+            check('fixture: the late answer closed the preview again (it blanks a protected one)',
+                await waitFor(() => wrapper.evaluate('document.getElementById("files-preview-title").textContent === ""')), true);
+            check('closing a closed preview leaves focus where it is', await focusedId(), 'files-refresh');
+        } finally {
+            late.open();
+            await context.unroute(isLatePreview);
+        }
+        await cancel();
+        check('nothing was uploaded',
+            { old: dexec(['cat', `${SIDEBAR_DIR}/${NAME}`]),
+                kept: dexec(['sh', '-c', '[ -e "$1" ] && echo yes || echo no', 'sh', `${SIDEBAR_DIR}/${KEPT}`]).trim() },
+            (v) => v.old === 'old\n' && v.kept === 'no');
     } finally {
         release();
         await context.close();
         rmSync(pickDir, { recursive: true, force: true });
-        dexec(['rm', '-f', `${SIDEBAR_DIR}/${NAME}`]);
+        dexec(['rm', '-f', `${SIDEBAR_DIR}/${NAME}`, `${SIDEBAR_DIR}/${KEPT}`]);
+    }
+}
+
+// 8c. A name taken while the file was on its way: the question found it
+//     free, and something else took it before the upload was put in place,
+//     so the upload itself answers 409 'exists'. That is the same question
+//     as a name taken from the start, and the file goes again with the
+//     answer, for Keep both and for Replace alike. The body is held until
+//     the name has been taken in the container. Its own context with
+//     service workers blocked, so context.route sees the body it holds.
+//     Each round sends two real bodies, and takes its share of uploadBudget.
+async function checkUploadRace(browser, url) {
+    const RACE = 'ctp-race.txt';
+    const target = `${SIDEBAR_DIR}/${RACE}`;
+    const kept = `${SIDEBAR_DIR}/ctp-race (1).txt`;
+    const read = (p) => dexec(['sh', '-c', '[ -e "$1" ] && cat "$1" || printf "(none)"', 'sh', p]);
+    const pickDir = mkdtempSync(join(tmpdir(), 'ctp-race-'));
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    const isBody = (u) => u.pathname.endsWith('/api/files/upload') && !u.searchParams.has('check');
+    const bodies = [];
+    context.on('request', (r) => {
+        const u = new URL(r.url());
+        if (r.method() === 'POST' && isBody(u)) bodies.push(u);
+    });
+    // Holds the next body sent without an answer (no onConflict).
+    let hold = null;
+    await context.route(isBody, async (route) => {
+        const h = hold;
+        if (h && !new URL(route.request().url()).searchParams.has('onConflict')) {
+            hold = null;
+            h.held++;
+            await h.opened;
+        }
+        await route.continue().catch(() => {});
+    });
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const list = await openSidebarFixture(wrapper);
+        const fixtureName = SIDEBAR_DIR.split('/').pop();
+        const menuButton = list.locator('.files-row-wrap').filter({
+            has: wrapper.locator('.files-name', { hasText: new RegExp(`^${fixtureName}$`) }),
+        }).locator('.files-menu-btn');
+        const uploadHere = wrapper.locator('#files-menu .files-menu-item', { hasText: 'Upload here' });
+        const promptShown = () => wrapper.evaluate('!document.getElementById("files-prompt").hidden');
+        const promptState = () => wrapper.evaluate(`JSON.stringify({
+            text: document.getElementById('files-prompt-text').textContent,
+            replace: !document.getElementById('files-prompt-replace').hidden,
+        })`).then(JSON.parse);
+        const noticeText = () => wrapper.evaluate(`document.getElementById('files-notice').hidden
+            ? '' : document.getElementById('files-notice-text').textContent`);
+        for (const answer of ['keep-both', 'replace']) {
+            dexec(['rm', '-f', target, kept]);
+            const local = join(pickDir, RACE);
+            writeFileSync(local, `mine: ${answer}\n`);
+            const h = { held: 0 };
+            h.opened = new Promise((r) => { h.open = r; });
+            hold = h;
+            await uploadBudget(2);   // the body refused as taken, and the one sent again
+            await menuButton.click();
+            const [chooser] = await Promise.all([page.waitForEvent('filechooser'), uploadHere.click()]);
+            await chooser.setFiles(local);
+            check(`fixture (${answer}): the question found the name free, and the upload is held`,
+                (await waitFor(() => h.held === 1)) && !(await promptShown()), true);
+            dexec(['sh', '-c', 'printf "theirs\\n" > "$1"', 'sh', target]);
+            h.open();
+            const asked = await waitFor(async () => (await promptShown())
+                && JSON.stringify(await promptState()) === JSON.stringify({ text: `${RACE} already exists in ${SIDEBAR_DIR}.`, replace: true }));
+            check(`a name taken while the file was on its way asks the same question (${answer})`, asked, true);
+            if (!asked) {
+                console.log(`       notice: ${await noticeText()}`);
+                continue;
+            }
+            await wrapper.locator(answer === 'replace' ? '#files-prompt-replace' : '#files-prompt-keep').click();
+            if (answer === 'keep-both') {
+                check('Keep both sends the file again, numbered beside the one that took its name',
+                    await waitFor(() => read(kept) === 'mine: keep-both\n' && read(target) === 'theirs\n'), true);
+                check('and the notice says where it went',
+                    await waitFor(async () => (await noticeText()) === `Uploaded ctp-race (1).txt to ${SIDEBAR_DIR}.`), true);
+            } else {
+                check('Replace sends the file again, in place of the one that took its name',
+                    await waitFor(() => read(target) === 'mine: replace\n'), true);
+                check('and the notice says it replaced it',
+                    await waitFor(async () => (await noticeText()) === `Replaced ${RACE} in ${SIDEBAR_DIR}.`), true);
+            }
+            check(`fixture (${answer}): the file went twice, the second time with the answer`,
+                bodies.slice(-2).map((u) => u.searchParams.get('onConflict')), (v) => v[0] === null && v[1] === answer);
+            if ((await previewState(wrapper)).active) await wrapper.locator('#files-close-btn').click();
+        }
+    } finally {
+        hold?.open();
+        await context.close();
+        rmSync(pickDir, { recursive: true, force: true });
+        dexec(['rm', '-f', target, kept]);
+    }
+}
+
+// 8d. Listings that fail, or answer with something that is not a listing
+//     (a proxy's page answering 200, say). A failed folder listing shows
+//     its error and is not kept: collapsing and expanding the folder asks
+//     again. A listing that is not one shows an error line instead of
+//     "Loading…" forever, in the tree and in Recent changes. And an upload
+//     the server confirmed is reported as uploaded even when the listing
+//     that would reveal it fails: "Upload failed" there would invite the
+//     same file twice. Its own context with service workers blocked, so
+//     context.route sees the listings it fakes. One real upload body.
+async function checkBadListing(browser, url) {
+    const FILE = 'ctp-bad-listing.txt';
+    const pickDir = mkdtempSync(join(tmpdir(), 'ctp-bad-listing-'));
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    const isList = (p) => (u) => u.pathname.endsWith('/api/files/list') && u.searchParams.get('path') === p;
+    const isRecent = (u) => u.pathname.endsWith('/api/files/recent');
+    const notAListing = (route) => route.fulfill({ status: 200, contentType: 'text/html',
+        body: '<html><body>A proxy\'s page</body></html>' });
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        if (await wrapper.evaluate('document.getElementById("files-sidebar").classList.contains("collapsed")')) {
+            await wrapper.locator('#files-btn').click();
+        }
+        const fixtureName = SIDEBAR_DIR.split('/').pop();
+        const folder = wrapper.locator('#files-list .files-row', { hasText: fixtureName });
+        await waitFor(async () => (await folder.count()) === 1);
+        // What the fixture folder's own group shows: its notes and rows.
+        const inFolder = () => wrapper.evaluate(`(() => {
+            const wrap = [...document.querySelectorAll('#files-list .files-row-wrap')]
+                .find((w) => w.querySelector('.files-name')?.textContent === ${JSON.stringify(fixtureName)});
+            const group = wrap && wrap.nextElementSibling;
+            if (!group || group.hidden) return JSON.stringify(null);
+            return JSON.stringify({
+                notes: [...group.querySelectorAll(':scope > .files-note')].map((n) => n.textContent),
+                rows: group.querySelectorAll('.files-row').length,
+            });
+        })()`).then(JSON.parse);
+
+        // Failed once, then fine.
+        let listed = 0;
+        await context.route(isList(SIDEBAR_DIR), (route) => {
+            listed++;
+            if (listed === 1) {
+                return route.fulfill({ status: 500, contentType: 'application/json',
+                    body: JSON.stringify({ error: 'ctp: the listing failed' }) });
+            }
+            return route.continue();
+        });
+        await folder.click();
+        check('fixture: a failed folder listing shows its error',
+            await waitFor(async () => JSON.stringify((await inFolder())?.notes) === JSON.stringify(['⚠️ ctp: the listing failed'])), true);
+        await folder.click();
+        await folder.click();
+        check('collapsed and expanded again, a folder whose listing failed is listed again',
+            await waitFor(async () => {
+                const v = await inFolder();
+                return listed === 2 && v && v.rows > 0 && v.notes.length === 0;
+            }), true);
+        await folder.click();
+        await folder.click();
+        check('and a listing that worked is kept: expanding again asks nothing',
+            { listed, rows: (await inFolder())?.rows }, (v) => v.listed === 2 && v.rows > 0);
+        await context.unroute(isList(SIDEBAR_DIR));
+
+        // Not a listing: a 200 that is not JSON.
+        await context.route(isList(SIDEBAR_DIR), notAListing);
+        await wrapper.locator('#files-refresh').click();   // the tree drawn again, the folder closed
+        await waitFor(async () => (await folder.count()) === 1 && (await inFolder()) === null);
+        await folder.click();
+        check('a folder listing that is not one shows an error line, not Loading… forever',
+            await waitFor(async () => {
+                const v = await inFolder();
+                return !!v && v.rows === 0 && v.notes.length === 1 && /unexpected answer/.test(v.notes[0]);
+            }), true);
+        await context.unroute(isList(SIDEBAR_DIR));
+
+        // A folder whose only names could not be read (faked: the server's
+        // unreadableNames count) says so, and not also "(empty)".
+        await context.route(isList(SIDEBAR_DIR), (route) => route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ path: SIDEBAR_DIR, root: '/config', entries: [], truncated: false, unreadableNames: 2 }) }));
+        await folder.click();
+        await folder.click();
+        check('a folder whose names could not be read says so, and not "(empty)"',
+            await waitFor(async () => JSON.stringify((await inFolder())?.notes)
+                === JSON.stringify(['2 names here could not be read (not valid UTF-8) and are not shown'])), true);
+        await context.unroute(isList(SIDEBAR_DIR));
+        await context.route(isRecent, notAListing);
+        await wrapper.locator('.files-tab[data-tab="recent"]').click();
+        const listNotes = () => wrapper.evaluate(`JSON.stringify([...document.querySelectorAll('#files-list > .files-note')]
+            .map((n) => n.textContent))`).then(JSON.parse);
+        check('so does a Recent changes answer that is not one',
+            await waitFor(async () => {
+                const notes = await listNotes();
+                return notes.length === 1 && /unexpected answer/.test(notes[0]);
+            }), true);
+        await context.unroute(isRecent);
+        await context.route(isRecent, (route) => route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({ hours: 24, root: '/config', entries: [], truncated: false, incomplete: false, unreadableNames: 1 }) }));
+        await wrapper.locator('#files-refresh').click();
+        check('nor does Recent changes say "Nothing changed" when names could not be read',
+            await waitFor(async () => JSON.stringify(await listNotes())
+                === JSON.stringify(['1 name could not be read (not valid UTF-8)'])), true);
+        await context.unroute(isRecent);
+        await wrapper.locator('.files-tab[data-tab="files"]').click();
+        await waitFor(async () => (await folder.count()) === 1);
+
+        // The upload is saved; only the listing that reveals it fails.
+        await context.route(isList(INBOX_DIR), notAListing);
+        const local = join(pickDir, FILE);
+        writeFileSync(local, 'listed or not\n');
+        await uploadBudget(1);
+        const [chooser] = await Promise.all([page.waitForEvent('filechooser'), wrapper.locator('#files-upload-btn').click()]);
+        await chooser.setFiles(local);
+        check('fixture: the upload is saved',
+            await waitFor(() => dexec(['sh', '-c', 'cat "$1" 2>/dev/null || true', 'sh', `${INBOX_DIR}/${FILE}`]) === 'listed or not\n'), true);
+        const notice = () => wrapper.evaluate(`JSON.stringify({
+            text: document.getElementById('files-notice').hidden ? '' : document.getElementById('files-notice-text').textContent,
+            kind: document.getElementById('files-notice').className,
+        })`).then(JSON.parse);
+        check('an upload the server confirmed is reported as uploaded, even when the listing after it fails',
+            await waitFor(async () => JSON.stringify(await notice())
+                === JSON.stringify({ text: `Uploaded ${FILE} to ${INBOX_DIR}.`, kind: '' })), true);
+        await sleep(300);
+        check('and stays so: never "Upload failed"', (await notice()).text, `Uploaded ${FILE} to ${INBOX_DIR}.`);
+        await context.unroute(isList(INBOX_DIR));
+    } finally {
+        await context.close();
+        rmSync(pickDir, { recursive: true, force: true });
+        dexec(['rm', '-rf', INBOX_DIR]);
     }
 }
 
@@ -1893,9 +2367,15 @@ async function checkTerminalUploads(browser, url) {
     });
     // The image upload, faked: counted, never sent. Each answer names its
     // own file, so a typed path says which upload it was.
+    // With imageBusy it answers 429 instead, as the image limiter does.
     let imageUploads = 0;
+    let imageBusy = false;
     await context.route((u) => /\/upload$/.test(u.pathname) && !u.pathname.endsWith('/api/files/upload'), (route) => {
         imageUploads++;
+        if (imageBusy) {
+            return route.fulfill({ status: 429, contentType: 'application/json',
+                body: JSON.stringify({ error: 'Too many uploads. Try again in a minute.' }) });
+        }
         const name = `pasted-0-0000000${imageUploads}.png`;
         return route.fulfill({ status: 200, contentType: 'application/json',
             body: JSON.stringify({ success: true, path: `/data/images/${name}`, filename: name, size: 3 }) });
@@ -2069,6 +2549,22 @@ async function checkTerminalUploads(browser, url) {
         check('and asks nothing more after it', busyAsks, 1);
         check('nothing is typed for them', atPrompt(), '');
         await context.unroute(isAsk);
+
+        // The image upload's own 429 stops the images only: the inbox has
+        // a limit of its own, so a file bound for it still goes.
+        imageBusy = true;
+        const imagesBefore = imageUploads;
+        await budget(1);
+        await fire('page', 'drop', { files: [['busy1.png', 'image/png', 'png'], ['inbox ok.txt', 'text/plain', 'ok\n'],
+            ['busy2.png', 'image/png', 'png']] });
+        check('an image upload\'s 429 stops the images, while a file for the inbox still goes, its path typed',
+            (await waitFor(() => read(`${INBOX_DIR}/inbox ok.txt`) === 'ok\n'))
+                && (await typed(`'${INBOX_DIR}/inbox ok.txt'`)), true);
+        check('one line names the images it left',
+            await waitFor(async () => (await status()) === '⏳ 2 not uploaded: too many uploads, try again in a minute.'), true);
+        check('and the image after the 429 is never tried', imageUploads - imagesBefore, 1);
+        imageBusy = false;
+        await clearPrompt();
 
         const isBody = (u) => u.pathname.endsWith('/api/files/upload') && !u.searchParams.has('check');
         await context.route(isBody, (route) => route.abort());
@@ -2783,6 +3279,7 @@ async function run(engine, mode, url) {
 
     await checkStaleView(browser, url);
     await checkSidebarTabs(browser, url);
+    await checkSidebarWidth(browser, url);
     await checkDownloads(browser, url);
     await checkZipMenu(browser, url);
     await checkLateProtectedPreview(browser, url);
@@ -2792,6 +3289,8 @@ async function run(engine, mode, url) {
     await checkNoResizeObserver(browser, url);
     await checkUploads(browser, url);
     await checkWaitingQuestion(browser, url);
+    await checkUploadRace(browser, url);
+    await checkBadListing(browser, url);
     await checkTerminalUploads(browser, url);
     await checkUploadClientMissing(browser, url);
     await checkKeyboardViewport(browser, engine, mode, url);

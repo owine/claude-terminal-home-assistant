@@ -21,6 +21,8 @@ const {
     displayName,
     uploadSummary,
     tabKeyTarget,
+    isListing,
+    unreadableNote,
 } = require('../public/files-sidebar.js');
 
 test('plain paths are typed as-is', () => {
@@ -159,7 +161,10 @@ test('uploadTarget: offered on real folders; disabled with a reason on protected
     assert.strictEqual(uploadTarget(dir('/config/www/deps'), '/config').disabled, false);
     const inbox = uploadTarget(dir('/config/uploads'), '/config');
     assert.strictEqual(inbox.disabled, false);
-    assert.match(inbox.hint, /upload_retention_days/);
+    // Swept only when the add-on made it (its .ctp-inbox marker), so the
+    // note says so: an uploads folder the user made is never cleared.
+    assert.match(inbox.hint, /upload_retention_days if the add-on made it/);
+    assert.match(inbox.title, /If the add-on made this folder \(it holds \.ctp-inbox\)/);
     assert.strictEqual(uploadTarget(dir('/config/www/uploads'), '/config').hint, '');
 });
 
@@ -223,4 +228,33 @@ test('tabKeyTarget: arrows move and wrap, Home and End go to the ends, other key
     }
     assert.strictEqual(tabKeyTarget('ArrowRight', -1, 2), -1, 'focus is not on a tab');
     assert.strictEqual(tabKeyTarget('ArrowRight', 0, 0), -1, 'no tabs');
+});
+
+// A 200 that is not a listing (a proxy's page, which getJson reads as {}):
+// the tree shows an error for it rather than throwing on data.entries.
+test('isListing: an answer with an entries array, and nothing else', () => {
+    assert.strictEqual(isListing({ entries: [] }), true);
+    assert.strictEqual(isListing({ entries: [{ name: 'a' }], truncated: false }), true);
+    for (const v of [{}, null, undefined, 'x', [], { entries: null }, { entries: 'a' }, { entries: { length: 1 } }]) {
+        assert.strictEqual(isListing(v), false, JSON.stringify(v));
+    }
+});
+
+// The server counts the names it could not decode (not valid UTF-8) and
+// leaves out. Older servers send no count, so anything but a positive
+// number is none, and says nothing.
+test('unreadableNote: what each view says about names it could not read, nothing when there are none', () => {
+    assert.strictEqual(unreadableNote(1, 'zip'), '1 name could not be read (not valid UTF-8) and is left out.');
+    assert.strictEqual(unreadableNote(2, 'zip'), '2 names could not be read (not valid UTF-8) and are left out.');
+    assert.strictEqual(unreadableNote(1, 'folder'), '1 name here could not be read (not valid UTF-8) and is not shown');
+    assert.strictEqual(unreadableNote(2, 'folder'), '2 names here could not be read (not valid UTF-8) and are not shown');
+    // Recent's count covers every name the walk passed, whatever its age,
+    // so it does not claim they were changed recently.
+    assert.strictEqual(unreadableNote(1, 'recent'), '1 name could not be read (not valid UTF-8)');
+    assert.strictEqual(unreadableNote(2, 'recent'), '2 names could not be read (not valid UTF-8)');
+    for (const kind of ['zip', 'folder', 'recent']) {
+        for (const n of [0, undefined, null, '2', NaN, Infinity, -1, 1.5, true, {}]) {
+            assert.strictEqual(unreadableNote(n, kind), '', kind + ' ' + String(n));
+        }
+    }
 });

@@ -4,9 +4,10 @@
 // and the terminal's own ways in: the paperclip, a paste and a drop
 // (index.html). What is the same for both lives here once: the check=1
 // question and the upload itself, one file's way from the one to the other,
-// the batch rule that stops at the first 429, and reading the files out of a
-// drop. What each shows stays with it: the sidebar's notice, collision
-// prompt and tree; the terminal's status line and the paths it types.
+// the batch rule that stops a route at its first 429, and reading the files
+// out of a drop. What each shows stays with it: the sidebar's notice,
+// collision prompt and tree; the terminal's status line and the paths it
+// types.
 //
 // Dual target, like files-sidebar.js: in the browser it attaches
 // window.UploadClient and needs files-sidebar.js loaded before it (for
@@ -63,23 +64,35 @@
      * The inbox numbers a taken name (up to a cap), so a caller that only
      * uploads there can leave askCollision out; without it a taken name is
      * a refusal. askCollision(text, replaceable) answers a chosen folder's
-     * taken name with 'replace', 'keep-both' or null. onCheck() runs before
-     * the question; onSend() runs before the body and returns the progress
+     * taken name with 'replace', 'keep-both' or null. It is asked when the
+     * question finds the name taken, and also when the upload itself does
+     * (taken while the file was on its way): then the file goes again with
+     * the answer. At most once per file: a file sent with an answer and
+     * still refused as taken (Keep both past its numbering cap, Replace onto
+     * what became a folder) is that refusal. onCheck() runs before the
+     * question; onSend() runs before each body and returns its progress
      * callback.
      */
     async function uploadOne(file, { dest, askCollision, onCheck = () => {}, onSend = () => undefined, fetchImpl, XHRImpl } = {}) {
         const name = file.name;
+        const taken = (answer) => answer.status === 409 && answer.data.reason === 'exists';
+        const question = (answer) => askCollision(answer.data.error || helpers.displayName(name) + ' already exists.',
+            answer.data.replaceable === true);
         onCheck();
         const asked = await ask(helpers.uploadUrl({ name, dest, check: true, size: file.size }), { fetchImpl });
         let onConflict;
-        if (asked.status === 409 && asked.data.reason === 'exists' && askCollision) {
-            onConflict = await askCollision(asked.data.error || helpers.displayName(name) + ' already exists.',
-                asked.data.replaceable === true);
+        if (taken(asked) && askCollision) {
+            onConflict = await question(asked);
             if (!onConflict) return { skipped: name };
         } else if (asked.status !== 200) {
             return { problem: helpers.uploadErrorText(asked.status, asked.data, name), status: asked.status };
         }
-        const sent = await send(helpers.uploadUrl({ name, dest, onConflict }), file, onSend(), { XHRImpl });
+        let sent = await send(helpers.uploadUrl({ name, dest, onConflict }), file, onSend(), { XHRImpl });
+        if (taken(sent) && askCollision && !onConflict) {
+            onConflict = await question(sent);
+            if (!onConflict) return { skipped: name };
+            sent = await send(helpers.uploadUrl({ name, dest, onConflict }), file, onSend(), { XHRImpl });
+        }
         if (sent.status !== 200 || typeof sent.data.path !== 'string') {
             return { problem: helpers.uploadErrorText(sent.status, sent.data, name), status: sent.status };
         }
@@ -89,20 +102,29 @@
     /**
      * Files one after another through uploadFile(file, counter, index),
      * which resolves to what uploadOne does. `counter` is ' (2 of 3)' in a
-     * batch of several, '' for one file. Stops at the first 429 (too many
-     * uploads): the rest would only be refused too, each spending another
-     * request, so that file and every one after it are `busy`.
-     * onStart(index) runs as each file starts.
+     * batch of several, '' for one file. A 429 (too many uploads) stops the
+     * route that sent it: the files still bound for it would only be refused
+     * too, each spending another request, so that file and every later one
+     * for the same route are `busy`, untried, in the batch's order. Files
+     * for another route, with a limit of its own, still go. routeOf(file)
+     * names a file's route; by default every file has the same one, so the
+     * first 429 stops the batch. onStart(index) runs as each file starts.
      */
-    async function runBatch(files, uploadFile, { onStart = () => {} } = {}) {
+    async function runBatch(files, uploadFile, { onStart = () => {}, routeOf = () => '' } = {}) {
         const outcome = { results: [], problems: [], skipped: [], busy: [] };
+        const stopped = new Set();
         for (let i = 0; i < files.length; i++) {
+            if (stopped.has(routeOf(files[i]))) {
+                outcome.busy.push(files[i].name);
+                continue;
+            }
             onStart(i);
             const counter = files.length > 1 ? ' (' + (i + 1) + ' of ' + files.length + ')' : '';
             const done = await uploadFile(files[i], counter, i);
             if (done.status === 429) {
-                outcome.busy = files.slice(i).map((f) => f.name);
-                break;
+                stopped.add(routeOf(files[i]));
+                outcome.busy.push(files[i].name);
+                continue;
             }
             if (done.result) outcome.results.push(done.result);
             else if (done.problem) outcome.problems.push(done.problem);

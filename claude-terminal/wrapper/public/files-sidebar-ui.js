@@ -177,9 +177,15 @@
         // or toggled Hidden files) while it was in flight.
         let viewGen = 0;
 
+        // What a listing that is not one shows (helpers.isListing): a
+        // proxy's page answering 200, say, which getJson reads as {}.
+        const NOT_A_LISTING = '⚠️ The add-on gave an unexpected answer. Try again.';
+
         // One folder level into `container`; subfolders load on expand.
         // `gen` is passed for the top level only: a subfolder renders into
         // its own container, which a refresh detaches rather than reuses.
+        // Resolves to whether the folder was listed: false when it failed
+        // (its error showing in its place) or was dropped as stale.
         async function renderFolder(folderPath, container, depth, gen) {
             const stale = () => gen !== undefined && gen !== viewGen;
             container.replaceChildren(note('Loading…', depth));
@@ -187,15 +193,21 @@
             try {
                 data = await getJson('api/files/list?path=' + encodeURIComponent(folderPath));
             } catch (err) {
-                if (stale()) return;
+                if (stale()) return false;
                 container.replaceChildren(note('⚠️ ' + err.message, depth));
-                return;
+                return false;
             }
-            if (stale()) return;
+            if (stale()) return false;
+            if (!helpers.isListing(data)) {
+                container.replaceChildren(note(NOT_A_LISTING, depth));
+                return false;
+            }
             if (depth === 0 && data.root) rootPath = data.root;
             const entries = data.entries.filter((e) => showHidden.checked || !e.name.startsWith('.'));
+            // Names the server could not read are not "(empty)".
+            const unreadable = helpers.unreadableNote(data.unreadableNames, 'folder');
             container.replaceChildren();
-            if (!entries.length) container.append(note('(empty)', depth));
+            if (!entries.length && !unreadable) container.append(note('(empty)', depth));
             for (const entry of entries) {
                 const meta = entry.type === 'file' ? helpers.formatSize(entry.size) : '';
                 const row = makeRow(entry, depth, entry.name, meta);
@@ -228,11 +240,19 @@
                     };
                     // Opens the folder, listing it the first time, or again
                     // with `reload` (reveal(), after an upload into it).
-                    // Resolves once its listing is in.
+                    // Resolves once its listing is in. A listing that
+                    // failed is not kept: opening the folder again (collapse
+                    // and expand) asks again, where a kept failure would
+                    // show its error until the whole tree was refreshed.
                     let loading = null;
                     const open = ({ reload = false } = {}) => {
                         expand(true);
-                        if (!loading || reload) loading = renderFolder(entry.path, children, depth + 1);
+                        if (!loading || reload) {
+                            const listing = renderFolder(entry.path, children, depth + 1);
+                            loading = listing;
+                            const forget = () => { if (loading === listing) loading = null; };
+                            listing.then((listed) => { if (!listed) forget(); }, forget);
+                        }
                         return loading;
                     };
                     folderOpeners.set(row, open);
@@ -246,6 +266,8 @@
                 }
             }
             if (data.truncated) container.append(note('… more entries not shown', depth));
+            if (unreadable) container.append(note(unreadable, depth));
+            return true;
         }
 
         async function renderRecent(gen) {
@@ -259,15 +281,23 @@
                 return;
             }
             if (gen !== viewGen) return;
+            if (!helpers.isListing(data)) {
+                list.replaceChildren(note(NOT_A_LISTING));
+                return;
+            }
             if (data.root) rootPath = data.root;
+            // Its count covers names of any age, so one could have changed
+            // in the period: not "Nothing changed" then.
+            const unreadable = helpers.unreadableNote(data.unreadableNames, 'recent');
             list.replaceChildren();
-            if (!data.entries.length) list.append(note('Nothing changed in this period'));
+            if (!data.entries.length && !unreadable) list.append(note('Nothing changed in this period'));
             for (const entry of data.entries) {
                 const row = makeRow(entry, 0, helpers.relativeTo(rootPath, entry.path), helpers.formatAgo(entry.mtime));
                 row.addEventListener('click', () => { select(row); openPreview(entry.path, entry.sensitive); });
                 list.append(row);
             }
             if (data.truncated || data.incomplete) list.append(note('… showing the newest found; the search stopped early'));
+            if (unreadable) list.append(note(unreadable));
         }
 
         // The selected tab: aria-selected, the tablist's one tab stop, and
@@ -414,9 +444,10 @@
                 return;
             }
             startDownload(helpers.downloadUrl(entry.path, { zip: true }));
+            const unreadable = helpers.unreadableNote(plan.unreadableNames, 'zip');
             showNoticeIf(gen, 'Downloading ' + (plan.name || zipName) + ': ' + plan.files
                 + (plan.files === 1 ? ' file, ' : ' files, ') + helpers.formatSize(plan.bytes)
-                + ' before compression. Protected files are left out.');
+                + ' before compression. Protected files are left out.' + (unreadable ? ' ' + unreadable : ''));
         }
 
         // Folder actions, behind the always-visible ⋯ on each folder row
@@ -599,26 +630,31 @@
         let answerPrompt = null;
 
         // The question lives in the sidebar, so with the sidebar hidden it
-        // would wait unseen and hold up every file behind it. While both
-        // hold, a dot on the Files button and on the rail's Files button
-        // says one is waiting, the button's name says it too, and a live
-        // region outside the sidebar announces it (the notice, a live region
-        // itself, is hidden with the sidebar). Recomputed where either
-        // changes: a question asked (askCollision) and the sidebar shown or
-        // hidden (setOpen). An answer needs no call: it can only be given
-        // with the sidebar open, where the dot is already off.
+        // would wait unseen and hold up every file behind it. So it would
+        // under the file preview, which covers the whole page, and which
+        // finishBatch itself opens: a queued batch's next question comes up
+        // under it. While a question waits unseen, a dot on the Files
+        // button and on the rail's Files button says one is waiting, both
+        // buttons' names say it too, and a live region outside the sidebar
+        // announces it (the notice, a live region itself, is hidden with the
+        // sidebar). Recomputed wherever any of it changes: a question asked
+        // (askCollision) or answered (answerPrompt), the sidebar shown or
+        // hidden (setOpen), the preview opened or closed.
         const QUESTION_WAITING = 'an upload is waiting for your answer';
         const filesLabel = filesBtn.getAttribute('aria-label');
         const filesTitle = filesBtn.title;
         const railTitle = railFiles ? railFiles.title : '';
+        const railLabel = railFiles ? railFiles.getAttribute('aria-label') || railTitle : '';
+        const previewOpen = () => preview.classList.contains('active');
         function syncQuestionBadge() {
-            const on = Boolean(answerPrompt) && sidebar.classList.contains('collapsed');
+            const on = Boolean(answerPrompt) && (sidebar.classList.contains('collapsed') || previewOpen());
             if (filesBtn.classList.contains('has-question') === on) return;
             filesBtn.classList.toggle('has-question', on);
             filesBtn.setAttribute('aria-label', on ? filesLabel + ': ' + QUESTION_WAITING : filesLabel);
             filesBtn.title = on ? 'Files: ' + QUESTION_WAITING : filesTitle;
             if (railFiles) {
                 railFiles.classList.toggle('has-question', on);
+                railFiles.setAttribute('aria-label', on ? railLabel + ': ' + QUESTION_WAITING : railLabel);
                 railFiles.title = on ? 'Files: ' + QUESTION_WAITING : railTitle;
             }
             if (questionAnnouncer) {
@@ -629,7 +665,7 @@
         function askCollision(text, replaceable) {
             return new Promise((resolve) => {
                 const returnTo = document.activeElement;
-                const takeFocus = !preview.classList.contains('active')
+                const takeFocus = !previewOpen()
                     && (!returnTo || returnTo === document.body || sidebar.contains(returnTo));
                 showProgress(text + ' Answer in the Files sidebar.'
                     + (filesWaiting ? ' ' + filesWaiting + ' more waiting.' : ''));
@@ -638,6 +674,9 @@
                 prompt.hidden = false;
                 answerPrompt = (choice) => {
                     answerPrompt = null;
+                    // Answered from behind the preview (it does not trap
+                    // focus), the dot is up: it goes with the question.
+                    syncQuestionBadge();
                     const hadFocus = prompt.contains(document.activeElement);
                     prompt.hidden = true;
                     promptText.textContent = '';
@@ -734,7 +773,16 @@
                 showNotice(lines.join('\n'), kind);
                 return;
             }
-            const row = await reveal(last.path);
+            // The upload is in, whatever the tree does next: a listing that
+            // fails to show it must not turn it into "Upload failed", which
+            // would invite the same file again. Unrevealed, it is not
+            // previewed either.
+            let row = null;
+            try {
+                row = await reveal(last.path);
+            } catch (err) {
+                console.error('[wrapper] could not show the upload in the tree:', err);
+            }
             const entry = row && rowEntries.get(row);
             if (row) {
                 select(row);
@@ -805,6 +853,7 @@
             previewMeta.textContent = '';
             previewBody.textContent = 'Loading…';
             preview.classList.add('active');
+            syncQuestionBadge();
             try {
                 const data = await getJson('api/files/preview?path=' + encodeURIComponent(filePath)
                     + (showProtected.checked ? '&protected=1' : ''));
@@ -835,9 +884,30 @@
         // A protected file's text does not outlive its preview: closing
         // it clears the dialog, rather than leaving the secret hidden in
         // the DOM.
-        function closePreview() {
+        //
+        // A question that waited under it is in view now, with the sidebar
+        // open: focus goes to its Keep both when it would have gone there
+        // had the preview not been in the way (askCollision's rule), so from
+        // the preview itself, the sidebar, or nowhere; never from the
+        // terminal or the header. Or when setOpen owed it that focus and it
+        // is still where setOpen left it. `focusQuestion` false leaves focus
+        // alone: Insert path, which hands it to the terminal. A preview that
+        // was not open (a late answer closing it again) moves nothing: focus
+        // has gone wherever the user took it since.
+        function closePreview({ focusQuestion = true } = {}) {
+            const wasOpen = previewOpen();
+            const hadFocus = preview.contains(document.activeElement);
+            const owedFrom = questionFocusOwedFrom;
+            questionFocusOwedFrom = null;
             preview.classList.remove('active');
             if (previewSensitive) blankPreview();
+            syncQuestionBadge();
+            if (!wasOpen || !focusQuestion || !answerPrompt || sidebar.classList.contains('collapsed')) return;
+            const active = document.activeElement;
+            if (hadFocus || !active || active === document.body || sidebar.contains(active)
+                || (owedFrom && active === owedFrom)) {
+                promptKeep.focus({ preventScroll: true });
+            }
         }
 
         // Bumping previewGen also drops an answer still in flight: the
@@ -852,15 +922,29 @@
             previewBody.textContent = '';
         }
 
+        // Set when the sidebar opened on a question under the preview: the
+        // element focus stayed on, for closePreview to give the question
+        // the focus it was owed. Cleared when the preview closes or the
+        // sidebar does.
+        let questionFocusOwedFrom = null;
+
         function setOpen(open, { persist = true } = {}) {
             if (!open) closeMenu();
+            questionFocusOwedFrom = null;
             sidebar.classList.toggle('collapsed', !open);
             filesBtn.setAttribute('aria-expanded', String(open));
             if (persist) save(STORE.open, open ? '1' : '0');
             if (open && !list.childElementCount) refresh();
             syncQuestionBadge();
-            // Opened with a question waiting: that is what the user came for.
-            if (open && answerPrompt) promptKeep.focus({ preventScroll: true });
+            // Opened with a question waiting: that is what the user came
+            // for. Not with the preview over it (reached from the keyboard
+            // behind it): focus behind the preview would let Escape answer
+            // the question instead of closing the preview. Closing it gives
+            // the question focus then (closePreview, questionFocusOwedFrom).
+            if (open && answerPrompt) {
+                if (previewOpen()) questionFocusOwedFrom = document.activeElement;
+                else promptKeep.focus({ preventScroll: true });
+            }
         }
 
         function switchTab(tab) {
@@ -936,7 +1020,7 @@
         document.getElementById('files-insert-btn').addEventListener('click', async () => {
             if (!previewPath) return;
             const text = helpers.shellQuote(previewPath);
-            closePreview();
+            closePreview({ focusQuestion: false });
             if (PHONE.matches) setOpen(false);
             if (injectIntoTerminal(text)) {
                 try { document.getElementById('terminal-frame').contentWindow.term.focus(); } catch { /* not ready */ }
@@ -1011,6 +1095,15 @@
         promptKeep.addEventListener('click', () => answerPrompt?.('keep-both'));
         promptCancel.addEventListener('click', () => answerPrompt?.(null));
         prompt.addEventListener('keydown', (e) => {
+            // A held key's repeats. Enter on the Files button (or the
+            // rail's) opening the sidebar on a question puts focus on Keep
+            // both, where the key's next repeat would answer it; so does
+            // Escape closing the preview over a question, where its next
+            // repeat would cancel it unseen. One press, one action.
+            if (isRepeatedActivation(e) || (e.repeat && e.key === 'Escape')) {
+                e.preventDefault();
+                return;
+            }
             if (e.key !== 'Escape') return;
             e.preventDefault();
             e.stopPropagation();
@@ -1110,7 +1203,7 @@
             if (previewSensitive && !showProtected.checked) return;
             startDownload(helpers.downloadUrl(previewPath, { protectedOn: showProtected.checked }));
         });
-        document.getElementById('files-close-btn').addEventListener('click', closePreview);
+        document.getElementById('files-close-btn').addEventListener('click', () => closePreview());
         preview.addEventListener('click', (e) => { if (e.target === preview) closePreview(); });
         preview.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePreview(); });
         document.addEventListener('keydown', (e) => {
@@ -1140,10 +1233,20 @@
         // the pointer if capture does not hold across the frame boundary.
         // Every way a drag can end clears both, so the terminal is never
         // left without the pointer.
+        //
+        // The width the user chose (stored, or dragged to) is kept apart
+        // from the one shown: a window too narrow for it shows less, and the
+        // window wide again shows it again. Only a drag changes it and is
+        // stored; a bare click on the edge, which moves nothing, stores
+        // nothing (it used to store the narrowed width as the choice).
         function applyWidth(width) {
             sidebar.style.width = helpers.clampWidth(width, document.getElementById('main').clientWidth) + 'px';
         }
-        applyWidth(load(STORE.width));
+        let chosenWidth = load(STORE.width);
+        applyWidth(chosenWidth);
+        // How far the pointer must go before a press on the edge is a drag:
+        // a click with a tremble in it is not one.
+        const DRAG_SLOP = 3;
 
         let drag = null;
         function endDrag() {
@@ -1157,7 +1260,9 @@
             resizer.classList.remove('dragging');
             document.body.classList.remove('files-resizing');
             try { resizer.releasePointerCapture(ending.pointerId); } catch { /* already released */ }
-            save(STORE.width, parseInt(sidebar.style.width, 10));
+            if (!ending.moved) return;
+            chosenWidth = parseInt(sidebar.style.width, 10);
+            save(STORE.width, chosenWidth);
         }
         resizer.addEventListener('pointerdown', (e) => {
             // One drag at a time. A second pointer going down mid-drag
@@ -1167,10 +1272,14 @@
             if (e.button !== 0 || sidebar.classList.contains('collapsed') || PHONE.matches) return;
             e.preventDefault();
             const right = sidebar.getBoundingClientRect().right;
-            drag = {
-                pointerId: e.pointerId,
-                onMove: (ev) => applyWidth(right - ev.clientX),
+            const startX = e.clientX;
+            const d = { pointerId: e.pointerId, moved: false };
+            d.onMove = (ev) => {
+                if (!d.moved && Math.abs(ev.clientX - startX) < DRAG_SLOP) return;
+                d.moved = true;
+                applyWidth(right - ev.clientX);
             };
+            drag = d;
             try { resizer.setPointerCapture(e.pointerId); } catch { /* best effort */ }
             resizer.classList.add('dragging');
             document.body.classList.add('files-resizing');
@@ -1184,9 +1293,10 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') endDrag();
         });
-        // A narrower window may no longer fit a remembered width.
+        // A narrower window may no longer fit the chosen width, and a wider
+        // one may fit it again.
         window.addEventListener('resize', () => {
-            if (!drag) applyWidth(parseInt(sidebar.style.width, 10));
+            if (!drag) applyWidth(chosenWidth);
         });
 
         // Restore. A phone never reopens on load: there the sidebar
