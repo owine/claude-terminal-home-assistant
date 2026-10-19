@@ -167,6 +167,9 @@ for seq in '\033[<u' '\033[>4;0m' '\033[?2004l' '\033[?1004l' '\033[?9l' '\033[?
     expected=$(printf '%b' "$seq")
     assert_contains "emits ${seq#\\033}" "$reset_out" "$expected"
 done
+# Why the pair, and not ?1049l alone: see the real-tmux cases below.
+assert_contains "refreshes the saved cursor (?1049h) straight before ?1049l" \
+    "$reset_out" "$(printf '\033[?1049h\033[?1049l')"
 
 # stty only runs against a terminal: under test, stdin is not one, and stty on
 # a pipe would only print an error.
@@ -276,6 +279,53 @@ assert_eq "reset_terminal leaves iutf8 on" "iutf8" \
     "$(tr ' ' '\n' < "$pane_tmp/out.stty" 2>/dev/null | grep -x -e iutf8 -e -iutf8)"
 assert_eq "so Backspace over a multibyte character erases all of it" "61" \
     "$(cat "$pane_tmp/out.line" 2>/dev/null)"
+
+# A program that used the alternate screen during the session - an editor
+# opened from Claude Code, a pager - leaves tmux's saved cursor at the row
+# where it started. tmux restores that cursor on `?1049l` even when the
+# alternate screen is not in use, so reset_terminal jumped the cursor back up
+# and "Session ended" overwrote Claude's last lines, in the scrollback too.
+# The reset must leave the cursor where Claude left it.
+cat > "$pane_tmp/claude" <<'EOF'
+#!/bin/sh
+printf 'transcript start\n'
+printf '\033[?1049h\033[Hin an editor\033[?1049l'
+for i in 1 2 3 4 5 6; do printf 'final output %s\n' "$i"; done
+EOF
+chmod +x "$pane_tmp/claude"
+# shellcheck disable=SC2016  # expanded in the pane
+in_pane "CLAUDE_BIN=$pane_tmp/claude"'
+launch_claude
+show_return_message
+echo END > "$OUT/out.done"
+'
+wait_for "$pane_tmp/out.done"
+screen=$(tmux capture-pane -p -t picker 2>/dev/null)
+for i in 1 2 3 4 5 6; do
+    assert_contains "Claude's last output survives the exit message (line $i)" \
+        "${nl}${screen}${nl}" "${nl}final output $i${nl}"
+done
+assert_contains "and the exit message follows it" "${screen#*final output 6}" "Session ended"
+
+# The other case ?1049l exists for: Claude killed while it had the alternate
+# screen up. Leaving it must still restore the screen and cursor from before.
+cat > "$pane_tmp/claude" <<'EOF'
+#!/bin/sh
+printf 'transcript start\n'
+for i in 1 2 3; do printf 'final output %s\n' "$i"; done
+printf '\033[?1049h\033[10;10Hfull-screen UI when killed'
+EOF
+# shellcheck disable=SC2016  # expanded in the pane
+in_pane "CLAUDE_BIN=$pane_tmp/claude"'
+launch_claude
+show_return_message
+echo END > "$OUT/out.done"
+'
+wait_for "$pane_tmp/out.done"
+screen=$(tmux capture-pane -p -t picker 2>/dev/null)
+assert_not_contains "a killed full-screen Claude leaves the alternate screen" "$screen" "full-screen UI"
+assert_contains "and the exit message follows the main screen's output directly" \
+    "$screen" "final output 3${nl}${nl}────"
 
 tmux kill-server 2>/dev/null
 

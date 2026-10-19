@@ -121,8 +121,18 @@ reset_terminal() {
     fi
     # Kitty keyboard pop, modifyOtherKeys off, bracketed paste, focus events,
     # mouse tracking (X10, normal, button-event, any-event, SGR encoding),
-    # alternate screen; cursor visible
-    printf '\033[<u\033[>4;0m\033[?2004l\033[?1004l\033[?9l\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1049l\033[?25h'
+    # alternate screen; cursor visible.
+    #
+    # Leaving the alternate screen is `?1049h` then `?1049l`, not `?1049l`
+    # alone. tmux restores its saved cursor on `?1049l` even when the
+    # alternate screen is off, and that cursor is wherever the last program
+    # to enter it (an editor or pager opened during the session) started -
+    # so a bare `?1049l` moved the cursor up and the return message
+    # overwrote Claude's last lines. `?1049h` refreshes the saved cursor to
+    # where it is now, so the `?1049l` after it lands back in place. When
+    # Claude died with the alternate screen up, tmux ignores the `?1049h`
+    # (already on) and `?1049l` restores the cursor from before, as it should.
+    printf '\033[<u\033[>4;0m\033[?2004l\033[?1004l\033[?9l\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1049h\033[?1049l\033[?25h'
 }
 
 show_banner() {
