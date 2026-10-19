@@ -1,5 +1,50 @@
 # Changelog
 
+## [2.11.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.10.2...v2.11.0) (2026-10-19)
+
+
+### Features
+
+* add a Files sidebar for browsing /config ([#419](https://github.com/owine/claude-terminal-home-assistant/issues/419)) ([dd9f644](https://github.com/owine/claude-terminal-home-assistant/commit/dd9f6445791d841a68881413c7c6906f3abcf676))
+* add init_commands option to run commands at startup ([#414](https://github.com/owine/claude-terminal-home-assistant/issues/414)) ([4cd58e6](https://github.com/owine/claude-terminal-home-assistant/commit/4cd58e6a70151b55502a385f243a407c6ae128d6))
+* download files and folders from the Files sidebar ([#422](https://github.com/owine/claude-terminal-home-assistant/issues/422)) ([3bdd065](https://github.com/owine/claude-terminal-home-assistant/commit/3bdd06549dc392fb038a105fa6b532fa0cdf8768))
+* post Claude's login link as a Home Assistant notification ([#416](https://github.com/owine/claude-terminal-home-assistant/issues/416)) ([63c4877](https://github.com/owine/claude-terminal-home-assistant/commit/63c48771b8887186d8210e701442073c09206acb))
+* show the add-on version in the panel header and /health ([#418](https://github.com/owine/claude-terminal-home-assistant/issues/418)) ([deccac0](https://github.com/owine/claude-terminal-home-assistant/commit/deccac02be0372ec699056906b834da1c64fbd24))
+* upload any file from the terminal's paperclip, paste and drop ([#429](https://github.com/owine/claude-terminal-home-assistant/issues/429)) ([bde95c5](https://github.com/owine/claude-terminal-home-assistant/commit/bde95c582c46dd2f649024b98327c72e32a87fb6))
+* upload files into /config from the Files sidebar ([#428](https://github.com/owine/claude-terminal-home-assistant/issues/428)) ([1b3acb0](https://github.com/owine/claude-terminal-home-assistant/commit/1b3acb0f7e1542aac33fb0dabe13c86c85dd51de))
+
+
+### Bug Fixes
+
+* **a11y:** make the Files sidebar's tabs a complete tab set ([#438](https://github.com/owine/claude-terminal-home-assistant/issues/438)) ([55e62f8](https://github.com/owine/claude-terminal-home-assistant/commit/55e62f8b4524b20772c69e42758c84b82b2cdadb))
+* **a11y:** stop presenting the Files sidebar's rows as a tree ([#423](https://github.com/owine/claude-terminal-home-assistant/issues/423)) ([d67bfb6](https://github.com/owine/claude-terminal-home-assistant/commit/d67bfb6db501f5ce0fe8dadced9dcc9c2e866e71))
+* cap the log lines a cross-site page can cause ([#436](https://github.com/owine/claude-terminal-home-assistant/issues/436)) ([ec37c64](https://github.com/owine/claude-terminal-home-assistant/commit/ec37c648542159a528230da2ef4882e30aa0ff75))
+* **files:** judge names correctly, keep track of every upload part, and report unreadable names ([#444](https://github.com/owine/claude-terminal-home-assistant/issues/444)) ([c92a53d](https://github.com/owine/claude-terminal-home-assistant/commit/c92a53d38b5d2e51a0e191108c0dd614197b0129))
+* **files:** sidebar question focus and badge, mid-upload collisions, per-route 429, and listing robustness ([#447](https://github.com/owine/claude-terminal-home-assistant/issues/447)) ([dc07ab5](https://github.com/owine/claude-terminal-home-assistant/commit/dc07ab51064ee1986f973260b05f143b9d89f533))
+* fit the terminal to its frame on first load ([#420](https://github.com/owine/claude-terminal-home-assistant/issues/420)) ([940d8b9](https://github.com/owine/claude-terminal-home-assistant/commit/940d8b94c2345f0d276b15b36039732720ed75e8))
+* keep all files when a retention period is too large to count ([#437](https://github.com/owine/claude-terminal-home-assistant/issues/437)) ([60ed198](https://github.com/owine/claude-terminal-home-assistant/commit/60ed19824c542bbb208560f6bee5fbc3eaecad30))
+* keep the terminal above the on-screen keyboard inside Home Assistant ([#434](https://github.com/owine/claude-terminal-home-assistant/issues/434)) ([9f91388](https://github.com/owine/claude-terminal-home-assistant/commit/9f91388e3f2b3e43e8c9c0c16cbc090f85a4f12b))
+* let the upload button take a second image without a reload ([#417](https://github.com/owine/claude-terminal-home-assistant/issues/417)) ([023e6cd](https://github.com/owine/claude-terminal-home-assistant/commit/023e6cd02af36c7bd84a5200051fe1ff22abebda))
+* login-link re-posting and polling, session picker terminal state, init_commands hint ([#445](https://github.com/owine/claude-terminal-home-assistant/issues/445)) ([4061417](https://github.com/owine/claude-terminal-home-assistant/commit/4061417ce60a69f503ec1da5fc2f616cc9bac1de))
+* only sweep an upload inbox the add-on created ([#443](https://github.com/owine/claude-terminal-home-assistant/issues/443)) ([6a213a5](https://github.com/owine/claude-terminal-home-assistant/commit/6a213a5acbbb3578779f8f55d4d88709204bddee))
+* **pwa:** only delete this add-on's own caches when the worker updates ([#424](https://github.com/owine/claude-terminal-home-assistant/issues/424)) ([5d843df](https://github.com/owine/claude-terminal-home-assistant/commit/5d843df2ea067af0e46130994099ab4eccf9649e))
+* reset the terminal before the session picker draws its menu ([#413](https://github.com/owine/claude-terminal-home-assistant/issues/413)) ([1a44576](https://github.com/owine/claude-terminal-home-assistant/commit/1a4457671f9b083bc6d1a893c1119d0f01b65923))
+* show that an upload question waits while the Files sidebar is hidden ([#440](https://github.com/owine/claude-terminal-home-assistant/issues/440)) ([754a580](https://github.com/owine/claude-terminal-home-assistant/commit/754a580f49e18b8f3c7fc85d879710caf38ea876))
+* **wrapper:** pre-1970 zip crash, refused-upload bodies, log forging, and guard hardening ([#446](https://github.com/owine/claude-terminal-home-assistant/issues/446)) ([f01d590](https://github.com/owine/claude-terminal-home-assistant/commit/f01d590bd296f8894c90aa26ed15cb0513ea07d4))
+
+
+### Dependencies
+
+* bump vim and yq-go apk pins dropped from Alpine 3.24 ([#421](https://github.com/owine/claude-terminal-home-assistant/issues/421)) ([266b3ec](https://github.com/owine/claude-terminal-home-assistant/commit/266b3ecd87f3d6a80cc0a98b8786572e54e6953a))
+* update all non-major dependencies ([#431](https://github.com/owine/claude-terminal-home-assistant/issues/431)) ([b75e785](https://github.com/owine/claude-terminal-home-assistant/commit/b75e7859bdb0acf1cdb8929f2aacfdda8db5cc9e))
+* update dependency eslint to v10.13.0 ([#439](https://github.com/owine/claude-terminal-home-assistant/issues/439)) ([a026779](https://github.com/owine/claude-terminal-home-assistant/commit/a026779d8ac68e100950045ebd27c597896eaa13))
+* update vim apk package to v9.2.1178-r0 ([#411](https://github.com/owine/claude-terminal-home-assistant/issues/411)) ([a7335e2](https://github.com/owine/claude-terminal-home-assistant/commit/a7335e2a950ff2297cf8dbafe0902b28fd57bff3))
+
+
+### Performance Improvements
+
+* leave caches and the Claude binary out of HA backups ([#415](https://github.com/owine/claude-terminal-home-assistant/issues/415)) ([6182f8b](https://github.com/owine/claude-terminal-home-assistant/commit/6182f8bd68825b1c31ee0d6086022e6f24945687))
+
 ## [2.10.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.10.1...v2.10.2) (2026-10-13)
 
 
