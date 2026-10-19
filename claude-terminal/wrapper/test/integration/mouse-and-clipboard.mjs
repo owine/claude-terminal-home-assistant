@@ -1836,6 +1836,101 @@ async function checkWaitingQuestion(browser, url) {
     }
 }
 
+// 8c. A name taken while the file was on its way: the question found it
+//     free, and something else took it before the upload was put in place,
+//     so the upload itself answers 409 'exists'. That is the same question
+//     as a name taken from the start, and the file goes again with the
+//     answer, for Keep both and for Replace alike. The body is held until
+//     the name has been taken in the container. Its own context with
+//     service workers blocked, so context.route sees the body it holds.
+//     Each round sends two real bodies, and takes its share of uploadBudget.
+async function checkUploadRace(browser, url) {
+    const RACE = 'ctp-race.txt';
+    const target = `${SIDEBAR_DIR}/${RACE}`;
+    const kept = `${SIDEBAR_DIR}/ctp-race (1).txt`;
+    const read = (p) => dexec(['sh', '-c', '[ -e "$1" ] && cat "$1" || printf "(none)"', 'sh', p]);
+    const pickDir = mkdtempSync(join(tmpdir(), 'ctp-race-'));
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    const isBody = (u) => u.pathname.endsWith('/api/files/upload') && !u.searchParams.has('check');
+    const bodies = [];
+    context.on('request', (r) => {
+        const u = new URL(r.url());
+        if (r.method() === 'POST' && isBody(u)) bodies.push(u);
+    });
+    // Holds the next body sent without an answer (no onConflict).
+    let hold = null;
+    await context.route(isBody, async (route) => {
+        const h = hold;
+        if (h && !new URL(route.request().url()).searchParams.has('onConflict')) {
+            hold = null;
+            h.held++;
+            await h.opened;
+        }
+        await route.continue().catch(() => {});
+    });
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        const list = await openSidebarFixture(wrapper);
+        const fixtureName = SIDEBAR_DIR.split('/').pop();
+        const menuButton = list.locator('.files-row-wrap').filter({
+            has: wrapper.locator('.files-name', { hasText: new RegExp(`^${fixtureName}$`) }),
+        }).locator('.files-menu-btn');
+        const uploadHere = wrapper.locator('#files-menu .files-menu-item', { hasText: 'Upload here' });
+        const promptShown = () => wrapper.evaluate('!document.getElementById("files-prompt").hidden');
+        const promptState = () => wrapper.evaluate(`JSON.stringify({
+            text: document.getElementById('files-prompt-text').textContent,
+            replace: !document.getElementById('files-prompt-replace').hidden,
+        })`).then(JSON.parse);
+        const noticeText = () => wrapper.evaluate(`document.getElementById('files-notice').hidden
+            ? '' : document.getElementById('files-notice-text').textContent`);
+        for (const answer of ['keep-both', 'replace']) {
+            dexec(['rm', '-f', target, kept]);
+            const local = join(pickDir, RACE);
+            writeFileSync(local, `mine: ${answer}\n`);
+            const h = { held: 0 };
+            h.opened = new Promise((r) => { h.open = r; });
+            hold = h;
+            await uploadBudget(2);   // the body refused as taken, and the one sent again
+            await menuButton.click();
+            const [chooser] = await Promise.all([page.waitForEvent('filechooser'), uploadHere.click()]);
+            await chooser.setFiles(local);
+            check(`fixture (${answer}): the question found the name free, and the upload is held`,
+                (await waitFor(() => h.held === 1)) && !(await promptShown()), true);
+            dexec(['sh', '-c', 'printf "theirs\\n" > "$1"', 'sh', target]);
+            h.open();
+            const asked = await waitFor(async () => (await promptShown())
+                && JSON.stringify(await promptState()) === JSON.stringify({ text: `${RACE} already exists in ${SIDEBAR_DIR}.`, replace: true }));
+            check(`a name taken while the file was on its way asks the same question (${answer})`, asked, true);
+            if (!asked) {
+                console.log(`       notice: ${await noticeText()}`);
+                continue;
+            }
+            await wrapper.locator(answer === 'replace' ? '#files-prompt-replace' : '#files-prompt-keep').click();
+            if (answer === 'keep-both') {
+                check('Keep both sends the file again, numbered beside the one that took its name',
+                    await waitFor(() => read(kept) === 'mine: keep-both\n' && read(target) === 'theirs\n'), true);
+                check('and the notice says where it went',
+                    await waitFor(async () => (await noticeText()) === `Uploaded ctp-race (1).txt to ${SIDEBAR_DIR}.`), true);
+            } else {
+                check('Replace sends the file again, in place of the one that took its name',
+                    await waitFor(() => read(target) === 'mine: replace\n'), true);
+                check('and the notice says it replaced it',
+                    await waitFor(async () => (await noticeText()) === `Replaced ${RACE} in ${SIDEBAR_DIR}.`), true);
+            }
+            check(`fixture (${answer}): the file went twice, the second time with the answer`,
+                bodies.slice(-2).map((u) => u.searchParams.get('onConflict')), (v) => v[0] === null && v[1] === answer);
+            if ((await previewState(wrapper)).active) await wrapper.locator('#files-close-btn').click();
+        }
+    } finally {
+        hold?.open();
+        await context.close();
+        rmSync(pickDir, { recursive: true, force: true });
+        dexec(['rm', '-f', target, kept]);
+    }
+}
+
 // 9. The terminal's own ways in: the paperclip, a paste and a drop take any
 //    file. Small images (PNG, JPEG, GIF, WebP, SVG, at most 10 MB) still go
 //    to the image upload, faked here so section 5 keeps the image limiter's
@@ -1893,9 +1988,15 @@ async function checkTerminalUploads(browser, url) {
     });
     // The image upload, faked: counted, never sent. Each answer names its
     // own file, so a typed path says which upload it was.
+    // With imageBusy it answers 429 instead, as the image limiter does.
     let imageUploads = 0;
+    let imageBusy = false;
     await context.route((u) => /\/upload$/.test(u.pathname) && !u.pathname.endsWith('/api/files/upload'), (route) => {
         imageUploads++;
+        if (imageBusy) {
+            return route.fulfill({ status: 429, contentType: 'application/json',
+                body: JSON.stringify({ error: 'Too many uploads. Try again in a minute.' }) });
+        }
         const name = `pasted-0-0000000${imageUploads}.png`;
         return route.fulfill({ status: 200, contentType: 'application/json',
             body: JSON.stringify({ success: true, path: `/data/images/${name}`, filename: name, size: 3 }) });
@@ -2069,6 +2170,22 @@ async function checkTerminalUploads(browser, url) {
         check('and asks nothing more after it', busyAsks, 1);
         check('nothing is typed for them', atPrompt(), '');
         await context.unroute(isAsk);
+
+        // The image upload's own 429 stops the images only: the inbox has
+        // a limit of its own, so a file bound for it still goes.
+        imageBusy = true;
+        const imagesBefore = imageUploads;
+        await budget(1);
+        await fire('page', 'drop', { files: [['busy1.png', 'image/png', 'png'], ['inbox ok.txt', 'text/plain', 'ok\n'],
+            ['busy2.png', 'image/png', 'png']] });
+        check('an image upload\'s 429 stops the images, while a file for the inbox still goes, its path typed',
+            (await waitFor(() => read(`${INBOX_DIR}/inbox ok.txt`) === 'ok\n'))
+                && (await typed(`'${INBOX_DIR}/inbox ok.txt'`)), true);
+        check('one line names the images it left',
+            await waitFor(async () => (await status()) === '⏳ 2 not uploaded: too many uploads, try again in a minute.'), true);
+        check('and the image after the 429 is never tried', imageUploads - imagesBefore, 1);
+        imageBusy = false;
+        await clearPrompt();
 
         const isBody = (u) => u.pathname.endsWith('/api/files/upload') && !u.searchParams.has('check');
         await context.route(isBody, (route) => route.abort());
@@ -2792,6 +2909,7 @@ async function run(engine, mode, url) {
     await checkNoResizeObserver(browser, url);
     await checkUploads(browser, url);
     await checkWaitingQuestion(browser, url);
+    await checkUploadRace(browser, url);
     await checkTerminalUploads(browser, url);
     await checkUploadClientMissing(browser, url);
     await checkKeyboardViewport(browser, engine, mode, url);

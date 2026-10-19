@@ -168,7 +168,7 @@
      * what was uploaded (`results`, the server's answers), what the user
      * cancelled (`skipped`), the folders a drop left out (`folders`), every
      * refusal (`problems`, uploadErrorText lines), and what a 429 left
-     * untried (`busy`: the batch stops at the first one, so they get one
+     * untried (`busy`: a route stops at its first one, so they get one
      * line together rather than a refusal each).
      */
     function uploadSummary({ results = [], skipped = [], folders = [], problems = [], busy = [] } = {}) {

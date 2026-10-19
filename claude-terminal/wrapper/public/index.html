@@ -1728,13 +1728,15 @@
             uploadBtn.disabled = busy;
         }
 
+        // A 429 stops only its own route: the image upload and the inbox
+        // have limits of their own (runBatch's routeOf).
         async function runTerminalBatch(files, folders) {
             const outcome = await uploadClient.runBatch(files, (file, counter) =>
                 uploadClient.uploadForTerminal(file, {
                     counter,
                     onLine: (line, fraction) => setStatus(
                         fraction === null ? line : line + ' ' + Math.round(fraction * 100) + '%', '', true),
-                }));
+                }), { routeOf: uploadClient.terminalRoute });
             const typed = uploadClient.typedPaths(outcome.results);
             let delivered = 'terminal';
             if (typed && !injectIntoTerminal(typed)) {
