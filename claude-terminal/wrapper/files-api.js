@@ -463,7 +463,9 @@ function createFilesApi({
         let unreadableNames = 0;
         try {
             for await (const dirent of dir) {
-                if (dirents.length >= maxEntries) {
+                // Every name read counts, shown or not: the bound is on the
+                // read, so a folder of unreadable names cannot get round it.
+                if (dirents.length + unreadableNames >= maxEntries) {
                     truncated = true;
                     break;
                 }
@@ -615,6 +617,10 @@ function createFilesApi({
         const found = [];
         let visits = 0;
         let incomplete = false;
+        // Names that could not be read, every one the walk passed: whether
+        // such a file changed in the window cannot be known without its
+        // name, so this is not "left out of recent changes", only "seen and
+        // not readable". A folder so named counts once, unwalked.
         let unreadableNames = 0;
 
         async function walk(dir, depth) {

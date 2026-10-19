@@ -560,6 +560,24 @@ test('a name that is not valid UTF-8 is counted in a listing, not silently left 
         }
     });
 
+test('names that are not valid UTF-8 count toward a listing\'s entry bound', badNames, async () => {
+    // Read and counted all the same: a folder of 100k such names must not
+    // become a 100k-entry read.
+    const dir = path.join(root, 'odd-bound');
+    try {
+        write('odd-bound/plain.txt', 'plain');
+        for (const b of [0xfa, 0xfb, 0xfc]) makeBadName(dir, Buffer.from([0x62, b]));
+        const res = await createFilesApi({ root, maxEntries: 2 }).list('odd-bound');
+        assert.strictEqual(res.truncated, true);
+        assert.strictEqual(res.entries.length + res.unreadableNames, 2);
+        // positive control: with room for all four, all are read
+        const all = await createFilesApi({ root, maxEntries: 4 }).list('odd-bound');
+        assert.deepStrictEqual([all.truncated, all.entries.length, all.unreadableNames], [false, 1, 3]);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test('a name that is not valid UTF-8 is counted in recent changes, not silently left out',
     badNames, async () => {
         const recentRoot = path.join(base, 'recent-odd');

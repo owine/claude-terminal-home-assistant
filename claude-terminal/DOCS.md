@@ -530,9 +530,11 @@ not reachable. Which files it shows follows Studio Code Server's defaults:
 - A name that is not valid UTF-8 (Linux allows almost any bytes in a name;
   such names usually come from old archives or other systems) cannot be shown
   or asked for, so it is left out of the listing, recent changes and zips,
-  with everything inside such a folder, and counted rather than dropped
-  silently. In the terminal `ls` shows it with `?` in place of those bytes;
-  rename it there to bring it back.
+  with everything inside such a folder. It is counted as a name that could
+  not be read rather than dropped silently; recent changes counts every such
+  name its search passed, however old, since without the name it cannot tell
+  when the file changed. In the terminal `ls` shows it with `?` in place of
+  those bytes; rename it there to bring it back.
 
 Previews show at most the first 256 KB of a file, as plain text; binary files
 are recognised and not shown. A folder lists at most 1000 entries.
