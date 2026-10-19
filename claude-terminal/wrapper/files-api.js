@@ -75,6 +75,18 @@ const HIDDEN_NAME = /\.git$/i;
 // is an ordinary file and stays visible.
 const PARTIAL_FILE = /^\.ctp-upload-.*\.part$/i;
 
+// The Files sidebar's upload inbox, relative to the root, and the marker
+// files-upload.js writes into it when it makes the folder. run.sh sweeps the
+// inbox (upload_retention_days) only when the marker is there as a regular
+// file, so a folder called uploads that the user made is never swept. The
+// marker is not an upload: left out of listings, recent changes and zips
+// (walkEntryType), but only at that one path and only as a regular file.
+// Anywhere else the name is an ordinary file, and a folder or symlink called
+// .ctp-inbox in the inbox is not the marker to run.sh either.
+const INBOX = 'uploads';
+const INBOX_MARKER = '.ctp-inbox';
+const INBOX_MARKER_PATH = path.join(INBOX, INBOX_MARKER);
+
 // Listed (so the tree is honest about what is there), but previewed or
 // downloaded only with protected=1 ("Show protected files"), never zipped,
 // and left out of recent changes. Any path segment matching one of these
@@ -261,7 +273,8 @@ function createHaCheck({
  * disagree. `relative` is the entry's path below the real root.
  *
  * Returns null for an entry that is never shown: hidden, a partial file or
- * folder (PARTIAL_FILE) and, unless `allowSensitive`, a sensitive one.
+ * folder (PARTIAL_FILE), the inbox's marker (INBOX_MARKER_PATH) and, unless
+ * `allowSensitive`, a sensitive one.
  * Otherwise 'dir', 'file', 'symlink' or 'other' from the folder listing's own
  * type, which says what the entry itself is, never what a link points at.
  * Walks use only 'dir' and 'file', which is how they never follow a link.
@@ -270,6 +283,7 @@ function walkEntryType(relative, dirent, { allowSensitive = false } = {}) {
     const kind = classifyRelative(relative);
     if (kind === 'hidden' || (kind === 'sensitive' && !allowSensitive)) return null;
     if (PARTIAL_FILE.test(dirent.name)) return null;
+    if (relative === INBOX_MARKER_PATH && dirent.isFile()) return null;
     if (dirent.isSymbolicLink()) return 'symlink';
     if (dirent.isDirectory()) return 'dir';
     if (dirent.isFile()) return 'file';
@@ -708,6 +722,8 @@ module.exports = {
     sendError,
     inside,
     PARTIAL_FILE,
+    INBOX,
+    INBOX_MARKER,
     MAX_ENTRIES,
     MAX_PREVIEW_BYTES,
     MAX_RECENT_DEPTH,

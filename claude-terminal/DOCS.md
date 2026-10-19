@@ -210,7 +210,7 @@ mapping cannot be disabled without forking the add-on.
 | `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
 | `image_retention_days` | `30` | Pasted and dropped images older than this many days are deleted at startup. Only the add-on's own uploads (`pasted-*` in `/data/images`) are touched. `0` keeps them forever, and so does a value over 36500 (100 years), with a warning in the log. `/data` is included in every Home Assistant backup, so this also bounds backup growth. Caches and the Claude binary are always left out of backups; after a restore the add-on reinstalls the Claude version bundled with the image, and Claude updates itself again from there |
 | `upload_max_mb` | `25` | Largest file, in megabytes, uploaded into `/config`, from 1 to at most 1024: from the Files sidebar, and from the terminal (📎, paste, drop) for everything but small images, which go to `/data/images` with their own 10 MB limit. See Uploads under Files Sidebar, and Uploading Files from the Terminal |
-| `upload_retention_days` | `30` | Files in the sidebar's upload inbox, `/config/uploads`, last modified more than this many days ago are deleted at startup: every file at the inbox's top level, whatever its name and whoever put it there. Folders and symlinks in it are never removed. From 0 to at most 36500 (100 years); `0` keeps them forever. A folder you chose with **Upload here** is never swept. See Uploads under Files Sidebar |
+| `upload_retention_days` | `30` | Files in the sidebar's upload inbox, `/config/uploads`, last modified more than this many days ago are deleted at startup: every file at the inbox's top level, whatever its name and whoever put it there. Folders and symlinks in it are never removed. Only an inbox the add-on made is swept: it marks one with a hidden file, `.ctp-inbox`, and a `/config/uploads` without that marker (a folder of yours that was there first) is left alone, with a line in the log. From 0 to at most 36500 (100 years); `0` keeps them forever. A folder you chose with **Upload here** is never swept. See Uploads under Files Sidebar |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |
 | `init_commands` | `[]` | Shell commands run as root on every start, 120 seconds each. See Init Commands above |
@@ -462,8 +462,8 @@ Wait a minute and send those again.
 Both places are cleared at startup. `/data/images/` loses the add-on's own
 `pasted-*` files once they are older than `image_retention_days`. **The inbox
 is disposable:** every file at its top level is deleted once it is older than
-`upload_retention_days`, whoever put it there (see Uploads under Files
-Sidebar). A name already taken in the inbox gets a number (`report (1).pdf`);
+`upload_retention_days`, whoever put it there, if the add-on made the folder
+(see Uploads under Files Sidebar). A name already taken in the inbox gets a number (`report (1).pdf`);
 nothing is overwritten. Move files you want to keep somewhere else in
 `/config`.
 
@@ -645,6 +645,18 @@ itself: Upload here on it puts files in the swept folder, and its menu says
 so. Keep files you want to last somewhere else. If `/config/uploads` is a
 symlink or a file rather than a folder, it is never swept, and uploads to the
 inbox are refused until it is a plain folder again.
+
+Only an inbox the add-on made is swept. When it makes `/config/uploads`, it
+writes a one-line note into it, `.ctp-inbox`, which marks the folder as its
+own; the sidebar never shows the note, nor puts it in a zip, and the sweep
+never deletes it. If you already had a folder called `uploads` in `/config`,
+uploads go into it as well, but nothing in it is ever deleted: the log says
+at every start that it is not swept, and why. To have such a folder swept
+like an inbox the add-on made, create the marker yourself (`touch
+/config/uploads/.ctp-inbox` in the terminal). To keep it as your own, move or
+rename it, and the add-on makes a fresh inbox on the next upload. Deleting
+`.ctp-inbox` stops the sweep in the same way; the marker must be a plain
+file, not a symlink.
 
 An unfinished upload never leaves a partial file: if the connection drops,
 the browser stops sending, the disk fills up, or the add-on restarts mid-way,
