@@ -3,7 +3,9 @@
 // and Upload here, uploads (the Upload button, drops, the collision prompt,
 // progress), the notice line, Recent changes, the HA configuration check,
 // and the sidebar's open state, tabs and resizable width. The pure helpers it uses
-// (quoting, sizes, URLs) are files-sidebar.js, which loads before this.
+// (quoting, sizes, URLs) are files-sidebar.js, and the upload flow it shares
+// with the terminal (asking, sending, batches, reading drops) is
+// upload-client.js; both load before this.
 //
 // Browser only, no module system: this attaches window.FilesSidebarUI and
 // does nothing else when it loads. index.html calls init() once, as the
@@ -34,10 +36,13 @@
         }
         const { injectIntoTerminal, copyToClipboard, setStatus } = deps;
         const helpers = window.FilesSidebar;
+        const client = window.UploadClient;
         const sidebar = document.getElementById('files-sidebar');
         const filesBtn = document.getElementById('files-btn');
-        if (!helpers || !sidebar) {
-            console.error('[wrapper] files-sidebar.js did not load');
+        if (!helpers || !client || !sidebar) {
+            console.error(helpers && sidebar
+                ? '[wrapper] upload-client.js did not load'
+                : '[wrapper] files-sidebar.js did not load');
             if (filesBtn) filesBtn.style.display = 'none';
             return;
         }
@@ -539,6 +544,8 @@
 
         // --- Uploads ---
         //
+        // The flow itself is upload-client.js's (client), shared with the
+        // terminal's paperclip, paste and drop; what it shows is this file's.
         // One file per request, one after another, each asked about first
         // (check=1, no body), so a refusal - a name already taken, the size
         // limit, a protected folder - comes back as an answer: one sent
@@ -561,38 +568,6 @@
             pickDest = dest;
             uploadInput.value = '';
             uploadInput.click();
-        }
-
-        // The check=1 question: { status, data }, status 0 when no answer
-        // came.
-        async function askUpload(url) {
-            try {
-                const res = await fetch(url, { method: 'POST', cache: 'no-store' });
-                return { status: res.status, data: await res.json().catch(() => ({})) };
-            } catch (err) {
-                return { status: 0, data: { error: err.message } };
-            }
-        }
-
-        // The upload itself, by XHR: fetch reports no upload progress. The
-        // body is the file's bytes as they are.
-        function sendFile(url, file, onProgress) {
-            return new Promise((resolve) => {
-                const xhr = new XMLHttpRequest();
-                xhr.open('POST', url);
-                xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-                xhr.upload.onprogress = (e) => {
-                    if (e.lengthComputable && e.total) onProgress(e.loaded / e.total);
-                };
-                xhr.onload = () => {
-                    let data = {};
-                    try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
-                    resolve({ status: xhr.status, data });
-                };
-                xhr.onerror = () => resolve({ status: 0, data: {} });
-                xhr.onabort = () => resolve({ status: 0, data: {} });
-                xhr.send(file);
-            });
         }
 
         // The inline Replace / Keep both / Cancel question for a name that
@@ -639,29 +614,22 @@
         }
 
         // One file: { result } once it is in /config, { problem, status }
-        // when it was refused or failed, { skipped } when the user cancelled.
-        // The name goes to the server as it is (which cleans it); the notice
-        // shows it without invisible marks.
-        async function uploadOne(file, dest, counter) {
-            const name = file.name;
-            const shown = helpers.displayName(name);
-            showProgress('Checking ' + shown + counter + '…');
-            const asked = await askUpload(helpers.uploadUrl({ name, dest, check: true, size: file.size }));
-            let onConflict;
-            if (asked.status === 409 && asked.data.reason === 'exists') {
-                onConflict = await askCollision(asked.data.error || shown + ' already exists.', asked.data.replaceable === true);
-                if (!onConflict) return { skipped: name };
-            } else if (asked.status !== 200) {
-                return { problem: helpers.uploadErrorText(asked.status, asked.data, name), status: asked.status };
-            }
-            const line = 'Uploading ' + shown + counter + '…';
-            const gen = showProgress(line, 0);
-            const sent = await sendFile(helpers.uploadUrl({ name, dest, onConflict }), file,
-                (fraction) => showNoticeIf(gen, line, '', fraction));
-            if (sent.status !== 200 || typeof sent.data.path !== 'string') {
-                return { problem: helpers.uploadErrorText(sent.status, sent.data, name), status: sent.status };
-            }
-            return { result: sent.data };
+        // when it was refused or failed, { skipped } when the user cancelled
+        // (client.uploadOne). Its steps show in the notice, under the
+        // notice's generation gate; a taken name is asked about here. The
+        // notice shows the name without invisible marks.
+        function uploadOne(file, dest, counter) {
+            const shown = helpers.displayName(file.name);
+            return client.uploadOne(file, {
+                dest,
+                askCollision,
+                onCheck: () => showProgress('Checking ' + shown + counter + '…'),
+                onSend: () => {
+                    const line = 'Uploading ' + shown + counter + '…';
+                    const gen = showProgress(line, 0);
+                    return (fraction) => showNoticeIf(gen, line, '', fraction);
+                },
+            });
         }
 
         // The listed row for a path, if one is on screen.
@@ -746,35 +714,24 @@
             noticeClose.hidden = on;
         }
 
-        // `folders`: what a drop left out, named in the batch's line.
+        // `folders`: what a drop left out, named in the batch's line. The
+        // batch stops at the first 429 (client.runBatch).
         async function runBatch(files, dest, folders) {
-            const results = [];
-            const problems = [];
-            const skipped = [];
-            let busy = [];
             let started = 0;
             setUploading(true);
             try {
+                let outcome;
                 try {
-                    for (let i = 0; i < files.length; i++) {
-                        filesWaiting--;
-                        started++;
-                        const counter = files.length > 1 ? ' (' + (i + 1) + ' of ' + files.length + ')' : '';
-                        const done = await uploadOne(files[i], dest, counter);
-                        // Too many uploads: the rest would only be refused
-                        // too, each spending another request. Stop here.
-                        if (done.status === 429) {
-                            busy = files.slice(i).map((f) => f.name);
-                            break;
-                        }
-                        if (done.result) results.push(done.result);
-                        else if (done.problem) problems.push(done.problem);
-                        else skipped.push(done.skipped);
-                    }
+                    outcome = await client.runBatch(files, (file, counter) => uploadOne(file, dest, counter), {
+                        onStart: () => {
+                            filesWaiting--;
+                            started++;
+                        },
+                    });
                 } finally {
                     filesWaiting -= files.length - started;   // what a failure left unstarted
                 }
-                await finishBatch({ results, problems, skipped, folders, busy });
+                await finishBatch({ ...outcome, folders });
             } finally {
                 setUploading(false);
             }
@@ -1047,19 +1004,7 @@
             // Read now: a drop's data is gone once its event is over. A
             // dropped folder arrives as a File too; it is left out, and
             // named in the batch's line.
-            const items = Array.from(e.dataTransfer.items || []).filter((i) => i.kind === 'file');
-            const folders = [];
-            const files = [];
-            if (items.length) {
-                for (const item of items) {
-                    const asEntry = item.webkitGetAsEntry?.();
-                    const file = asEntry?.isDirectory ? null : item.getAsFile();
-                    if (asEntry?.isDirectory) folders.push(asEntry.name);
-                    else if (file) files.push(file);
-                }
-            } else {
-                files.push(...Array.from(e.dataTransfer.files || []));
-            }
+            const { files, folders } = client.droppedFiles(e.dataTransfer);
             if (!files.length) {
                 showNotice('⚠️ Folders cannot be uploaded. Drop the files inside them instead.', 'error');
                 return;

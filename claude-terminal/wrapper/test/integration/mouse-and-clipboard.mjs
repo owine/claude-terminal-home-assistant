@@ -1687,6 +1687,8 @@ async function run(engine, mode, url) {
         await cacheControl(''), 'no-cache');
     check('scripts are served with revalidation',
         await cacheControl('terminal-clipboard.js'), 'no-cache');
+    check('the upload client is served with revalidation',
+        await cacheControl('upload-client.js'), 'no-cache');
     check('the service worker is served with revalidation',
         await cacheControl('sw.js'), 'no-cache');
     // The Files sidebar's UI moved out of index.html into its own script. It
