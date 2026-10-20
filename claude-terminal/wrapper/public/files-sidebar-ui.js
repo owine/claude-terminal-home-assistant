@@ -1,8 +1,8 @@
 // Files sidebar UI: the /config tree, the file preview with Insert path and
 // Download, the protected toggle, the folder ⋯ menu with its zip download
-// and Upload here, uploads (the Upload button, drops, the collision prompt,
-// progress), the notice line, Recent changes, the HA configuration check,
-// and the sidebar's open state, tabs and resizable width. The pure helpers it uses
+// and Upload here, uploads (the Upload button, drops, pastes, the collision
+// prompt, progress), the notice line, Recent changes, the HA configuration
+// check, and the sidebar's open state, tabs and resizable width. The pure helpers it uses
 // (quoting, sizes, URLs) are files-sidebar.js, and the upload flow it shares
 // with the terminal (asking, sending, batches, reading drops) is
 // upload-client.js; both load before this.
@@ -1160,18 +1160,39 @@
                 showNotice('⚠️ Folders cannot be uploaded. Drop the files inside them instead.', 'error');
                 return;
             }
-            if (!wrap) {
-                uploadFiles(files, undefined, folders);
+            uploadAimedAt(wrap ? dropFolders.get(wrap) : null, 'drop', files, folders);
+        });
+
+        // Files go where `entry` says (helpers.uploadDestination): Upload
+        // here for a folder, the inbox for anything else, or refused in the
+        // notice. A drop's folder row, a paste's selected row.
+        function uploadAimedAt(entry, how, files, folders = []) {
+            const { dest, refused } = helpers.uploadDestination(entry, rootPath, how);
+            if (refused) {
+                showNotice('⚠️ Not uploaded: ' + refused, 'error');
                 return;
             }
-            const entry = dropFolders.get(wrap);
-            const target = helpers.uploadTarget(entry, rootPath);
-            if (!target || target.disabled) {
-                showNotice('⚠️ Not uploaded: ' + (target ? target.title
-                    : entry.name + ' is a link to a folder. Drop the files onto the folder itself.'), 'error');
-                return;
-            }
-            uploadFiles(files, entry.path, folders);
+            uploadFiles(files, dest, folders);
+        }
+
+        // Files pasted with focus in the sidebar follow the drop rule, with
+        // the selected row for the row dropped on: a folder means Upload
+        // here, anything else (a file, or nothing selected) the inbox. The
+        // paste is stopped here, so the page's terminal paste handler (on
+        // document, in index.html) never also uploads it to /data/images
+        // and types its path. A clipboard with text in it is a text paste
+        // (client.clipboardFiles), left alone for whatever has focus. Only
+        // a selected row on screen counts: one the tree has drawn again
+        // since, one inside a closed folder, or any with the sidebar down to
+        // its rail, would send the files somewhere the user cannot see. That
+        // is nothing selected, as a drop on the rail is a drop on no row.
+        sidebar.addEventListener('paste', (e) => {
+            const files = client.clipboardFiles(e.clipboardData);
+            if (!files.length) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const shown = selectedRow && selectedRow.getClientRects().length > 0;
+            uploadAimedAt(shown ? rowEntries.get(selectedRow) : null, 'paste', files);
         });
 
         // Files dragged over the open preview. It covers the whole page, so

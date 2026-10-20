@@ -17,6 +17,7 @@ const {
     downloadUrl,
     uploadUrl,
     uploadTarget,
+    uploadDestination,
     uploadErrorText,
     displayName,
     uploadSummary,
@@ -166,6 +167,31 @@ test('uploadTarget: offered on real folders; disabled with a reason on protected
     assert.match(inbox.hint, /upload_retention_days if the add-on made it/);
     assert.match(inbox.title, /If the add-on made this folder \(it holds \.ctp-inbox\)/);
     assert.strictEqual(uploadTarget(dir('/config/www/uploads'), '/config').hint, '');
+});
+
+test('uploadDestination: a folder is Upload here, anything else the inbox, a folder it cannot be is refused', () => {
+    const dir = (p, extra = {}) => ({ type: 'dir', path: p, name: p.split('/').pop(), ...extra });
+    // Nothing aimed at (a drop on blank space, a paste with no row
+    // selected) and a file are the inbox: no dest.
+    assert.deepStrictEqual(uploadDestination(null, '/config', 'drop'), { dest: undefined });
+    assert.deepStrictEqual(uploadDestination(undefined, '/config', 'paste'), { dest: undefined });
+    assert.deepStrictEqual(uploadDestination({ type: 'file', path: '/config/a.yaml', name: 'a.yaml' }, '/config', 'paste'),
+        { dest: undefined });
+    assert.deepStrictEqual(uploadDestination(dir('/config/blueprints'), '/config', 'paste'), { dest: '/config/blueprints' });
+    assert.deepStrictEqual(uploadDestination(dir('/config/uploads'), '/config', 'drop'), { dest: '/config/uploads' });
+    // Refused as its disabled Upload here explains it.
+    const locked = dir('/config/.storage', { sensitive: true });
+    assert.deepStrictEqual(uploadDestination(locked, '/config', 'paste'),
+        { refused: uploadTarget(locked, '/config').title });
+    assert.deepStrictEqual(uploadDestination(dir('/config/deps'), '/config', 'drop'),
+        { refused: uploadTarget(dir('/config/deps'), '/config').title });
+    // A symlinked folder has no Upload here; the advice fits how the
+    // files came.
+    const link = dir('/config/bp-link', { symlink: true });
+    assert.deepStrictEqual(uploadDestination(link, '/config', 'drop'),
+        { refused: 'bp-link is a link to a folder. Drop the files onto the folder itself.' });
+    assert.deepStrictEqual(uploadDestination(link, '/config', 'paste'),
+        { refused: 'bp-link is a link to a folder. Select the folder itself, then paste.' });
 });
 
 test('uploadErrorText: the server\'s message, else one for the status', () => {

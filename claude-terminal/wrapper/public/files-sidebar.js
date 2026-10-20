@@ -137,6 +137,27 @@
         return { disabled: false, hint: '', title: 'Upload files into this folder' };
     }
 
+    /**
+     * Where files dropped or pasted on the sidebar go, from the listing
+     * entry they were aimed at: the folder row a drop landed on, or the row
+     * selected when a paste came. No entry, or a file's, is the inbox:
+     * { dest: undefined }. A folder is Upload here, { dest: its path },
+     * unless it is no upload target (uploadTarget): then { refused: why }.
+     * `how` ('drop' or 'paste') words the advice for a symlinked folder.
+     */
+    function uploadDestination(entry, rootPath, how) {
+        if (!entry || entry.type !== 'dir') return { dest: undefined };
+        const target = uploadTarget(entry, rootPath);
+        if (!target) {
+            return {
+                refused: entry.name + ' is a link to a folder. '
+                    + (how === 'paste' ? 'Select the folder itself, then paste.' : 'Drop the files onto the folder itself.'),
+            };
+        }
+        if (target.disabled) return { refused: target.title };
+        return { dest: entry.path };
+    }
+
     // Control characters, and the invisible marks that reorder or hide
     // text (bidirectional marks, embeddings, overrides and isolates, and
     // the byte-order mark): the same ranges files-upload.js strips from
@@ -242,7 +263,7 @@
 
     const api = {
         shellQuote, formatSize, formatAgo, clampWidth, relativeTo, downloadUrl,
-        uploadUrl, uploadTarget, uploadErrorText, displayName, uploadSummary, tabKeyTarget,
+        uploadUrl, uploadTarget, uploadDestination, uploadErrorText, displayName, uploadSummary, tabKeyTarget,
         isListing, unreadableNote,
         INBOX, DEFAULT_WIDTH,
     };

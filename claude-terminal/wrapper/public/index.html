@@ -1204,7 +1204,7 @@
                         <option value="24" selected>Last 24 hours</option>
                         <option value="168">Last 7 days</option>
                     </select>
-                    <button type="button" id="files-upload-btn" aria-label="Upload files" title="Upload files to /config/uploads, cleared after upload_retention_days if the add-on made it. To upload into a folder, use its &#8943; menu or drop the files on it.">&#11014;&#65039; Upload</button>
+                    <button type="button" id="files-upload-btn" aria-label="Upload files" title="Upload files to /config/uploads, cleared after upload_retention_days if the add-on made it. To upload into a folder, use its &#8943; menu, drop the files on it, or select it and paste them.">&#11014;&#65039; Upload</button>
                     <button type="button" id="files-refresh" title="Refresh" aria-label="Refresh">&#8635;</button>
                 </div>
                 <div id="files-protected-strip" role="status"></div>
@@ -1790,8 +1790,10 @@
 
         // Files pasted while this page has focus (the paste bar, a button).
         // A paste while the terminal has focus happens in its frame's
-        // document instead: see catchTerminalFiles. A clipboard that also
-        // holds plain text is a text paste, left to whatever has focus.
+        // document instead: see catchTerminalFiles. One with focus in the
+        // Files sidebar is the sidebar's, which stops it before it gets
+        // here (files-sidebar-ui.js). A clipboard that also holds plain
+        // text is a text paste, left to whatever has focus.
         document.addEventListener('paste', (e) => {
             if (!uploadClient) return;
             const files = uploadClient.clipboardFiles(e.clipboardData);
