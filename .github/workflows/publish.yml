@@ -119,6 +119,10 @@ jobs:
     name: Publish version to Home Assistant
     needs: [init, manifest]
     runs-on: ubuntu-26.04
+    # Release-app secrets: see the environment note in release-please.yml.
+    environment:
+      name: release
+      deployment: false
     steps:
       - name: Generate GitHub App token
         id: app-token
