@@ -169,6 +169,20 @@ test('uploadTarget: offered on real folders; disabled with a reason on protected
     assert.strictEqual(uploadTarget(dir('/config/www/uploads'), '/config').hint, '');
 });
 
+test('uploadTarget: deps is matched as the server\'s rule folds it, long s included', () => {
+    const dir = (p) => ({ type: 'dir', path: p });
+    // The server's deps rule (files-upload.js, since the NFC names fix) is
+    // /^deps$/iu, which folds U+017F (long s) to s: the sidebar must not
+    // offer Upload here where the server would answer 403.
+    for (const name of ['deps', 'DEPS', 'Deps', 'dep\u017f', 'DEP\u017F']) {
+        assert.strictEqual(uploadTarget(dir('/config/' + name), '/config').disabled, true, name);
+        assert.strictEqual(uploadTarget(dir('/config/' + name + '/lib'), '/config').disabled, true, name + '/lib');
+    }
+    for (const name of ['depsx', 'xdeps', 'dep', 'deps.d']) {
+        assert.strictEqual(uploadTarget(dir('/config/' + name), '/config').disabled, false, name);
+    }
+});
+
 test('uploadDestination: a folder is Upload here, anything else the inbox, a folder it cannot be is refused', () => {
     const dir = (p, extra = {}) => ({ type: 'dir', path: p, name: p.split('/').pop(), ...extra });
     // Nothing aimed at (a drop on blank space, a paste with no row

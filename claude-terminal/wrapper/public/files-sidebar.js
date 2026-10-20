@@ -119,7 +119,10 @@
             };
         }
         const rel = relativeTo(rootPath, entry.path);
-        if (rel.split('/')[0].toLowerCase() === 'deps') {
+        // The server's deps rule (files-upload.js, since the NFC names
+        // fix): /^deps$/iu, folding case and U+017F (long s) to s. Matched
+        // here so the sidebar never offers what the server refuses.
+        if (/^deps$/iu.test(rel.split('/')[0])) {
             return {
                 disabled: true,
                 hint: 'Home Assistant manages this folder',
