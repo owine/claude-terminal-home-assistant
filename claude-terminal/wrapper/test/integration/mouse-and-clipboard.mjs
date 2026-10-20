@@ -2628,7 +2628,9 @@ async function checkTerminalUploads(browser, url) {
 async function checkSidebarPaste(browser, url) {
     const LOCKED = '.ssh';
     const TAKEN = 'paste taken.txt';
-    dexec(['sh', '-c', 'rm -rf "$1"; mkdir -p "$2/$3"; printf "old\\n" > "$2/$4"', 'sh', INBOX_DIR, SIDEBAR_DIR, LOCKED, TAKEN]);
+    const CLICKED = 'click target';
+    dexec(['sh', '-c', 'rm -rf "$1"; mkdir -p "$2/$3" "$2/$5"; printf "old\\n" > "$2/$4"', 'sh',
+        INBOX_DIR, SIDEBAR_DIR, LOCKED, TAKEN, CLICKED]);
     await resetPane();
     const { atPrompt, typed, clearPrompt } = await watchPrompt();
     const exists = (p) => dexec(['sh', '-c', '[ -e "$1" ] && echo yes || echo no', 'sh', p]).trim() === 'yes';
@@ -2830,6 +2832,67 @@ async function checkSidebarPaste(browser, url) {
                 && asks.length - asksBefore === 1 && imageUploads === 0 && atPrompt() === '', true);
         await closePreview();
 
+        // A folder row picked with the mouse takes focus, so a paste after
+        // it is the sidebar's. Safari does not focus a button on click:
+        // focus stayed on the page, and the paste took the terminal's way.
+        // Real mouse clicks, first as the engine clicks, then with the
+        // mousedown's default (what moves focus there) prevented, which is
+        // Safari's behaviour in any engine. Each from focus on the page.
+        const clickAt = async (locator) => {
+            await locator.scrollIntoViewIfNeeded();
+            const box = await locator.boundingBox();
+            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        };
+        const NO_CLICK_FOCUS = `window.ctpNoClickFocus = (e) => e.preventDefault();
+            document.addEventListener('mousedown', window.ctpNoClickFocus, true)`;
+        const CLICK_FOCUS = `document.removeEventListener('mousedown', window.ctpNoClickFocus, true)`;
+        const focused = () => wrapper.evaluate(`(() => {
+            const a = document.activeElement;
+            return JSON.stringify({
+                inSidebar: document.getElementById('files-sidebar').contains(a),
+                path: (a && a.dataset && a.dataset.path) || (a && a.id) || (a && a.tagName),
+            });
+        })()`).then(JSON.parse);
+        // Positive control for the simulation: with it on, a real click on a
+        // button that does nothing about focus leaves focus on the page.
+        await wrapper.evaluate(`(() => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.id = 'ctp-focus-probe';
+            b.textContent = 'probe';
+            document.getElementById('files-footer').append(b);
+            document.activeElement && document.activeElement.blur();
+            ${NO_CLICK_FOCUS};
+        })()`);
+        try {
+            await clickAt(wrapper.locator('#ctp-focus-probe'));
+            check('fixture: with focus-on-click suppressed, a real click leaves focus on the page',
+                (await focused()).path, 'BODY');
+        } finally {
+            await wrapper.evaluate(`${CLICK_FOCUS}; document.getElementById('ctp-focus-probe')?.remove()`);
+        }
+        for (const safari of [false, true]) {
+            const how = safari ? 'focus-on-click suppressed, as in Safari' : 'as the engine clicks';
+            const name = safari ? 'clicked safari.png' : 'clicked.png';
+            await wrapper.evaluate('document.activeElement && document.activeElement.blur()');
+            if (safari) await wrapper.evaluate(NO_CLICK_FOCUS);
+            try {
+                await clickAt(folderRow(CLICKED));
+            } finally {
+                if (safari) await wrapper.evaluate(CLICK_FOCUS);
+            }
+            check(`fixture: a real click selects the folder (${how})`, await selected(), `${SIDEBAR_DIR}/${CLICKED}`);
+            check(`a folder row clicked with the mouse has focus (${how})`, await focused(),
+                (v) => v.inSidebar && v.path === `${SIDEBAR_DIR}/${CLICKED}`);
+            await budget(1);
+            const clicked = await paste({ files: [[name, 'image/png', 'png']] });
+            check(`and a file pasted next uploads into it, never the terminal's way (${how})`,
+                (await waitFor(() => read(`${SIDEBAR_DIR}/${CLICKED}/${name}`) === 'png'))
+                    && (await waitFor(async () => (await notice()) === `Uploaded ${name} to ${SIDEBAR_DIR}/${CLICKED}.`))
+                    && clicked.inSidebar && !clicked.page && imageUploads === 0 && atPrompt() === '', true);
+            await closePreview();
+        }
+
         // Regression control: focus outside the sidebar (the header's 📎),
         // and the terminal's paste: the image upload, its path typed. From
         // an empty prompt, and counted from here, so it stands on its own.
@@ -2853,7 +2916,7 @@ async function checkSidebarPaste(browser, url) {
     } finally {
         await context.close();
         dexec(['rm', '-rf', INBOX_DIR, `${SIDEBAR_DIR}/${TAKEN}`, `${SIDEBAR_DIR}/pasted here.png`,
-            `${SIDEBAR_DIR}/after text.txt`]);
+            `${SIDEBAR_DIR}/after text.txt`, `${SIDEBAR_DIR}/${CLICKED}`]);
         sendKeys('C-u');
     }
 }

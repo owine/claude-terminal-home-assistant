@@ -170,6 +170,19 @@
             row.classList.add('selected');
         }
 
+        // A row picked by the user (a click, or Enter or Space on it) also
+        // takes focus, so a paste that follows is the sidebar's (see its
+        // paste listener). Safari does not focus a button on click: focus
+        // stayed on the page, and a file pasted after clicking a folder went
+        // the terminal's way. The user is in the sidebar already, so this
+        // takes focus from nothing else. Not select() itself: an upload's
+        // reveal selects its file too, minutes later, maybe while the user
+        // is typing in the terminal.
+        function pickRow(row) {
+            select(row);
+            if (document.activeElement !== row) row.focus({ preventScroll: true });
+        }
+
         // Generation of the view in #files-list. Every refresh() bumps it,
         // and a renderer whose generation is no longer current drops its
         // response: otherwise a slow Recent answer could land on top of the
@@ -257,12 +270,12 @@
                     };
                     folderOpeners.set(row, open);
                     row.addEventListener('click', () => {
-                        select(row);
+                        pickRow(row);
                         if (children.hidden) open();
                         else expand(false);
                     });
                 } else {
-                    row.addEventListener('click', () => { select(row); openPreview(entry.path, entry.sensitive); });
+                    row.addEventListener('click', () => { pickRow(row); openPreview(entry.path, entry.sensitive); });
                 }
             }
             if (data.truncated) container.append(note('… more entries not shown', depth));
@@ -293,7 +306,7 @@
             if (!data.entries.length && !unreadable) list.append(note('Nothing changed in this period'));
             for (const entry of data.entries) {
                 const row = makeRow(entry, 0, helpers.relativeTo(rootPath, entry.path), helpers.formatAgo(entry.mtime));
-                row.addEventListener('click', () => { select(row); openPreview(entry.path, entry.sensitive); });
+                row.addEventListener('click', () => { pickRow(row); openPreview(entry.path, entry.sensitive); });
                 list.append(row);
             }
             if (data.truncated || data.incomplete) list.append(note('… showing the newest found; the search stopped early'));
