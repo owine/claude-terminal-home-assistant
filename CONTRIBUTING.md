@@ -78,7 +78,7 @@ CI will automatically run these on all PRs.
 
 When your change affects behavior, update the relevant prose docs (e.g. `CLAUDE.md`, `claude-terminal/DOCS.md`, `README.md`).
 
-**Do not** manually bump the version in `claude-terminal/config.yaml` or add a `CHANGELOG.md` entry — those are generated automatically. release-please derives the version bump and changelog from your [Conventional Commits](https://www.conventionalcommits.org/) when maintainers merge the Release PR.
+**Do not** manually bump the version in `claude-terminal/config.yaml` or add a `CHANGELOG.md` entry — those are generated automatically. release-please derives the version bump and changelog from your [Conventional Commits](https://www.conventionalcommits.org/) when maintainers merge the Release PR, and `publish.yml` writes the version into `config.yaml` once the release images are published.
 
 See [CLAUDE.md - Release Management](./CLAUDE.md#release-management) for details.
 
@@ -262,9 +262,10 @@ docker build --no-cache \
 Releases are fully automated by [release-please](https://github.com/googleapis/release-please) — no manual version bumps, changelog edits, or GitHub release creation.
 
 1. Contributors merge Conventional Commits into `main`
-2. release-please opens/updates a "Release PR" with the version bump + generated `CHANGELOG.md`
+2. release-please opens/updates a "Release PR" with the generated `CHANGELOG.md`
 3. A maintainer merges the Release PR, which tags the release and triggers `publish.yml`
 4. `publish.yml` builds, signs (cosign), and pushes multi-arch images to GitHub Container Registry
+5. Once those images are live, `publish.yml` bumps the version in `claude-terminal/config.yaml` on `main` — the point at which Home Assistant offers the update
 
 See [CLAUDE.md - Release Management](./CLAUDE.md#release-management) for details.
 

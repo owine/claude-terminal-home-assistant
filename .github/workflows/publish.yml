@@ -132,15 +132,28 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           VERSION: ${{ needs.init.outputs.version }}
+          TAG_SHA: ${{ github.sha }}
           FILE: claude-terminal/config.yaml
         run: |
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! [[ "$VERSION" =~ $semver ]]; then
             echo "::error::release tag gives version '$VERSION', expected X.Y.Z"
+            exit 1
+          fi
+          # A release can be cut by hand on any commit, but only reviewed code
+          # may reach HA: the tagged commit must already be on main.
+          status=$(gh api "repos/$REPO/compare/$TAG_SHA...main" --jq .status)
+          if [ "$status" != "identical" ] && [ "$status" != "ahead" ]; then
+            echo "::error::release commit $TAG_SHA is not on main ($status); not promoting"
             exit 1
           fi
           meta=$(gh api "repos/$REPO/contents/$FILE?ref=main")
           content=$(jq -r .content <<<"$meta" | base64 -d)
           current=$(sed -nE 's/^version: "([^"]+)".*/\1/p' <<<"$content")
+          if ! [[ "$current" =~ $semver ]]; then
+            echo "::error::no 'version: \"X.Y.Z\"' line in $FILE (got '$current')"
+            exit 1
+          fi
           # Only ever move forward: re-running an older release's publish must
           # not roll HA users back to it.
           newest=$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -n1)
