@@ -28,6 +28,13 @@ jobs:
   release-please:
     name: Release Please
     runs-on: ubuntu-26.04
+    # The app's secrets live in the "release" environment, which hands them
+    # only to jobs running on main or a v* tag -- a workflow edited on any
+    # other branch cannot mint the token. deployment: false skips the
+    # deployment record GitHub would otherwise log on every run.
+    environment:
+      name: release
+      deployment: false
     steps:
       - name: Generate GitHub App token
         id: app-token

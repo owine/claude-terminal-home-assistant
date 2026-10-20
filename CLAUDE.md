@@ -238,6 +238,11 @@ request plus 4 passing status checks (`Lint all`, `Unit tests`, `Test build amd6
 `Test build aarch64`), and enforces linear history — so merge commits are disabled and only
 squash or rebase merges are available. Branch before committing. The one automated bypass
 actor is the `claude-terminal-release-bot` app, for `promote`'s version commit only.
+Its secrets (`RELEASE_APP_CLIENT_ID`, `RELEASE_APP_PRIVATE_KEY`) live in the `release`
+environment, which only releases them to jobs on `main` or a `v*` tag; any job that mints
+the app token must declare `environment: {name: release, deployment: false}`.
+A tag ruleset (`release tags`) lets only the bot and Admin create, move or delete `v*` tags,
+since a tag's own `publish.yml` would otherwise run with those secrets.
 
 Squash-merging means the **squash commit subject** is what release-please parses, so it is
 the one that must carry the Conventional Commits prefix. GitHub defaults it to the PR title —
