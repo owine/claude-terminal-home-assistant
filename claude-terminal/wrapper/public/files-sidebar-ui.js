@@ -1,8 +1,8 @@
 // Files sidebar UI: the /config tree, the file preview with Insert path and
 // Download, the protected toggle, the folder ⋯ menu with its zip download
-// and Upload here, uploads (the Upload button, drops, the collision prompt,
-// progress), the notice line, Recent changes, the HA configuration check,
-// and the sidebar's open state, tabs and resizable width. The pure helpers it uses
+// and Upload here, uploads (the Upload button, drops, pastes, the collision
+// prompt, progress), the notice line, Recent changes, the HA configuration
+// check, and the sidebar's open state, tabs and resizable width. The pure helpers it uses
 // (quoting, sizes, URLs) are files-sidebar.js, and the upload flow it shares
 // with the terminal (asking, sending, batches, reading drops) is
 // upload-client.js; both load before this.
@@ -170,6 +170,19 @@
             row.classList.add('selected');
         }
 
+        // A row picked by the user (a click, or Enter or Space on it) also
+        // takes focus, so a paste that follows is the sidebar's (see its
+        // paste listener). Safari does not focus a button on click: focus
+        // stayed on the page, and a file pasted after clicking a folder went
+        // the terminal's way. The user is in the sidebar already, so this
+        // takes focus from nothing else. Not select() itself: an upload's
+        // reveal selects its file too, minutes later, maybe while the user
+        // is typing in the terminal.
+        function pickRow(row) {
+            select(row);
+            if (document.activeElement !== row) row.focus({ preventScroll: true });
+        }
+
         // Generation of the view in #files-list. Every refresh() bumps it,
         // and a renderer whose generation is no longer current drops its
         // response: otherwise a slow Recent answer could land on top of the
@@ -257,12 +270,12 @@
                     };
                     folderOpeners.set(row, open);
                     row.addEventListener('click', () => {
-                        select(row);
+                        pickRow(row);
                         if (children.hidden) open();
                         else expand(false);
                     });
                 } else {
-                    row.addEventListener('click', () => { select(row); openPreview(entry.path, entry.sensitive); });
+                    row.addEventListener('click', () => { pickRow(row); openPreview(entry.path, entry.sensitive); });
                 }
             }
             if (data.truncated) container.append(note('… more entries not shown', depth));
@@ -293,7 +306,7 @@
             if (!data.entries.length && !unreadable) list.append(note('Nothing changed in this period'));
             for (const entry of data.entries) {
                 const row = makeRow(entry, 0, helpers.relativeTo(rootPath, entry.path), helpers.formatAgo(entry.mtime));
-                row.addEventListener('click', () => { select(row); openPreview(entry.path, entry.sensitive); });
+                row.addEventListener('click', () => { pickRow(row); openPreview(entry.path, entry.sensitive); });
                 list.append(row);
             }
             if (data.truncated || data.incomplete) list.append(note('… showing the newest found; the search stopped early'));
@@ -480,6 +493,7 @@
         }
 
         let menuOwner = null;   // the ⋯ button whose menu is open
+        let menuEntry = null;   // and the folder it is for
 
         // Focus inside the menu goes back to its ⋯ when the menu closes
         // under it (a scroll, a resize); emptying the menu would otherwise
@@ -492,6 +506,7 @@
             if (!menuOwner) return;
             const owner = menuOwner;
             menuOwner = null;
+            menuEntry = null;
             const hadFocus = restoreFocus && menu.contains(document.activeElement);
             menu.hidden = true;
             menu.replaceChildren();
@@ -502,6 +517,7 @@
         function openMenu(button, entry) {
             closeMenu();
             menuOwner = button;
+            menuEntry = entry;
             button.setAttribute('aria-expanded', 'true');
             menu.setAttribute('aria-label', button.getAttribute('aria-label'));
             // Each action is fixed as the menu opens: an item marked
@@ -1160,19 +1176,67 @@
                 showNotice('⚠️ Folders cannot be uploaded. Drop the files inside them instead.', 'error');
                 return;
             }
-            if (!wrap) {
-                uploadFiles(files, undefined, folders);
-                return;
-            }
-            const entry = dropFolders.get(wrap);
-            const target = helpers.uploadTarget(entry, rootPath);
-            if (!target || target.disabled) {
-                showNotice('⚠️ Not uploaded: ' + (target ? target.title
-                    : entry.name + ' is a link to a folder. Drop the files onto the folder itself.'), 'error');
-                return;
-            }
-            uploadFiles(files, entry.path, folders);
+            uploadAimedAt(wrap ? dropFolders.get(wrap) : null, 'drop', files, folders);
         });
+
+        // Files go where `entry` says (helpers.uploadDestination): Upload
+        // here for a folder, the inbox for anything else, or refused in the
+        // notice. A drop's folder row, a paste's selected row.
+        function uploadAimedAt(entry, how, files, folders = []) {
+            const { dest, refused } = helpers.uploadDestination(entry, rootPath, how);
+            if (refused) {
+                showNotice('⚠️ Not uploaded: ' + refused, 'error');
+                return;
+            }
+            uploadFiles(files, dest, folders);
+        }
+
+        // Files pasted with focus in the sidebar follow the drop rule, with
+        // the selected row for the row dropped on: a folder means Upload
+        // here, anything else (a file, or nothing selected) the inbox. With
+        // a folder's ⋯ menu open (focus on its item) the menu's folder is
+        // the one aimed at instead, and the menu closes, as for Upload here.
+        //
+        // Aimed by focus, not by the event's target: WebKit targets a paste
+        // at the start of a range selection, so text selected anywhere on
+        // the page and then a click on a folder row sent the paste outside
+        // the sidebar. So this listens on the whole document, in the capture
+        // phase, ahead of the page's terminal paste handler (on document, in
+        // index.html, bubble phase), and stops what it takes there, so that
+        // handler never also uploads it to /data/images and types its path.
+        //
+        // Behind the open preview a file paste is refused, wherever focus
+        // is (the row behind it, the preview's buttons, the page): the
+        // preview covers the whole page, so the paste has no target the user
+        // can see, as a drop on it has none. Not uploaded, nothing typed,
+        // and the preview stays as it was.
+        //
+        // A clipboard with text in it is a text paste (client.clipboardFiles),
+        // left alone for whatever has focus. Only a selected row on screen
+        // counts: one the tree has drawn again since, one inside a closed
+        // folder, or any with the sidebar down to its rail, would send the
+        // files somewhere the user cannot see. That is nothing selected, as
+        // a drop on the rail is a drop on no row.
+        document.addEventListener('paste', (e) => {
+            const files = client.clipboardFiles(e.clipboardData);
+            if (!files.length) return;
+            const behindPreview = previewOpen();
+            if (!behindPreview && !sidebar.contains(document.activeElement)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (behindPreview) {
+                showNotice('⚠️ Not uploaded: close the preview first, then paste.', 'error');
+                return;
+            }
+            if (menuOwner) {
+                const entry = menuEntry;
+                closeMenu({ focusOwner: true });
+                uploadAimedAt(entry, 'paste', files);
+                return;
+            }
+            const shown = selectedRow && selectedRow.getClientRects().length > 0;
+            uploadAimedAt(shown ? rowEntries.get(selectedRow) : null, 'paste', files);
+        }, true);
 
         // Files dragged over the open preview. It covers the whole page, so
         // a drop there has no target the user can see: refused (the cursor

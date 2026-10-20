@@ -119,7 +119,10 @@
             };
         }
         const rel = relativeTo(rootPath, entry.path);
-        if (rel.split('/')[0].toLowerCase() === 'deps') {
+        // The server's deps rule (files-upload.js, since the NFC names
+        // fix): /^deps$/iu, folding case and U+017F (long s) to s. Matched
+        // here so the sidebar never offers what the server refuses.
+        if (/^deps$/iu.test(rel.split('/')[0])) {
             return {
                 disabled: true,
                 hint: 'Home Assistant manages this folder',
@@ -135,6 +138,27 @@
             };
         }
         return { disabled: false, hint: '', title: 'Upload files into this folder' };
+    }
+
+    /**
+     * Where files dropped or pasted on the sidebar go, from the listing
+     * entry they were aimed at: the folder row a drop landed on, or the row
+     * selected when a paste came. No entry, or a file's, is the inbox:
+     * { dest: undefined }. A folder is Upload here, { dest: its path },
+     * unless it is no upload target (uploadTarget): then { refused: why }.
+     * `how` ('drop' or 'paste') words the advice for a symlinked folder.
+     */
+    function uploadDestination(entry, rootPath, how) {
+        if (!entry || entry.type !== 'dir') return { dest: undefined };
+        const target = uploadTarget(entry, rootPath);
+        if (!target) {
+            return {
+                refused: entry.name + ' is a link to a folder. '
+                    + (how === 'paste' ? 'Select the folder itself, then paste.' : 'Drop the files onto the folder itself.'),
+            };
+        }
+        if (target.disabled) return { refused: target.title };
+        return { dest: entry.path };
     }
 
     // Control characters, and the invisible marks that reorder or hide
@@ -242,7 +266,7 @@
 
     const api = {
         shellQuote, formatSize, formatAgo, clampWidth, relativeTo, downloadUrl,
-        uploadUrl, uploadTarget, uploadErrorText, displayName, uploadSummary, tabKeyTarget,
+        uploadUrl, uploadTarget, uploadDestination, uploadErrorText, displayName, uploadSummary, tabKeyTarget,
         isListing, unreadableNote,
         INBOX, DEFAULT_WIDTH,
     };

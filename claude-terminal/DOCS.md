@@ -435,9 +435,12 @@ Any file can go from your device to the add-on straight from the terminal,
 and its path is typed at the prompt for you to use with Claude:
 
 - **Paste** (Ctrl+V, or Cmd+V on a Mac) a screenshot, a copied image or a
-  copied file, with the terminal or anything else on the page focused. A
-  clipboard that also holds plain text pastes that text instead (copied
-  spreadsheet cells, for example, come with a picture of themselves).
+  copied file, with the terminal or anything else on the page focused,
+  except the Files sidebar: a paste with focus there is a sidebar upload,
+  and one with a file preview open is refused (see Uploads under Files
+  Sidebar). A clipboard that also holds plain text pastes that
+  text instead (copied spreadsheet cells, for example, come with a picture
+  of themselves).
 - **Drop** files anywhere on the terminal.
 - **📎** in the header opens a file picker; pick one file or several.
 
@@ -605,11 +608,23 @@ browser and download it from there.
 - **Dropping files** on a folder row means Upload here; dropping them anywhere
   else on the sidebar sends them to the inbox. Folders themselves cannot be
   dropped: drop the files inside them.
+- **Pasting files** (Ctrl+V, or Cmd+V on a Mac) after you click a row in the
+  sidebar, or move to something in it with Tab, follows the same rule, with
+  the selected row in place of the row dropped on: with a folder selected,
+  they go into that folder (Upload here); with a file or nothing selected, or
+  the sidebar down to its rail, they go to the inbox. With a folder's **⋯**
+  menu open, they go into that folder. A folder that is no upload target
+  refuses them, as it refuses a drop. Nothing is typed into the terminal.
+  Where focus is decides, not where text happens to be selected: in Safari,
+  clicking a button other than a row does not move focus, so click the row.
+  While a file's preview is open, a pasted file is refused: close the preview
+  first. A clipboard that also holds plain text pastes that text instead, as
+  in the terminal.
 - **From the terminal**, 📎, a paste or a drop puts anything but a small
   image in the inbox and types its path at the prompt (see Uploading Files
   from the Terminal).
 
-You can pick or drop several files at once; they upload one after another, a
+You can pick, drop or paste several files at once; they upload one after another, a
 progress bar shows how far each has got, and a question about a taken name
 comes up for each in turn. The question takes focus only if you are working
 in the sidebar; if you are typing in the terminal, or have a preview open, it
