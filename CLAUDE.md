@@ -219,17 +219,25 @@ All commits to `main` must use [Conventional Commits](https://www.conventionalco
 
 ### Release Process
 
-Releases are managed by [release-please](https://github.com/googleapis/release-please). Do **not** manually bump `config.yaml` version or edit `CHANGELOG.md` — release-please handles both.
+Releases are managed by [release-please](https://github.com/googleapis/release-please). Do **not** manually bump `config.yaml` version or edit `CHANGELOG.md` — automation handles both.
 
 1. Open a PR with commits in Conventional Commits format, and squash-merge it into `main`
-2. release-please automatically creates/updates a Release PR with version bump + changelog
+2. release-please automatically creates/updates a Release PR with the changelog (it does not touch `config.yaml`)
 3. Merge the Release PR when ready to release
 4. `publish.yml` triggers automatically → builds, signs, and pushes Docker images
+5. Once the multi-arch manifest is pushed, `publish.yml`'s `promote` job commits
+   `chore: publish X.Y.Z to Home Assistant` to `main`, bumping `config.yaml`
+
+Supervisor reads `config.yaml` from `main`, so that bump is the moment HA offers the update.
+Keeping it out of the Release PR means HA never sees a version whose image isn't pullable yet.
+`promote` only moves the version forward, so re-running an older release's publish is safe.
+Don't put `config.yaml` back in release-please's `extra-files`.
 
 **`main` does not accept direct pushes.** The `main protection` ruleset requires a pull
-request plus 3 passing status checks (`Lint all`, `Test build amd64`, `Test build aarch64`),
-and enforces linear history — so merge commits are disabled and only squash or rebase merges
-are available. Branch before committing; an admin override will not bypass the ruleset.
+request plus 4 passing status checks (`Lint all`, `Unit tests`, `Test build amd64`,
+`Test build aarch64`), and enforces linear history — so merge commits are disabled and only
+squash or rebase merges are available. Branch before committing. The one automated bypass
+actor is the `claude-terminal-release-bot` app, for `promote`'s version commit only.
 
 Squash-merging means the **squash commit subject** is what release-please parses, so it is
 the one that must carry the Conventional Commits prefix. GitHub defaults it to the PR title —
@@ -247,7 +255,7 @@ gh run list --workflow=publish.yml --limit 3
 | `release-please.yml` | Push to main | Maintain Release PR (version bump + changelog) |
 | `test.yml` | Push to main, PRs | Unit tests (shell + wrapper JS) and build validation (init → per-arch native builds, no QEMU) |
 | `lint.yml` | Push/PR to main | hadolint, shellcheck, yamllint, actionlint, ESLint, Ruff |
-| `publish.yml` | Release published | Build + sign + push images (4-job: init → per-arch → manifest → scan) |
+| `publish.yml` | Release published | Build + sign + push images, then bump `config.yaml` on main (init → per-arch → manifest → promote + scan) |
 | `security.yml` | Push/PR to main + weekly cron | Trivy filesystem security scan; opens tracking issue on findings |
 | `claude.yml` | @claude mentions | Respond to mentions in issues/PRs (optional) |
 

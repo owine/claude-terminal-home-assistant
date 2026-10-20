@@ -103,6 +103,59 @@ jobs:
             ${{ needs.init.outputs.version }}
             latest
 
+  # Supervisor reads config.yaml straight from main, so its version bump is
+  # what makes a release visible to Home Assistant. release-please used to
+  # make that bump in the Release PR, which offered HA users an update whose
+  # image was still building -- or, if a build failed, never arrived. It lands
+  # here instead, once the multi-arch manifest exists. Not gated on image-scan:
+  # its usual failures are Go-binary CVEs we cannot fix quickly, and holding
+  # back a release for those would hold back its fixes too.
+  #
+  # The release app is a bypass actor on the "main protection" ruleset, so it
+  # commits to main directly. The Contents API (not git push) makes GitHub sign
+  # the commit, and its blob sha makes a concurrent edit fail instead of being
+  # overwritten. chore: keeps release-please from cutting a release for it.
+  promote:
+    name: Publish version to Home Assistant
+    needs: [init, manifest]
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Bump config.yaml version on main
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.init.outputs.version }}
+          FILE: claude-terminal/config.yaml
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tag gives version '$VERSION', expected X.Y.Z"
+            exit 1
+          fi
+          meta=$(gh api "repos/$REPO/contents/$FILE?ref=main")
+          content=$(jq -r .content <<<"$meta" | base64 -d)
+          current=$(sed -nE 's/^version: "([^"]+)".*/\1/p' <<<"$content")
+          # Only ever move forward: re-running an older release's publish must
+          # not roll HA users back to it.
+          newest=$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -n1)
+          if [ "$current" = "$VERSION" ] || [ "$newest" != "$VERSION" ]; then
+            echo "::notice::config.yaml is at $current; leaving it (release $VERSION)"
+            exit 0
+          fi
+          updated=$(sed -E "s/^version: \"[^\"]+\"/version: \"$VERSION\"/" <<<"$content" | base64 -w0)
+          gh api -X PUT "repos/$REPO/contents/$FILE" \
+            -f branch=main \
+            -f sha="$(jq -r .sha <<<"$meta")" \
+            -f content="$updated" \
+            -f message="chore: publish $VERSION to Home Assistant" \
+            --jq '"Committed " + .commit.sha + " (verified: " + (.commit.verification.verified | tostring) + ")"'
+
   image-scan:
     name: Scan ${{ matrix.platform }} image
     needs: [init, manifest]

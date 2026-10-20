@@ -8,7 +8,8 @@
 #       ↓ (merge Release PR)
 #   release-please creates GitHub release
 #       ↓ (release: published event)
-#   publish.yml builds + signs Docker images
+#   publish.yml builds + signs Docker images, then bumps config.yaml on main
+#   (Home Assistant only sees the new version once its image exists)
 #
 # Config: release-please-config.json + .release-please-manifest.json
 
