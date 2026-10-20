@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.11.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.11.1...v2.11.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* **files:** paste files in the Files sidebar as a sidebar upload ([#456](https://github.com/owine/claude-terminal-home-assistant/issues/456)) ([073294b](https://github.com/owine/claude-terminal-home-assistant/commit/073294b01c2cf0098bfe0f107c1b852033826dd5))
+* **files:** store upload names in NFC and treat a look-alike name as taken ([#452](https://github.com/owine/claude-terminal-home-assistant/issues/452)) ([2223431](https://github.com/owine/claude-terminal-home-assistant/commit/2223431e0b262fc5f2483e6af8c9f31aa5dc1a29))
+
+
+### Dependencies
+
+* update dependency claude-code to v2.1.304 ([#455](https://github.com/owine/claude-terminal-home-assistant/issues/455)) ([d9389c7](https://github.com/owine/claude-terminal-home-assistant/commit/d9389c77391e3bf6c66571b1b17f4496fe6fc792))
+
 ## [2.11.1](https://github.com/owine/claude-terminal-home-assistant/compare/v2.11.0...v2.11.1) (2026-10-19)
 
 
