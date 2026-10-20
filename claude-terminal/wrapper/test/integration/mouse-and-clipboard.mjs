@@ -211,6 +211,33 @@ async function resetPane() {
     await waitFor(() => Number(tmux('#{history_size}')) > 100);
 }
 
+// What has been typed at the shell prompt, read from tmux, after resetPane.
+// atPrompt() is what follows the prompt on the pane's last line (wrapped
+// lines joined); had Enter been sent, a fresh prompt would be there.
+// typed(text) waits for exactly that text; clearPrompt() empties the line.
+async function watchPrompt() {
+    const lastLine = () => dexec(['tmux', 'capture-pane', '-pJ']).trimEnd().split('\n').pop();
+    // The bare prompt: the same last line twice in a row, once seq's
+    // output (ending in 300) has been followed by it.
+    let promptLine = '';
+    await waitFor(() => {
+        const line = lastLine();
+        const settled = line === promptLine && line !== '300';
+        promptLine = line;
+        return settled;
+    });
+    const atPrompt = () => {
+        const line = lastLine();
+        return line.startsWith(promptLine) ? line.slice(promptLine.length).trimStart() : `(not at the prompt) ${line}`;
+    };
+    const typed = (text) => waitFor(() => atPrompt() === text);
+    const clearPrompt = async () => {
+        sendKeys('C-u');
+        await waitFor(() => atPrompt() === '');
+    };
+    return { atPrompt, typed, clearPrompt };
+}
+
 // Under ingress the wrapper is a child frame, so the document holding
 // #terminal-frame is not the main frame. Locate it by capability rather than by
 // URL, so the same code works for both access paths.
@@ -2333,27 +2360,7 @@ async function checkTerminalUploads(browser, url) {
         writeFileSync(p, body);
         return p;
     };
-    // The pane's last line (wrapped lines joined) and what follows the
-    // prompt on it. Had Enter been sent, a fresh prompt would be there.
-    const lastLine = () => dexec(['tmux', 'capture-pane', '-pJ']).trimEnd().split('\n').pop();
-    // The bare prompt: the same last line twice in a row, once seq's
-    // output (ending in 300) has been followed by it.
-    let promptLine = '';
-    await waitFor(() => {
-        const line = lastLine();
-        const settled = line === promptLine && line !== '300';
-        promptLine = line;
-        return settled;
-    });
-    const atPrompt = () => {
-        const line = lastLine();
-        return line.startsWith(promptLine) ? line.slice(promptLine.length).trimStart() : `(not at the prompt) ${line}`;
-    };
-    const typed = (text) => waitFor(() => atPrompt() === text);
-    const clearPrompt = async () => {
-        sendKeys('C-u');
-        await waitFor(() => atPrompt() === '');
-    };
+    const { atPrompt, typed, clearPrompt } = await watchPrompt();
     const context = await browser.newContext({ serviceWorkers: 'block' });
     const page = await context.newPage();
     // Inbox requests by kind: bodies (which reach the server unless a route
