@@ -493,6 +493,7 @@
         }
 
         let menuOwner = null;   // the ⋯ button whose menu is open
+        let menuEntry = null;   // and the folder it is for
 
         // Focus inside the menu goes back to its ⋯ when the menu closes
         // under it (a scroll, a resize); emptying the menu would otherwise
@@ -505,6 +506,7 @@
             if (!menuOwner) return;
             const owner = menuOwner;
             menuOwner = null;
+            menuEntry = null;
             const hadFocus = restoreFocus && menu.contains(document.activeElement);
             menu.hidden = true;
             menu.replaceChildren();
@@ -515,6 +517,7 @@
         function openMenu(button, entry) {
             closeMenu();
             menuOwner = button;
+            menuEntry = entry;
             button.setAttribute('aria-expanded', 'true');
             menu.setAttribute('aria-label', button.getAttribute('aria-label'));
             // Each action is fixed as the menu opens: an item marked
@@ -1190,23 +1193,50 @@
 
         // Files pasted with focus in the sidebar follow the drop rule, with
         // the selected row for the row dropped on: a folder means Upload
-        // here, anything else (a file, or nothing selected) the inbox. The
-        // paste is stopped here, so the page's terminal paste handler (on
-        // document, in index.html) never also uploads it to /data/images
-        // and types its path. A clipboard with text in it is a text paste
-        // (client.clipboardFiles), left alone for whatever has focus. Only
-        // a selected row on screen counts: one the tree has drawn again
-        // since, one inside a closed folder, or any with the sidebar down to
-        // its rail, would send the files somewhere the user cannot see. That
-        // is nothing selected, as a drop on the rail is a drop on no row.
-        sidebar.addEventListener('paste', (e) => {
+        // here, anything else (a file, or nothing selected) the inbox. With
+        // a folder's ⋯ menu open (focus on its item) the menu's folder is
+        // the one aimed at instead, and the menu closes, as for Upload here.
+        //
+        // Aimed by focus, not by the event's target: WebKit targets a paste
+        // at the start of a range selection, so text selected anywhere on
+        // the page and then a click on a folder row sent the paste outside
+        // the sidebar. So this listens on the whole document, in the capture
+        // phase, ahead of the page's terminal paste handler (on document, in
+        // index.html, bubble phase), and stops what it takes there, so that
+        // handler never also uploads it to /data/images and types its path.
+        //
+        // Behind the open preview a file paste is refused, wherever focus
+        // is (the row behind it, the preview's buttons, the page): the
+        // preview covers the whole page, so the paste has no target the user
+        // can see, as a drop on it has none. Not uploaded, nothing typed,
+        // and the preview stays as it was.
+        //
+        // A clipboard with text in it is a text paste (client.clipboardFiles),
+        // left alone for whatever has focus. Only a selected row on screen
+        // counts: one the tree has drawn again since, one inside a closed
+        // folder, or any with the sidebar down to its rail, would send the
+        // files somewhere the user cannot see. That is nothing selected, as
+        // a drop on the rail is a drop on no row.
+        document.addEventListener('paste', (e) => {
             const files = client.clipboardFiles(e.clipboardData);
             if (!files.length) return;
+            const behindPreview = previewOpen();
+            if (!behindPreview && !sidebar.contains(document.activeElement)) return;
             e.preventDefault();
             e.stopPropagation();
+            if (behindPreview) {
+                showNotice('⚠️ Not uploaded: close the preview first, then paste.', 'error');
+                return;
+            }
+            if (menuOwner) {
+                const entry = menuEntry;
+                closeMenu({ focusOwner: true });
+                uploadAimedAt(entry, 'paste', files);
+                return;
+            }
             const shown = selectedRow && selectedRow.getClientRects().length > 0;
             uploadAimedAt(shown ? rowEntries.get(selectedRow) : null, 'paste', files);
-        });
+        }, true);
 
         // Files dragged over the open preview. It covers the whole page, so
         // a drop there has no target the user can see: refused (the cursor

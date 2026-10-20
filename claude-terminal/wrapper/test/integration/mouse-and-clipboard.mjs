@@ -2678,8 +2678,10 @@ async function checkSidebarPaste(browser, url) {
         // A paste as the browser makes one: a ClipboardEvent at whatever has
         // focus, bubbling. `page` is whether it reached the document, where
         // the page's terminal paste handler listens. files: [name, type, text].
-        const paste = ({ files = [], text = null } = {}) => wrapper.evaluate(`(() => {
-            const el = document.activeElement;
+        // `at`, an expression, targets something else: WebKit targets a
+        // paste at the start of a range selection, wherever focus is.
+        const paste = ({ files = [], text = null, at = 'document.activeElement' } = {}) => wrapper.evaluate(`(() => {
+            const el = ${at};
             const dt = new DataTransfer();
             const text = ${JSON.stringify(text)};
             if (text !== null) dt.setData('text/plain', text);
@@ -2691,6 +2693,7 @@ async function checkSidebarPaste(browser, url) {
             try { el.dispatchEvent(ev); } finally { document.removeEventListener('paste', seen); }
             return JSON.stringify({
                 inSidebar: document.getElementById('files-sidebar').contains(el),
+                focusInSidebar: document.getElementById('files-sidebar').contains(document.activeElement),
                 files: ev.clipboardData ? ev.clipboardData.files.length : -1,
                 prevented: ev.defaultPrevented,
                 page,
@@ -2838,10 +2841,18 @@ async function checkSidebarPaste(browser, url) {
         // Real mouse clicks, first as the engine clicks, then with the
         // mousedown's default (what moves focus there) prevented, which is
         // Safari's behaviour in any engine. Each from focus on the page.
-        const clickAt = async (locator) => {
-            await locator.scrollIntoViewIfNeeded();
-            const box = await locator.boundingBox();
-            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        // A row that is not on screen (an earlier upload went astray) is a
+        // failed check, not a locator timeout that would end the run.
+        const clickAt = async (locator, what) => {
+            try {
+                await locator.scrollIntoViewIfNeeded({ timeout: 5000 });
+                const box = await locator.boundingBox({ timeout: 5000 });
+                await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                return true;
+            } catch {
+                check(`fixture: ${what} is on screen to click`, false, true);
+                return false;
+            }
         };
         const NO_CLICK_FOCUS = `window.ctpNoClickFocus = (e) => e.preventDefault();
             document.addEventListener('mousedown', window.ctpNoClickFocus, true)`;
@@ -2865,7 +2876,7 @@ async function checkSidebarPaste(browser, url) {
             ${NO_CLICK_FOCUS};
         })()`);
         try {
-            await clickAt(wrapper.locator('#ctp-focus-probe'));
+            await clickAt(wrapper.locator('#ctp-focus-probe'), 'the probe button');
             check('fixture: with focus-on-click suppressed, a real click leaves focus on the page',
                 (await focused()).path, 'BODY');
         } finally {
@@ -2877,7 +2888,7 @@ async function checkSidebarPaste(browser, url) {
             await wrapper.evaluate('document.activeElement && document.activeElement.blur()');
             if (safari) await wrapper.evaluate(NO_CLICK_FOCUS);
             try {
-                await clickAt(folderRow(CLICKED));
+                await clickAt(folderRow(CLICKED), 'the click target folder');
             } finally {
                 if (safari) await wrapper.evaluate(CLICK_FOCUS);
             }
@@ -2892,6 +2903,98 @@ async function checkSidebarPaste(browser, url) {
                     && clicked.inSidebar && !clicked.page && imageUploads === 0 && atPrompt() === '', true);
             await closePreview();
         }
+
+        // Behind the preview: refused, as a drop on it is. The preview covers
+        // the whole page (aria-modal), so the paste has no target the user
+        // can see, whether focus is still on the row behind it, on the
+        // preview's own buttons, or on the page. Nothing is uploaded or
+        // typed, and the preview stays as it was. A text paste is left alone.
+        const BEHIND = '⚠️ Not uploaded: close the preview first, then paste.';
+        const dismiss = () => wrapper.evaluate(`(() => {
+            const b = document.getElementById('files-notice-close');
+            if (!document.getElementById('files-notice').hidden && !b.hidden) b.click();
+        })()`);
+        await clickAt(list.locator('.files-row', { hasText: 'clicked.png' }), 'clicked.png');
+        check('fixture: a file\'s preview is open, with focus on its row behind it',
+            (await waitFor(async () => (await previewText(wrapper)) === 'png')) && (await focused()).inSidebar, true);
+        const titleBefore = await wrapper.evaluate('document.getElementById("files-preview-title").textContent');
+        asksBefore = asks.length;
+        const imagesBehind = imageUploads;
+        await budget(1);
+        for (const [where, focus] of [
+            ['focus on the row behind it', 'document.querySelector("#files-list .files-row.selected")?.focus()'],
+            ['focus on the preview\'s own button', 'document.getElementById("files-close-btn").focus()'],
+            ['focus on the page', 'document.activeElement && document.activeElement.blur()'],
+        ]) {
+            await dismiss();
+            await wrapper.evaluate(focus);
+            const behind = await paste({ files: [['behind.png', 'image/png', 'png']] });
+            check(`a file pasted with the preview open is refused (${where})`,
+                { notice: await notice(), prevented: behind.prevented, page: behind.page },
+                (v) => v.notice === BEHIND && v.prevented && !v.page);
+        }
+        check('and nothing is asked, uploaded or typed, and the preview stays as it was',
+            { asks: asks.length - asksBefore, images: imageUploads - imagesBehind, typed: atPrompt(),
+                preview: await previewText(wrapper),
+                title: await wrapper.evaluate('document.getElementById("files-preview-title").textContent') },
+            (v) => v.asks === 0 && v.images === 0 && v.typed === '' && v.preview === 'png' && v.title === titleBefore);
+        const textBehind = await paste({ text: 'text behind' });
+        check('a text paste with the preview open is left alone', textBehind, (v) => !v.prevented && v.page);
+        await closePreview();
+
+        // Aimed by focus, not by the event's target. WebKit targets a paste
+        // at the start of a range selection: text selected outside the
+        // sidebar, then a folder row clicked, sent the paste there, past the
+        // sidebar. Selected here after the click, which would clear it.
+        await wrapper.evaluate('document.activeElement && document.activeElement.blur()');
+        await clickAt(folderRow(CLICKED), 'the click target folder');
+        await wrapper.evaluate(`(() => {
+            const p = document.createElement('p');
+            p.id = 'ctp-selection';
+            p.textContent = 'text selected outside the sidebar';
+            document.getElementById('main').before(p);
+            const r = document.createRange();
+            r.selectNodeContents(p.firstChild);   // its text: the selection starts in p
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(r);
+        })()`);
+        const SELECTION_START = 'window.getSelection().getRangeAt(0).startContainer.parentElement';
+        check('fixture: a range selection outside the sidebar, focus on the folder row',
+            { focus: await focused(), sel: await wrapper.evaluate(`${SELECTION_START}.id`) },
+            (v) => v.focus.path === `${SIDEBAR_DIR}/${CLICKED}` && v.sel === 'ctp-selection');
+        await budget(1);
+        const bySel = await paste({ files: [['by focus.png', 'image/png', 'png']], at: SELECTION_START });
+        await wrapper.evaluate('document.getElementById("ctp-selection")?.remove()');
+        check('fixture: the paste is targeted outside the sidebar, with focus in it', bySel,
+            (v) => !v.inSidebar && v.focusInSidebar && v.files === 1);
+        check('a file pasted at a selection outside the sidebar, with focus on a folder row, uploads into that folder',
+            (await waitFor(() => read(`${SIDEBAR_DIR}/${CLICKED}/by focus.png`) === 'png'))
+                && bySel.prevented && !bySel.page && imageUploads === 0 && atPrompt() === '', true);
+        await waitFor(async () => (await notice()) === `Uploaded by focus.png to ${SIDEBAR_DIR}/${CLICKED}.`);
+        await closePreview();
+
+        // With a folder's ⋯ menu open (focus on its item), a paste aims at
+        // that menu's folder, not the separately selected row; the menu
+        // closes, as it does for Upload here.
+        await clickAt(folderRow(CLICKED), 'the click target folder');
+        check('fixture: another folder is selected', await selected(), `${SIDEBAR_DIR}/${CLICKED}`);
+        const fixtureMenu = list.locator('.files-row-wrap').filter({
+            has: wrapper.locator('.files-name', { hasText: new RegExp(`^${fixtureName}$`) }),
+        }).locator('.files-menu-btn');
+        await fixtureMenu.click({ timeout: 5000 }).catch(() => check('fixture: the fixture folder\'s ⋯ is on screen to click', false, true));
+        check('fixture: the fixture folder\'s ⋯ menu is open, with focus on its item',
+            await wrapper.evaluate(`!document.getElementById('files-menu').hidden
+                && document.getElementById('files-menu').contains(document.activeElement)`), true);
+        await budget(1);
+        const viaMenu = await paste({ files: [['via menu.png', 'image/png', 'png']] });
+        check('a file pasted with a folder\'s ⋯ menu open uploads into that folder, not the selected one',
+            (await waitFor(() => read(`${SIDEBAR_DIR}/via menu.png`) === 'png'))
+                && !exists(`${SIDEBAR_DIR}/${CLICKED}/via menu.png`) && viaMenu.prevented && !viaMenu.page, true);
+        check('and the menu closes',
+            await wrapper.evaluate('document.getElementById("files-menu").hidden'), true);
+        await waitFor(async () => (await notice()) === `Uploaded via menu.png to ${SIDEBAR_DIR}.`);
+        await closePreview();
 
         // Regression control: focus outside the sidebar (the header's 📎),
         // and the terminal's paste: the image upload, its path typed. From
@@ -2916,7 +3019,7 @@ async function checkSidebarPaste(browser, url) {
     } finally {
         await context.close();
         dexec(['rm', '-rf', INBOX_DIR, `${SIDEBAR_DIR}/${TAKEN}`, `${SIDEBAR_DIR}/pasted here.png`,
-            `${SIDEBAR_DIR}/after text.txt`, `${SIDEBAR_DIR}/${CLICKED}`]);
+            `${SIDEBAR_DIR}/after text.txt`, `${SIDEBAR_DIR}/${CLICKED}`, `${SIDEBAR_DIR}/via menu.png`]);
         sendKeys('C-u');
     }
 }

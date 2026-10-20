@@ -1791,9 +1791,10 @@
         // Files pasted while this page has focus (the paste bar, a button).
         // A paste while the terminal has focus happens in its frame's
         // document instead: see catchTerminalFiles. One with focus in the
-        // Files sidebar is the sidebar's, which stops it before it gets
-        // here (files-sidebar-ui.js). A clipboard that also holds plain
-        // text is a text paste, left to whatever has focus.
+        // Files sidebar, or any while its file preview is open, is the
+        // sidebar's: it takes it in the capture phase and stops it before
+        // it gets here (files-sidebar-ui.js). A clipboard that also holds
+        // plain text is a text paste, left to whatever has focus.
         document.addEventListener('paste', (e) => {
             if (!uploadClient) return;
             const files = uploadClient.clipboardFiles(e.clipboardData);
