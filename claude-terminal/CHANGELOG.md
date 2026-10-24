@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.11.3](https://github.com/owine/claude-terminal-home-assistant/compare/v2.11.2...v2.11.3) (2026-10-24)
+
+
+### Bug Fixes
+
+* update dependency multer to v2.5.0 [security] ([#463](https://github.com/owine/claude-terminal-home-assistant/issues/463)) ([cce6cb4](https://github.com/owine/claude-terminal-home-assistant/commit/cce6cb4f9715abfac236bf9b8e295d4ae003f069))
+
+
+### Dependencies
+
+* update dependency claude-code to v2.1.306 ([#455](https://github.com/owine/claude-terminal-home-assistant/issues/455)) ([a18333c](https://github.com/owine/claude-terminal-home-assistant/commit/a18333c37db6f40f9dd821eac49c1931daca8a87))
+* update nano apk package to v9.3-r0 ([#461](https://github.com/owine/claude-terminal-home-assistant/issues/461)) ([d4b1d35](https://github.com/owine/claude-terminal-home-assistant/commit/d4b1d3571b40678684a670bf846e77932e38e3eb))
+* update nodejs apk package to v24.22.1-r0 ([#462](https://github.com/owine/claude-terminal-home-assistant/issues/462)) ([3695ecb](https://github.com/owine/claude-terminal-home-assistant/commit/3695ecbe429d080173363c72ea7178b95a0800f6))
+
 ## [2.11.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.11.1...v2.11.2) (2026-10-20)
 
 
