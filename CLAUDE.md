@@ -206,7 +206,7 @@ Note: Renovate auto-tracks both `pyproject.toml` + `uv.lock`. Manual updates rar
 
 ### Conventional Commits
 
-All commits to `main` must use [Conventional Commits](https://www.conventionalcommits.org/) format. release-please uses these to determine version bumps and generate changelogs automatically.
+All commits to `main` must use [Conventional Commits](https://www.conventionalcommits.org/) format. [release-drafter](https://github.com/release-drafter/release-drafter) sorts merged PRs by the type in the **PR title** to draft release notes and the version bump. Its config is shared fleet-wide: `.github/release-drafter.yml` only `_extends` `owine/renovate-config:/release-drafter.yml` — change categories there, not here.
 
 | Prefix | Version bump | Example |
 |--------|-------------|---------|
@@ -214,42 +214,59 @@ All commits to `main` must use [Conventional Commits](https://www.conventionalco
 | `fix:` | Patch (x.x.Z) | `fix: restore iOS scrolling` |
 | `deps:` | Patch (x.x.Z) | `deps: update express to v5` (Renovate) |
 | `perf:` | Patch (x.x.Z) | `perf: reduce container startup time` |
-| `BREAKING CHANGE` footer | Major (X.0.0) | Any type with breaking change footer |
-| `chore:`, `docs:`, `ci:`, etc. | No release | Not releasable — included if bundled with releasable commits |
+| `revert:` | Patch (x.x.Z) | `revert: restore the old clipboard path` |
+| `!` after the type, **in the title** | Major (X.0.0) | `feat!: drop the legacy auth path` |
+| `chore:`, `docs:`, `ci:`, `test:`, `refactor:`, `build:`, `style:` | No release | Left out of the notes entirely |
+| anything else (non-conventional title) | Patch (x.x.Z) | Listed unsectioned at the top of the notes |
+
+A `BREAKING CHANGE:` footer is **ignored** — release-drafter reads only the PR title, so put the `!` there.
 
 ### Release Process
 
-Releases are managed by [release-please](https://github.com/googleapis/release-please). Do **not** manually bump `config.yaml` version or edit `CHANGELOG.md` — automation handles both.
+Do **not** manually bump `config.yaml` version or edit `CHANGELOG.md` — automation handles both.
 
-1. Open a PR with commits in Conventional Commits format, and squash-merge it into `main`
-2. release-please automatically creates/updates a Release PR with the changelog (it does not touch `config.yaml`)
-3. Merge the Release PR when ready to release
-4. `publish.yml` triggers automatically → builds, signs, and pushes Docker images
+1. Open a PR with a Conventional Commits title, and squash-merge it into `main`
+2. `release-drafter.yml` refreshes the single **draft** GitHub Release on every push to `main`
+3. When ready to release, a human reviews and publishes that draft in the GitHub UI (it creates the `vX.Y.Z` tag)
+4. `publish.yml` triggers on `release: published` → builds, signs, and pushes Docker images
 5. Once the multi-arch manifest is pushed, `publish.yml`'s `promote` job commits
-   `chore: publish X.Y.Z to Home Assistant` to `main`, bumping `config.yaml`
+   `chore: publish X.Y.Z to Home Assistant` to `main`: the `config.yaml` version bump
+   and the release's notes prepended to `CHANGELOG.md`, in one signed commit
 
-Supervisor reads `config.yaml` from `main`, so that bump is the moment HA offers the update.
-Keeping it out of the Release PR means HA never sees a version whose image isn't pullable yet.
-`promote` only moves the version forward, so re-running an older release's publish is safe.
-Don't put `config.yaml` back in release-please's `extra-files`.
+Supervisor reads `config.yaml` from `main`, so that bump is the moment HA offers the update,
+and it shows `CHANGELOG.md` alongside it — one commit means HA never sees a version without
+its changelog, or a version whose image isn't pullable yet.
+`promote` only moves the version forward, so re-running an older release's publish is safe;
+it then skips the CHANGELOG too. The CHANGELOG entry is the **release body as published**, so
+edit the draft's notes before publishing, not the file afterwards.
+
+- **A draft always exists.** If only hidden types merged since the last release it reads
+  `_No user-facing changes._` — don't publish that one.
+- **Never publish with `GITHUB_TOKEN`** (no `publish: true` in release-drafter): a release
+  published by that token fires no `release: published` run, so nothing would build.
+- **Don't retarget the draft to an older commit.** `release: published` runs the workflow
+  files at the tagged commit, and the draft targets `main` for that reason.
 
 **`main` does not accept direct pushes.** The `main protection` ruleset requires a pull
 request plus 4 passing status checks (`Lint all`, `Unit tests`, `Test build amd64`,
 `Test build aarch64`), and enforces linear history — so merge commits are disabled and only
 squash or rebase merges are available. Branch before committing. The one automated bypass
-actor is the `claude-terminal-release-bot` app, for `promote`'s version commit only.
+actor is the `claude-terminal-release-bot` app, for `promote`'s version commit only
+(made with GraphQL `createCommitOnBranch`, which GitHub signs, against an `expectedHeadOid`).
 Its secrets (`RELEASE_APP_CLIENT_ID`, `RELEASE_APP_PRIVATE_KEY`) live in the `release`
-environment, which only releases them to jobs on `main` or a `v*` tag; any job that mints
+environment, which only releases them to jobs on `main` or a `v*` tag (a `release: published`
+run is on its tag, so `promote` qualifies); any job that mints
 the app token must declare `environment: {name: release, deployment: false}`.
 A tag ruleset (`release tags`) lets only the bot and Admin create, move or delete `v*` tags,
 since a tag's own `publish.yml` would otherwise run with those secrets.
 
-Squash-merging means the **squash commit subject** is what release-please parses, so it is
-the one that must carry the Conventional Commits prefix. GitHub defaults it to the PR title —
-keep the PR title in `type: description` form and the default is correct.
+release-drafter reads the **PR title**, and squash-merging makes that title the commit
+subject on `main` too, so the title is the one thing that must carry the Conventional Commits
+prefix. Retitling a merged PR re-sorts it on the next draft refresh.
 
 ```bash
-# Verify release
+# Inspect the current draft, and verify a release
+gh release list --limit 3
 gh run list --workflow=publish.yml --limit 3
 ```
 
@@ -257,10 +274,10 @@ gh run list --workflow=publish.yml --limit 3
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `release-please.yml` | Push to main | Maintain Release PR (version bump + changelog) |
+| `release-drafter.yml` | Push to main, manual | Refresh the draft GitHub Release (notes + next version) |
 | `test.yml` | Push to main, PRs | Unit tests (shell + wrapper JS) and build validation (init → per-arch native builds, no QEMU) |
 | `lint.yml` | Push/PR to main | hadolint, shellcheck, yamllint, actionlint, ESLint, Ruff |
-| `publish.yml` | Release published | Build + sign + push images, then bump `config.yaml` on main (init → per-arch → manifest → promote + scan) |
+| `publish.yml` | Release published | Build + sign + push images, then bump `config.yaml` + prepend `CHANGELOG.md` on main (init → per-arch → manifest → promote + scan) |
 | `security.yml` | Push/PR to main + weekly cron | Trivy filesystem security scan; opens tracking issue on findings |
 | `claude.yml` | @claude mentions | Respond to mentions in issues/PRs (optional) |
 

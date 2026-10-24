@@ -78,7 +78,7 @@ CI will automatically run these on all PRs.
 
 When your change affects behavior, update the relevant prose docs (e.g. `CLAUDE.md`, `claude-terminal/DOCS.md`, `README.md`).
 
-**Do not** manually bump the version in `claude-terminal/config.yaml` or add a `CHANGELOG.md` entry — those are generated automatically. release-please derives the version bump and changelog from your [Conventional Commits](https://www.conventionalcommits.org/) when maintainers merge the Release PR, and `publish.yml` writes the version into `config.yaml` once the release images are published.
+**Do not** manually bump the version in `claude-terminal/config.yaml` or add a `CHANGELOG.md` entry — those are generated automatically. release-drafter derives the version bump and release notes from your PR's [Conventional Commits](https://www.conventionalcommits.org/) title, and once a maintainer publishes the release and its images are live, `publish.yml` writes the version into `config.yaml` and the notes into `CHANGELOG.md`.
 
 See [CLAUDE.md - Release Management](./CLAUDE.md#release-management) for details.
 
@@ -259,13 +259,13 @@ docker build --no-cache \
 
 ## Release Process
 
-Releases are fully automated by [release-please](https://github.com/googleapis/release-please) — no manual version bumps, changelog edits, or GitHub release creation.
+Releases are drafted by [release-drafter](https://github.com/release-drafter/release-drafter) — no manual version bumps, changelog edits, or release PRs.
 
-1. Contributors merge Conventional Commits into `main`
-2. release-please opens/updates a "Release PR" with the generated `CHANGELOG.md`
-3. A maintainer merges the Release PR, which tags the release and triggers `publish.yml`
+1. Contributors squash-merge PRs with Conventional Commits titles into `main` (the **title** decides the section and version bump; mark a breaking change with `!` in the title, e.g. `feat!:` — a `BREAKING CHANGE:` footer is ignored)
+2. release-drafter keeps a single draft GitHub Release up to date with the notes and next version
+3. A maintainer publishes the draft, which tags the release and triggers `publish.yml`
 4. `publish.yml` builds, signs (cosign), and pushes multi-arch images to GitHub Container Registry
-5. Once those images are live, `publish.yml` bumps the version in `claude-terminal/config.yaml` on `main` — the point at which Home Assistant offers the update
+5. Once those images are live, `publish.yml` bumps the version in `claude-terminal/config.yaml` and prepends the release notes to `claude-terminal/CHANGELOG.md` on `main`, in one commit — the point at which Home Assistant offers the update
 
 See [CLAUDE.md - Release Management](./CLAUDE.md#release-management) for details.
 

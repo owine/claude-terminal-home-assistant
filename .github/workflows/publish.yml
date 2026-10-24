@@ -111,15 +111,24 @@ jobs:
   # its usual failures are Go-binary CVEs we cannot fix quickly, and holding
   # back a release for those would hold back its fixes too.
   #
+  # Supervisor also shows CHANGELOG.md to users, so the release notes (the
+  # published release's body, drafted by release-drafter) are prepended to it
+  # in the same commit: HA never sees a version without its changelog.
+  #
   # The release app is a bypass actor on the "main protection" ruleset, so it
-  # commits to main directly. The Contents API (not git push) makes GitHub sign
-  # the commit, and its blob sha makes a concurrent edit fail instead of being
-  # overwritten. chore: keeps release-please from cutting a release for it.
+  # commits to main directly. createCommitOnBranch (not git push) makes GitHub
+  # sign the commit, and expectedHeadOid makes a concurrent push to main fail
+  # the commit instead of being overwritten. The chore: type is pre-excluded
+  # from release-drafter's notes, so the commit never shows up in a release.
   promote:
     name: Publish version to Home Assistant
     needs: [init, manifest]
     runs-on: ubuntu-26.04
-    # Release-app secrets: see the environment note in release-please.yml.
+    # The app's secrets live in the "release" environment, which hands them
+    # only to jobs running on main or a v* tag -- a workflow edited on any
+    # other branch cannot mint the token. A release: published run is on its
+    # v* tag, so it qualifies. deployment: false skips the deployment record
+    # GitHub would otherwise log on every run.
     environment:
       name: release
       deployment: false
@@ -131,47 +140,109 @@ jobs:
           client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
-      - name: Bump config.yaml version on main
+      - name: Bump config.yaml version and CHANGELOG.md on main
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           VERSION: ${{ needs.init.outputs.version }}
           TAG_SHA: ${{ github.sha }}
-          FILE: claude-terminal/config.yaml
+          RELEASE_BODY: ${{ github.event.release.body }}
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
+          CONFIG: claude-terminal/config.yaml
+          CHANGELOG: claude-terminal/CHANGELOG.md
         run: |
           semver='^[0-9]+\.[0-9]+\.[0-9]+$'
           if ! [[ "$VERSION" =~ $semver ]]; then
             echo "::error::release tag gives version '$VERSION', expected X.Y.Z"
             exit 1
           fi
+          # Read everything at one main commit; the commit below is made
+          # against that same commit or not at all.
+          head=$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)
           # A release can be cut by hand on any commit, but only reviewed code
           # may reach HA: the tagged commit must already be on main.
-          status=$(gh api "repos/$REPO/compare/$TAG_SHA...main" --jq .status)
+          status=$(gh api "repos/$REPO/compare/$TAG_SHA...$head" --jq .status)
           if [ "$status" != "identical" ] && [ "$status" != "ahead" ]; then
             echo "::error::release commit $TAG_SHA is not on main ($status); not promoting"
             exit 1
           fi
-          meta=$(gh api "repos/$REPO/contents/$FILE?ref=main")
-          content=$(jq -r .content <<<"$meta" | base64 -d)
-          current=$(sed -nE 's/^version: "([^"]+)".*/\1/p' <<<"$content")
+          cd "$RUNNER_TEMP"
+          raw=(-H "Accept: application/vnd.github.raw")
+          gh api "${raw[@]}" "repos/$REPO/contents/$CONFIG?ref=$head" > config.yaml
+          current=$(sed -nE 's/^version: "([^"]+)".*/\1/p' config.yaml)
           if ! [[ "$current" =~ $semver ]]; then
-            echo "::error::no 'version: \"X.Y.Z\"' line in $FILE (got '$current')"
+            echo "::error::no 'version: \"X.Y.Z\"' line in $CONFIG (got '$current')"
             exit 1
           fi
           # Only ever move forward: re-running an older release's publish must
-          # not roll HA users back to it.
+          # not roll HA users back to it, nor add its notes to the changelog
+          # a second time.
           newest=$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -n1)
           if [ "$current" = "$VERSION" ] || [ "$newest" != "$VERSION" ]; then
-            echo "::notice::config.yaml is at $current; leaving it (release $VERSION)"
+            echo "::notice::config.yaml is at $current; leaving it and $CHANGELOG (release $VERSION)"
             exit 0
           fi
-          updated=$(sed -E "s/^version: \"[^\"]+\"/version: \"$VERSION\"/" <<<"$content" | base64 -w0)
-          gh api -X PUT "repos/$REPO/contents/$FILE" \
-            -f branch=main \
-            -f sha="$(jq -r .sha <<<"$meta")" \
-            -f content="$updated" \
-            -f message="chore: publish $VERSION to Home Assistant" \
-            --jq '"Committed " + .commit.sha + " (verified: " + (.commit.verification.verified | tostring) + ")"'
+          sed -i -E "s/^version: \"[^\"]+\"/version: \"$VERSION\"/" config.yaml
+
+          gh api "${raw[@]}" "repos/$REPO/contents/$CHANGELOG?ref=$head" > CHANGELOG.md
+          if [ "$(head -n1 CHANGELOG.md)" != "# Changelog" ]; then
+            echo "::error::$CHANGELOG does not start with '# Changelog'"
+            exit 1
+          fi
+          # The notes cover the range since the previous published release,
+          # which is what release-drafter drafted them against.
+          prev=$(gh api --paginate "repos/$REPO/releases" \
+              --jq '.[] | select(.draft | not) | select(.prerelease | not) | .tag_name' |
+            sed -nE 's/^v([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' | sort -uV |
+            awk -v v="$VERSION" '$0 == v { prev = p } { p = $0 } END { print prev }')
+          if [ -z "$prev" ]; then
+            echo "::error::no published release before v$VERSION to compare against"
+            exit 1
+          fi
+          if [ "$prev" != "$current" ]; then
+            echo "::warning::HA is moving from $current, but these notes only cover $prev...$VERSION"
+          fi
+          # $(...) drops the body's trailing blank lines, so one blank line
+          # separates it from the previous entry.
+          body=$(printf '%s' "$RELEASE_BODY" | tr -d '\r')
+          # Match the existing (release-please era) entries: categories one
+          # level below the version heading, and PR numbers as links, since
+          # neither HA nor GitHub's file view autolinks #123.
+          {
+            echo "# Changelog"
+            echo
+            echo "## [$VERSION](https://github.com/$REPO/compare/v$prev...v$VERSION) (${PUBLISHED_AT%%T*})"
+            echo
+            printf '%s\n' "$body" |
+              sed -E -e 's/^(#+ )/#\1/' \
+                -e "s|\(#([0-9]+)\)|([#\1](https://github.com/$REPO/issues/\1))|g"
+            echo
+            tail -n +3 CHANGELOG.md
+          } > CHANGELOG.new
+          mv CHANGELOG.new CHANGELOG.md
+
+          jq -n \
+            --arg repo "$REPO" \
+            --arg head "$head" \
+            --arg headline "chore: publish $VERSION to Home Assistant" \
+            --arg config_path "$CONFIG" \
+            --rawfile config <(base64 -w0 config.yaml) \
+            --arg changelog_path "$CHANGELOG" \
+            --rawfile changelog <(base64 -w0 CHANGELOG.md) \
+            '{
+              query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid signature { isValid } } } }",
+              variables: { input: {
+                branch: { repositoryNameWithOwner: $repo, branchName: "main" },
+                expectedHeadOid: $head,
+                message: { headline: $headline },
+                fileChanges: { additions: [
+                  { path: $config_path, contents: $config },
+                  { path: $changelog_path, contents: $changelog }
+                ] }
+              } }
+            }' > commit.json
+          gh api graphql --input commit.json \
+            --jq '.data.createCommitOnBranch.commit | "Committed " + .oid + " (verified: " + (.signature.isValid | tostring) + ")"'
 
   image-scan:
     name: Scan ${{ matrix.platform }} image
