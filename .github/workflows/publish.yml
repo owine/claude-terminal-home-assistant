@@ -208,7 +208,9 @@ jobs:
           # level below the version heading, and PR numbers as links, since
           # neither HA nor GitHub's file view autolinks #123. Every number in
           # an entry's trailing list is linked, so a grouped "(#486, #490)"
-          # gets two; a "#12" in the title is left alone. The collapsed
+          # gets two. Each pass links the leftmost number that only the rest
+          # of that list follows, so "#12" or "(#12)" in the title is left
+          # alone. The collapsed
           # <details> wrapper and the "Full changelog" line are dropped (the
           # version heading already links the compare view), and cat -s
           # squeezes the blank lines that leaves. The link rule uses @ as its
@@ -220,7 +222,7 @@ jobs:
               -e '/^<\/?details>$/d' -e '/^<summary>.*<\/summary>$/d' \
               -e '/^\*\*Full changelog:\*\*/d' \
               -e '/^- .*\(#[0-9]+(, #[0-9]+)*\)$/{' -e ':a' \
-              -e 's@([(]|, )#([0-9]+)([,)])@\1[#\2](https://github.com/'"$REPO"'/issues/\2)\3@' \
+              -e 's@([(]|, )#([0-9]+)((, #[0-9]+)*\))$@\1[#\2](https://github.com/'"$REPO"'/issues/\2)\3@' \
               -e 'ta' -e '}' | cat -s)
           {
             echo "# Changelog"
