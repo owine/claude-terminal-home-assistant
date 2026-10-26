@@ -191,7 +191,7 @@ RUN set -eux; \
 # Install GitHub CLI (gh command) with SHA256 verification
 # Download appropriate binary based on build architecture
 # renovate: datasource=github-releases depName=cli/cli
-ARG GH_CLI_VERSION=2.103.0
+ARG GH_CLI_VERSION=2.103.1
 RUN set -eux; \
     # Determine architecture
     case "${TARGETARCH}" in \
