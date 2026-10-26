@@ -48,7 +48,7 @@ RUN echo "apk refresh: ${APK_REFRESH:-none}" \
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
 # renovate: datasource=custom.claude-code
-ARG CLAUDE_VERSION=2.1.306
+ARG CLAUDE_VERSION=2.1.308
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -98,7 +98,7 @@ RUN set -eux; \
 # Install uv for running ha-mcp (Python package manager/runner) with SHA256 verification
 # ha-mcp requires Python 3.13+, uv handles this automatically
 # renovate: datasource=github-releases depName=astral-sh/uv
-ARG UV_VERSION=0.13.1
+ARG UV_VERSION=0.13.5
 RUN set -eux; \
     # Detect platform for Alpine Linux (musl-based)
     case "$(uname -m)" in \
@@ -168,7 +168,7 @@ RUN set -eux; \
 # running the binary, so a truncated or corrupt download fails the build here
 # rather than at runtime inside a user's add-on.
 # renovate: datasource=github-releases depName=home-assistant/cli
-ARG HA_CLI_VERSION=5.5.0
+ARG HA_CLI_VERSION=5.6.0
 ARG TARGETARCH
 RUN set -eux; \
     case "${TARGETARCH}" in \
@@ -191,7 +191,7 @@ RUN set -eux; \
 # Install GitHub CLI (gh command) with SHA256 verification
 # Download appropriate binary based on build architecture
 # renovate: datasource=github-releases depName=cli/cli
-ARG GH_CLI_VERSION=2.102.0
+ARG GH_CLI_VERSION=2.103.0
 RUN set -eux; \
     # Determine architecture
     case "${TARGETARCH}" in \
