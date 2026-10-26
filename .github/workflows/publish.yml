@@ -203,20 +203,31 @@ jobs:
           fi
           # The body is read from the event file, not passed through env: Linux
           # caps one environment string at 128 KiB, and a body past that would
-          # keep the shell from starting at all. $(...) drops its trailing
-          # blank lines, so one blank line separates it from the previous entry.
-          body=$(jq -r '.release.body // ""' "$GITHUB_EVENT_PATH" | tr -d '\r')
+          # keep the shell from starting at all.
           # Match the existing (release-please era) entries: categories one
           # level below the version heading, and PR numbers as links, since
-          # neither HA nor GitHub's file view autolinks #123.
+          # neither HA nor GitHub's file view autolinks #123. Every number in
+          # an entry's trailing list is linked, so a grouped "(#486, #490)"
+          # gets two; a "#12" in the title is left alone. The collapsed
+          # <details> wrapper and the "Full changelog" line are dropped (the
+          # version heading already links the compare view), and cat -s
+          # squeezes the blank lines that leaves. The link rule uses @ as its
+          # delimiter because $REPO is owner/name.
+          # $(...) drops the trailing blank lines the deletions leave, so one
+          # blank line separates the notes from the previous entry.
+          body=$(jq -r '.release.body // ""' "$GITHUB_EVENT_PATH" | tr -d '\r' |
+            sed -E -e 's/^(#+ )/#\1/' \
+              -e '/^<\/?details>$/d' -e '/^<summary>.*<\/summary>$/d' \
+              -e '/^\*\*Full changelog:\*\*/d' \
+              -e '/^- .*\(#[0-9]+(, #[0-9]+)*\)$/{' -e ':a' \
+              -e 's@([(]|, )#([0-9]+)([,)])@\1[#\2](https://github.com/'"$REPO"'/issues/\2)\3@' \
+              -e 'ta' -e '}' | cat -s)
           {
             echo "# Changelog"
             echo
             echo "## [$VERSION](https://github.com/$REPO/compare/v$prev...v$VERSION) (${PUBLISHED_AT%%T*})"
             echo
-            printf '%s\n' "$body" |
-              sed -E -e 's/^(#+ )/#\1/' \
-                -e "s|\(#([0-9]+)\)|([#\1](https://github.com/$REPO/issues/\1))|g"
+            printf '%s\n' "$body"
             echo
             tail -n +3 CHANGELOG.md
           } > CHANGELOG.new
