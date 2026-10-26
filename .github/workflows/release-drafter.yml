@@ -19,6 +19,83 @@ jobs:
       contents: write
       pull-requests: read
     steps:
-      - uses: release-drafter/release-drafter@978bb0b30c5ee8cdd332ced253758157150d43f0 # v7.10.0
+      - id: draft
+        uses: release-drafter/release-drafter@978bb0b30c5ee8cdd332ced253758157150d43f0 # v7.10.0
         with:
           commitish: main
+      - name: Add summary line
+        if: steps.draft.outputs.id != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BODY: ${{ steps.draft.outputs.body }}
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        with:
+          script: |
+            // owine/renovate-config scripts/release-summary.js v2
+            //
+            // Prepends a count of the draft's entries to its body, e.g.
+            //   **1 bug fix · 4 dependency updates**
+            //
+            // This file is the body of the actions/github-script `script:` that runs after
+            // release-drafter in each consumer's .github/workflows/release-drafter.yml
+            // (README, "Summary line"). github-script runs it as an async function with
+            // `github`, `context` and `core` in scope, so top-level await/return work.
+            // The body and the release id arrive through `env:` (BODY, RELEASE_ID), never
+            // as an Actions expression inside the script: a PR title with a backtick or
+            // `${` would break the JS, and it is an injection path. Actions evaluates
+            // expressions anywhere in `script:`, comments included, so this file must
+            // never contain the expression opener at all (the test checks).
+            //
+            // Each consumer carries an identical copy, this marker line included, so
+            // `grep -r 'release-summary.js v'` finds drift. Bump the version on every
+            // change. Tested by test/release-summary.mjs.
+
+            // `## ` headings, in summary order, as release-drafter.yml titles them.
+            // Entries above the first heading are release-drafter's uncategorized ones.
+            const KINDS = [
+              { heading: /Breaking Changes/, one: 'breaking change', many: 'breaking changes' },
+              { heading: /Features/, one: 'feature', many: 'features' },
+              { heading: /Bug Fixes/, one: 'bug fix', many: 'bug fixes' },
+              { heading: /Performance/, one: 'performance improvement', many: 'performance improvements' },
+              { heading: /Reverts/, one: 'revert', many: 'reverts' },
+              { heading: /Dependencies/, one: 'dependency update', many: 'dependency updates' },
+            ];
+            const OTHER = { one: 'other change', many: 'other changes' };
+
+            const body = process.env.BODY ?? '';
+            const counts = new Map([...KINDS, OTHER].map((kind) => [kind, 0]));
+            let kind = OTHER;
+            for (const line of body.split('\n')) {
+              // The compare line ends the changes; the footer below it is not one.
+              if (line.startsWith('**Full changelog:**')) break;
+              if (line.startsWith('## ')) kind = KINDS.find((k) => k.heading.test(line)) ?? OTHER;
+              // Includes the lines inside a collapsed <details> section.
+              else if (line.startsWith('- ')) counts.set(kind, counts.get(kind) + 1);
+            }
+
+            const parts = [...counts]
+              .filter(([, n]) => n > 0)
+              .map(([k, n]) => `${n} ${n === 1 ? k.one : k.many}`);
+            if (parts.length === 0) {
+              core.info('No entries to summarize.');
+              return;
+            }
+            const summary = `**${parts.join(' · ')}**`;
+
+            const release_id = Number(process.env.RELEASE_ID);
+            const { data: release } = await github.rest.repos.getRelease({ ...context.repo, release_id });
+            // Published since release-drafter ran: never rewrite a release someone shipped.
+            if (!release.draft) {
+              core.info(`Release ${release_id} is no longer a draft; leaving its body alone.`);
+              return;
+            }
+            // Send the draft's own tag back. A PATCH without tag_name drops a draft's tag
+            // (v1.10.2 -> untagged-…), and release-drafter then opens a new draft on every
+            // run because none carries its prefix. v1 did this on nut-cgi.
+            await github.rest.repos.updateRelease({
+              ...context.repo,
+              release_id,
+              tag_name: release.tag_name,
+              body: `${summary}\n\n${body}`,
+            });
+            core.info(`Summary: ${summary}`);
