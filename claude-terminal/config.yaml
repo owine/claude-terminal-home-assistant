@@ -155,7 +155,7 @@ map:
   # It replaced all_addon_configs in Supervisor 2026.07, and mounts at
   # /app_configs by default; path: keeps the mount where all_addon_configs put
   # it, which DOCS.md and users' working_directory settings name.
-  # Always-on read-write; see DOCS.md "Add-on Config Access".
+  # Always-on read-write; see DOCS.md "App Config Access".
   - type: all_app_configs
     read_only: false
     path: /addon_configs
