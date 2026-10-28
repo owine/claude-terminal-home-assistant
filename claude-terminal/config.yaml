@@ -17,6 +17,12 @@ url: "https://github.com/owine/claude-terminal-home-assistant"
 # Web interface configuration
 ingress: true
 ingress_port: 7680
+# Pass POST bodies through instead of buffering them. Buffered, the Supervisor
+# reads the whole body first and refuses anything over its 16 MiB request cap
+# with a 413 before the wrapper sees it - well under upload_max_mb's 25 MB
+# default. Streamed bodies arrive chunked, without Content-Length; the upload
+# route counts bytes as they come (files-upload.js), so it needs neither.
+ingress_stream: true
 panel_icon: mdi:code-braces-box
 panel_title: "Claude Terminal Prowine"
 panel_admin: true

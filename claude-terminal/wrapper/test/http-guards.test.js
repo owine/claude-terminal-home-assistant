@@ -731,6 +731,7 @@ const os = require('node:os');
 const path = require('node:path');
 const express = require('express');
 const multer = require('multer');
+const { IMAGE_UPLOAD_LIMITS } = require('../upload-naming');
 
 const BOUNDARY = '----deadline';
 const PART_HEAD = `--${BOUNDARY}\r\nContent-Disposition: form-data; name="image"; filename="a.png"\r\nContent-Type: image/png\r\n\r\n`;
@@ -739,10 +740,11 @@ const PART_TAIL = `\r\n--${BOUNDARY}--\r\n`;
 // The image route as server.js builds it, with a deadline in front of
 // multer. Returns its port, the folder it saves into, what reached the error
 // handler, and the server's sockets as they close.
-async function imageRoute(deadline) {
+async function imageRoute(deadline, limits) {
     const logged = [];
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deadline-'));
     const upload = multer({
+        limits,
         storage: multer.diskStorage({ destination: dir, filename: (req, file, cb) => cb(null, 'image.png') }),
         fileFilter: (req, file, cb) => cb(file.mimetype === 'image/png' ? null : new Error('Only image files are allowed'), true),
     });
@@ -792,6 +794,34 @@ testAsync('request deadline: a body that stops arriving is cut off after idleMs,
         assert.ok(route.closed[0] - started >= 150, `cut after ${route.closed[0] - started} ms`);
         assert.deepStrictEqual(route.logged, ['Request body for "/upload" cut off: no data for 200 ms']);
         assert.ok(await until(() => fs.readdirSync(route.dir).length === 0, 2000), String(fs.readdirSync(route.dir)));
+    } finally {
+        await route.stop();
+    }
+});
+
+// With ingress_stream, nothing caps a body before the wrapper, and multer
+// holds text fields in memory. The route takes the one part the client sends.
+testAsync('image route: a text field is refused, not held in memory', async () => {
+    const route = await imageRoute({ totalMs: 10000, idleMs: 2000 }, IMAGE_UPLOAD_LIMITS);
+    try {
+        const field = `--${BOUNDARY}\r\nContent-Disposition: form-data; name="junk"\r\n\r\n${'x'.repeat(1000)}\r\n`;
+        const body = `${field}${PART_HEAD}png${PART_TAIL}`;
+        await connect(route.port, body, Buffer.byteLength(body));
+        assert.ok(await until(() => route.errors.length === 1, 3000), 'no error reached the handler');
+        assert.deepStrictEqual(route.errors, ['Too many fields']);
+        assert.deepStrictEqual(fs.readdirSync(route.dir), []);
+    } finally {
+        await route.stop();
+    }
+});
+
+testAsync('image route: a second file is refused', async () => {
+    const route = await imageRoute({ totalMs: 10000, idleMs: 2000 }, IMAGE_UPLOAD_LIMITS);
+    try {
+        const body = `${PART_HEAD}png\r\n${PART_HEAD}png${PART_TAIL}`;
+        await connect(route.port, body, Buffer.byteLength(body));
+        assert.ok(await until(() => route.errors.length === 1, 3000), 'no error reached the handler');
+        assert.ok(['Too many parts', 'Too many files'].includes(route.errors[0]), route.errors[0]);
     } finally {
         await route.stop();
     }

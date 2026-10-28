@@ -36,6 +36,12 @@ const EXTENSION_FOR_MIME = Object.freeze(Object.assign(Object.create(null), {
 // equal.
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
+// multer's limits for the image route. The client sends one part, the image
+// (public/upload-client.js); a text field or a second part is refused, not
+// held: multer keeps text fields in memory, in req.body, and with
+// ingress_stream there is no longer a 16 MiB Supervisor cap in front of it.
+const IMAGE_UPLOAD_LIMITS = Object.freeze({ fileSize: IMAGE_MAX_BYTES, files: 1, fields: 0, parts: 1 });
+
 function isAllowedImageMime(mimetype) {
     return typeof mimetype === 'string' && mimetype in EXTENSION_FOR_MIME;
 }
@@ -55,4 +61,4 @@ function uploadFilename(mimetype, { now = Date.now, randomBytes = crypto.randomB
     return `pasted-${now()}-${suffix}${EXTENSION_FOR_MIME[mimetype]}`;
 }
 
-module.exports = { uploadFilename, isAllowedImageMime, EXTENSION_FOR_MIME, IMAGE_MAX_BYTES };
+module.exports = { uploadFilename, isAllowedImageMime, EXTENSION_FOR_MIME, IMAGE_MAX_BYTES, IMAGE_UPLOAD_LIMITS };
