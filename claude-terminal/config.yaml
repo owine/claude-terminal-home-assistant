@@ -151,10 +151,14 @@ map:
   - type: homeassistant_config
     read_only: false
     path: /config
-  # all_addon_configs exposes every add-on's config dir at /addon_configs/<repo>_<slug>/
-  # (HA default mount). Always-on read-write; see DOCS.md "Add-on Config Access".
-  - type: all_addon_configs
+  # all_app_configs exposes every app's config dir at /addon_configs/<repo>_<slug>/.
+  # It replaced all_addon_configs in Supervisor 2026.07, and mounts at
+  # /app_configs by default; path: keeps the mount where all_addon_configs put
+  # it, which DOCS.md and users' working_directory settings name.
+  # Always-on read-write; see DOCS.md "Add-on Config Access".
+  - type: all_app_configs
     read_only: false
+    path: /addon_configs
   # share exposes /share, the folder Home Assistant and other add-ons use to
   # exchange files. Read-write so Claude can work on files placed there - a
   # natural home for projects that are not Home Assistant configuration.
