@@ -192,7 +192,7 @@
 
         // What a listing that is not one shows (helpers.isListing): a
         // proxy's page answering 200, say, which getJson reads as {}.
-        const NOT_A_LISTING = '⚠️ The add-on gave an unexpected answer. Try again.';
+        const NOT_A_LISTING = '⚠️ The app gave an unexpected answer. Try again.';
 
         // One folder level into `container`; subfolders load on expand.
         // `gen` is passed for the top level only: a subfolder renders into
@@ -405,12 +405,12 @@
         // limit), not something wrong with the folder: "try again".
         function zipRefusal(err, zipName) {
             if (err.status === 429) {
-                const said = err.serverMessage || 'The add-on is busy.';
+                const said = err.serverMessage || 'The app is busy.';
                 return ['⏳ ' + zipName + ' did not start: ' + said
                     + (/try again/i.test(said) ? '' : ' Try again shortly.'), 'busy'];
             }
             if (err.status === undefined) {
-                return ['⚠️ Could not reach the add-on to prepare ' + zipName + ' (' + err.message
+                return ['⚠️ Could not reach the app to prepare ' + zipName + ' (' + err.message
                     + '). Check the connection and try again.', 'error'];
             }
             return ['⚠️ ' + zipName + ': ' + err.message, 'error'];
@@ -453,7 +453,7 @@
             // A reply that is not a plan (say a proxy's page answered
             // 200) is not a passed check.
             if (!plan || typeof plan.files !== 'number') {
-                showNotice('⚠️ ' + zipName + ': the add-on gave an unexpected answer. Try again.', 'error');
+                showNotice('⚠️ ' + zipName + ': the app gave an unexpected answer. Try again.', 'error');
                 return;
             }
             startDownload(helpers.downloadUrl(entry.path, { zip: true }));

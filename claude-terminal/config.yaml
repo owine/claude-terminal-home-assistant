@@ -25,7 +25,7 @@ panel_admin: true
 #
 # 7680 defaults to null - unpublished - so the only route in is ingress, which
 # Home Assistant authenticates. ttyd (7681) is not listed: it binds the
-# container's loopback and is reachable only through the wrapper. Nothing in this add-on authenticates a direct
+# container's loopback and is reachable only through the wrapper. Nothing in this app authenticates a direct
 # connection: the web UI proxies straight through to `ttyd --writable` attached
 # to a root tmux session with /config, /share and (when enabled) the host
 # Docker socket. Publishing 7680 therefore hands a root terminal to anyone who
@@ -33,7 +33,7 @@ panel_admin: true
 # connections opened by other websites, so a page a LAN user visits cannot
 # drive the terminal through their browser.)
 #
-# Assigning a host port in the add-on's Network tab is the opt-in, and is what
+# Assigning a host port in the app's Network tab is the opt-in, and is what
 # the PWA-over-a-stable-URL setup in DOCS.md needs. Put it behind an
 # authenticating reverse proxy if it leaves the LAN.
 ports:
@@ -80,7 +80,7 @@ options:
   #     behavior); useful on slow connections to avoid re-downloading packages
   persist_npm_cache: false
   # image_retention_days: Pasted and dropped images older than this are
-  #   deleted at startup (only the add-on's own pasted-* files in /data/images).
+  #   deleted at startup (only the app's own pasted-* files in /data/images).
   #   0 keeps them forever. /data is in every HA backup, so this bounds both.
   image_retention_days: 30
   # upload_max_mb: Largest file the Files sidebar uploads into /config, in

@@ -110,7 +110,7 @@ init_commands:
 - The command text and its output are logged, so keep secrets out of both:
   put them in a file under `/config` and have the command source it.
 - Only the app configuration is used. Nothing under `/config` is run
-  automatically, because other add-ons can write there.
+  automatically, because other apps can write there.
 
 ### Docker Access
 
@@ -158,32 +158,32 @@ persistent_pip_packages:
   - requests
 ```
 
-Your OAuth credentials are stored in the add-on's private `/data` volume (Claude Code's own config directory, `/data/home/.claude/`) and persist across app updates and restarts, so you won't need to log in again. `/data` is not visible from your Home Assistant `/config` share. Very old versions kept credentials in `/config/claude-config`. They are carried over once, on the first start after upgrading, and never over a login you already have; after that the directory can be deleted.
+Your OAuth credentials are stored in the app's private `/data` volume (Claude Code's own config directory, `/data/home/.claude/`) and persist across app updates and restarts, so you won't need to log in again. `/data` is not visible from your Home Assistant `/config` share. Very old versions kept credentials in `/config/claude-config`. They are carried over once, on the first start after upgrading, and never over a login you already have; after that the directory can be deleted.
 
 ### Shared Folder Access
 
-The terminal mounts `/share`, the folder Home Assistant and other add-ons use to
+The terminal mounts `/share`, the folder Home Assistant and other apps use to
 exchange files, read-write. It is a natural place to keep projects that are not
 Home Assistant configuration, and a convenient handoff point for files produced
-by other add-ons. Point `working_directory` at a path under `/share` if that is
+by other apps. Point `working_directory` at a path under `/share` if that is
 where you usually work.
 
-### Add-on Config Access
+### App Config Access
 
 In addition to your Home Assistant config at `/config`, the terminal mounts every
-installed add-on's configuration directory under `/addon_configs/<repo>_<slug>/`
+installed app's configuration directory under `/addon_configs/<repo>_<slug>/`
 (Home Assistant's standard mount for `all_addon_configs`). This lets Claude read
-and edit other add-ons' configs from one place — for example inspecting another
-add-on's YAML while wiring up an integration.
+and edit other apps' configs from one place — for example inspecting another
+app's YAML while wiring up an integration.
 
 ⚠️ **Security note:** This mapping is **always on** and **read-write** to *all*
-add-on configs — it cannot be toggled off via an option, because Home Assistant
+app configs — it cannot be toggled off via an option, because Home Assistant
 applies volume mounts statically at container creation. It widens the terminal's
 reach and compounds with `dangerously_skip_permissions` (YOLO mode) and Docker
 socket access.
 
 **Why read-write?** The mount is read-write so Claude can actually *edit* other
-add-ons' configs — the primary use case for this feature (fixing YAML, wiring up
+apps' configs — the primary use case for this feature (fixing YAML, wiring up
 integrations). A read-only mount would only allow inspection, which the Home
 Assistant config UI already provides, so it would add reach without adding
 capability. If you only need to read other configs, treat the mount as read-only
@@ -193,10 +193,10 @@ by convention and avoid asking Claude to modify those paths.
 for permission before reading or writing paths outside its working directory, so
 *interactive* access to `/addon_configs` stays gated by those prompts. But the
 mount itself is always present and writable at the filesystem level — so anything
-running in the container (or any compromise of the terminal add-on) can read and
-modify every add-on's configuration regardless of those prompts. If that blast
-radius is not acceptable for your setup, this add-on is not a good fit; the
-mapping cannot be disabled without forking the add-on.
+running in the container (or any compromise of the terminal app) can read and
+modify every app's configuration regardless of those prompts. If that blast
+radius is not acceptable for your setup, this app is not a good fit; the
+mapping cannot be disabled without forking the app.
 
 ### Options
 
@@ -210,9 +210,9 @@ mapping cannot be disabled without forking the add-on.
 | `login_notification` | `true` | Post Claude's login link as a Home Assistant notification while a browser login is waiting, and dismiss it once the login succeeds. See Authentication below |
 | `tmux_mouse_mode` | `true` | Mouse reporting: the wheel scrolls and a drag selects. Set `false` to disable it entirely (the wheel then sends arrow keys to full-screen apps). Flip it live with **Prefix + m**. **Changed in 2.7.3** — this defaulted to `false` before, so if you never set it, the mouse became active on upgrade |
 | `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
-| `image_retention_days` | `30` | Pasted and dropped images older than this many days are deleted at startup. Only the add-on's own uploads (`pasted-*` in `/data/images`) are touched. `0` keeps them forever, and so does a value over 36500 (100 years), with a warning in the log. `/data` is included in every Home Assistant backup, so this also bounds backup growth. Caches and the Claude binary are always left out of backups; after a restore the add-on reinstalls the Claude version bundled with the image, and Claude updates itself again from there |
+| `image_retention_days` | `30` | Pasted and dropped images older than this many days are deleted at startup. Only the app's own uploads (`pasted-*` in `/data/images`) are touched. `0` keeps them forever, and so does a value over 36500 (100 years), with a warning in the log. `/data` is included in every Home Assistant backup, so this also bounds backup growth. Caches and the Claude binary are always left out of backups; after a restore the app reinstalls the Claude version bundled with the image, and Claude updates itself again from there |
 | `upload_max_mb` | `25` | Largest file, in megabytes, uploaded into `/config`, from 1 to at most 1024: from the Files sidebar, and from the terminal (📎, paste, drop) for everything but small images, which go to `/data/images` with their own 10 MB limit. See Uploads under Files Sidebar, and Uploading Files from the Terminal |
-| `upload_retention_days` | `30` | Files in the sidebar's upload inbox, `/config/uploads`, last modified more than this many days ago are deleted at startup: every file at the inbox's top level, whatever its name and whoever put it there. Folders and symlinks in it are never removed. Only an inbox the add-on made is swept: it marks one with a hidden file, `.ctp-inbox`, and a `/config/uploads` without that marker (a folder of yours that was there first) is left alone, with a line in the log. From 0 to at most 36500 (100 years); `0` keeps them forever. A folder you chose with **Upload here** is never swept. See Uploads under Files Sidebar |
+| `upload_retention_days` | `30` | Files in the sidebar's upload inbox, `/config/uploads`, last modified more than this many days ago are deleted at startup: every file at the inbox's top level, whatever its name and whoever put it there. Folders and symlinks in it are never removed. Only an inbox the app made is swept: it marks one with a hidden file, `.ctp-inbox`, and a `/config/uploads` without that marker (a folder of yours that was there first) is left alone, with a line in the log. From 0 to at most 36500 (100 years); `0` keeps them forever. A folder you chose with **Upload here** is never swept. See Uploads under Files Sidebar |
 | `persistent_apk_packages` | `[]` | APK packages to install on every startup |
 | `persistent_pip_packages` | `[]` | Python packages to install on every startup |
 | `init_commands` | `[]` | Shell commands run as root on every start, 120 seconds each. See Init Commands above |
@@ -228,9 +228,9 @@ browser clipboard does not always carry intact.
 Two things help with that:
 
 - **Home Assistant notification**: while Claude is waiting for a login, the
-  add-on posts the link as a "Claude Code login" notification, which also
+  app posts the link as a "Claude Code login" notification, which also
   reaches the Companion app. Open it, sign in, then paste the code the browser
-  shows into the terminal. While nothing needs it, the add-on checks for a
+  shows into the terminal. While nothing needs it, the app checks for a
   login screen less often, so the first notification can take up to 30
   seconds to arrive. The notification goes away by itself once the login
   succeeds, or once the login screen is gone (a cancelled login, or a Console
@@ -238,7 +238,7 @@ Two things help with that:
   live in Home Assistant's memory, so if HA restarts mid-login the same link
   is not posted again; use the banner below instead. Turn it off with
   `login_notification: false`.
-- **The "Login link ready" banner** in the add-on's web UI, with Open and Copy
+- **The "Login link ready" banner** in the app's web UI, with Open and Copy
   buttons for the same link, whenever the terminal is open in a browser.
 
 The code still has to be pasted into the terminal either way: Claude receives
@@ -251,12 +251,12 @@ notification is posted then):
 
 1. On a machine where you are already logged in to Claude Code, run
    `claude setup-token`
-2. Paste the resulting token into the `claude_code_oauth_token` add-on option
-3. Restart the add-on
+2. Paste the resulting token into the `claude_code_oauth_token` app option
+3. Restart the app
 
 The token is passed to Claude through the environment only — it is never
 written into the container's profile scripts or into `/data`, and it is masked
-in the Home Assistant UI and absent from the add-on log.
+in the Home Assistant UI and absent from the app log.
 
 Note: token authentication cannot establish Remote Control sessions. If you
 need those, use the interactive browser login instead.
@@ -404,22 +404,22 @@ The PWA works with any of these access methods:
 > **The direct port has no authentication.** Ingress is gated by your Home
 > Assistant login; port 7680 is not gated by anything. The web UI proxies
 > straight through to a writable terminal attached to a root shell with access
-> to `/config`, `/share`, every add-on's config, and — if you enabled it — the
+> to `/config`, `/share`, every app's config, and — if you enabled it — the
 > host Docker socket. Anyone who can reach `http://your-ha-ip:7680` has all of
 > that, with no password.
 >
-> The add-on does refuse terminal connections opened by *other websites*, so a
+> The app does refuse terminal connections opened by *other websites*, so a
 > page someone on your LAN visits cannot reach the terminal through their
 > browser. That closes the browser route only — anything that connects to the
 > port directly still gets in.
 >
 > That is why the port is **not published by default**. To turn it on, open the
-> add-on's **Configuration → Network** section, set **7680** as the host port,
+> app's **Configuration → Network** section, set **7680** as the host port,
 > and save. Only do this on a network you trust, or put an authenticating
 > reverse proxy in front of it — never forward this port to the internet.
 >
 > **Upgrading from 2.8.5 or earlier?** The port used to be published by
-> default. If you reach the add-on at `http://your-ha-ip:7680` (including a PWA
+> default. If you reach the app at `http://your-ha-ip:7680` (including a PWA
 > installed from that URL) and it stops loading after the upgrade, re-add the
 > port as above — your setup still works, it just has to be asked for now.
 
@@ -431,7 +431,7 @@ When your network is unavailable, the app shows a branded offline page with a re
 
 #### Uploading Files from the Terminal
 
-Any file can go from your device to the add-on straight from the terminal,
+Any file can go from your device to the app straight from the terminal,
 and its path is typed at the prompt for you to use with Claude:
 
 - **Paste** (Ctrl+V, or Cmd+V on a Mac) a screenshot, a copied image or a
@@ -448,7 +448,7 @@ Where a file goes depends on what it is:
 
 | File | Goes to | Limit |
 |---|---|---|
-| A PNG, JPEG, GIF, WebP or SVG image of at most 10 MB | `/data/images/`, under a name the add-on picks (`pasted-<time>-<random>.png`) | 10 MB |
+| A PNG, JPEG, GIF, WebP or SVG image of at most 10 MB | `/data/images/`, under a name the app picks (`pasted-<time>-<random>.png`) | 10 MB |
 | Anything else: other types, HEIC photos, bigger images | The upload inbox, `/config/uploads/`, under its own name | `upload_max_mb` (25 MB unless you change it) |
 
 Paths are typed at the prompt without pressing Enter, so you can add to the
@@ -462,14 +462,14 @@ the files inside them.
 Progress and refusals show in the status bar beside the header buttons. A
 refusal says why: a file over `upload_max_mb` is refused before any of it is
 sent, and the message names the limit. It stays until the next message.
-Uploads are limited in rate: when the add-on answers "too many uploads", the
+Uploads are limited in rate: when the app answers "too many uploads", the
 batch stops at that file, and the status bar says how many were not uploaded.
 Wait a minute and send those again.
 
-Both places are cleared at startup. `/data/images/` loses the add-on's own
+Both places are cleared at startup. `/data/images/` loses the app's own
 `pasted-*` files once they are older than `image_retention_days`. **The inbox
 is disposable:** every file at its top level is deleted once it is older than
-`upload_retention_days`, whoever put it there, if the add-on made the folder
+`upload_retention_days`, whoever put it there, if the app made the folder
 (see Uploads under Files Sidebar). A name already taken in the inbox gets a
 number (`report (1).pdf`); nothing is overwritten. Move files you want to
 keep somewhere else in `/config`.
@@ -482,7 +482,7 @@ summarise '/config/uploads/my report.pdf'
 
 ##### Troubleshooting
 
-**A file did not upload:** the status bar says why. The add-on's log may say
+**A file did not upload:** the status bar says why. The app's log may say
 more; check that the disk is not full (`df -h /data /config`).
 
 **A paste uploads nothing, or a copied file pastes as its name:** the
@@ -585,7 +585,7 @@ everything below it, by these rules:
   or not **Hidden files** is ticked.
 
 A link on another site cannot make your browser download a file or a zip from
-the add-on: such a request is refused.
+the app: such a request is refused.
 
 In the Home Assistant Companion app, the app's web view may preview a download
 instead of saving it. If a download does not save, open Home Assistant in a
@@ -654,10 +654,10 @@ same question. An upload has 30 minutes to arrive, or longer if you raise
 `upload_max_mb` (enough for a file at the limit over a 128 kbit/s link), but
 never more than 12 hours.
 
-If the add-on has to refuse a write, the message says why: the file system is
-read-only, the add-on is not allowed to write there, the name is too long for
+If the app has to refuse a write, the message says why: the file system is
+read-only, the app is not allowed to write there, the name is too long for
 the file system, or the disk is full. Uploads are limited in rate: when the
-add-on answers "too many uploads", the batch stops at that file, and one line
+app answers "too many uploads", the batch stops at that file, and one line
 says how many were not uploaded (or names the one). Wait a minute and pick
 the rest again.
 
@@ -668,35 +668,35 @@ is disabled and says why), `deps` (Home Assistant's own Python packages),
 folders inside a symlinked folder are listed at their real location, and do
 have **Upload here**.
 
-**The inbox is disposable.** At every start, the add-on deletes each file at
+**The inbox is disposable.** At every start, the app deletes each file at
 the top level of `/config/uploads` that was last modified more than
 `upload_retention_days` days ago (30 unless you change it; `0` keeps them
 forever), whoever put it there, Claude included. Folders inside the inbox,
 and anything in them, are left alone, as are symlinks at its top level, and
 so is every folder you chose with **Upload here**, except `/config/uploads`
 itself: Upload here on it puts files in the inbox, and its menu says that
-files there are cleared after `upload_retention_days` if the add-on made the
+files there are cleared after `upload_retention_days` if the app made the
 folder (it holds `.ctp-inbox`, below). Keep files you want to last somewhere
 else. If `/config/uploads` is a
 symlink or a file rather than a folder, it is never swept, and uploads to the
 inbox are refused until it is a plain folder again.
 
-Only an inbox the add-on made is swept. When it makes `/config/uploads`, it
+Only an inbox the app made is swept. When it makes `/config/uploads`, it
 writes a one-line note into it, `.ctp-inbox`, which marks the folder as its
 own; the sidebar never shows the note, nor puts it in a zip, and the sweep
 never deletes it. If you already had a folder called `uploads` in `/config`,
 uploads go into it as well, but nothing in it is ever deleted: the log says
 at every start that it is not swept, and why (unless `upload_retention_days`
-is `0`, when nothing is swept anyway). If the add-on cannot write the note,
+is `0`, when nothing is swept anyway). If the app cannot write the note,
 the log says so, and that inbox is not swept either. To have such a folder
-swept like an inbox the add-on made, create the marker yourself (`touch
+swept like an inbox the app made, create the marker yourself (`touch
 /config/uploads/.ctp-inbox` in the terminal). To keep it as your own, move or
-rename it, and the add-on makes a fresh inbox on the next upload. Deleting
+rename it, and the app makes a fresh inbox on the next upload. Deleting
 `.ctp-inbox` stops the sweep in the same way; the marker must be a plain
 file, not a symlink.
 
 An unfinished upload never leaves a partial file: if the connection drops,
-the browser stops sending, the disk fills up, or the add-on restarts mid-way,
+the browser stops sending, the disk fills up, or the app restarts mid-way,
 what had arrived is deleted (at the next start, in the last case). A page on
 another site cannot upload into your `/config`: such a request is refused.
 
@@ -713,7 +713,7 @@ See [PERSISTENT_PACKAGES.md](PERSISTENT_PACKAGES.md) for complete guide.
 - **Interactive menu**: Choose between new, continue, or resume sessions
 - **GitHub CLI**: Pre-installed with persistent authentication
 - **tmux integration**: Sessions persist across browser refreshes
-- **Your own tmux settings**: put them in `~/.tmux.local.conf`. `~/.tmux.conf` is rewritten from the add-on on every start (it carries the mouse and clipboard setup), and it sources `~/.tmux.local.conf` last, so your settings win and survive restarts
+- **Your own tmux settings**: put them in `~/.tmux.local.conf`. `~/.tmux.conf` is rewritten from the app on every start (it carries the mouse and clipboard setup), and it sources `~/.tmux.local.conf` last, so your settings win and survive restarts
 - **Mouse and selection**: mouse reporting is on by default, so the wheel (and a touch swipe) always scrolls something sensible. Inside a full-screen program that wants the mouse - Claude Code, vim, htop - the wheel scrolls *that program's* view, the same content `PgUp`/`PgDn` moves through. At a shell prompt, where nothing has claimed the mouse, it scrolls tmux history instead. Nothing detects which program is running; tmux routes the wheel to whoever asked for it
   - **Drag to select**: a plain drag selects in tmux and copies to your clipboard automatically when you release
   - **Shift+drag** (**Option+drag** on macOS) selects using the terminal's own selection instead, which reaches into the full scrollback and also copies automatically. Use it when a full-screen app wants the mouse for itself

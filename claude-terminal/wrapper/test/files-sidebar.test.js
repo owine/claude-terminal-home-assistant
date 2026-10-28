@@ -164,8 +164,8 @@ test('uploadTarget: offered on real folders; disabled with a reason on protected
     assert.strictEqual(inbox.disabled, false);
     // Swept only when the add-on made it (its .ctp-inbox marker), so the
     // note says so: an uploads folder the user made is never cleared.
-    assert.match(inbox.hint, /upload_retention_days if the add-on made it/);
-    assert.match(inbox.title, /If the add-on made this folder \(it holds \.ctp-inbox\)/);
+    assert.match(inbox.hint, /upload_retention_days if the app made it/);
+    assert.match(inbox.title, /If the app made this folder \(it holds \.ctp-inbox\)/);
     assert.strictEqual(uploadTarget(dir('/config/www/uploads'), '/config').hint, '');
 });
 
@@ -212,7 +212,7 @@ test('uploadErrorText: the server\'s message, else one for the status', () => {
     assert.strictEqual(uploadErrorText(413, { error: 'This file is 30.0 MB, over the 25 MB upload limit.' }, 'big.bin'),
         'big.bin: This file is 30.0 MB, over the 25 MB upload limit.');
     assert.match(uploadErrorText(413, {}, 'big.bin'), /upload_max_mb/);
-    assert.match(uploadErrorText(0, {}, 'a.txt'), /Could not reach the add-on to upload a\.txt/);
+    assert.match(uploadErrorText(0, {}, 'a.txt'), /Could not reach the app to upload a\.txt/);
     assert.strictEqual(uploadErrorText(502, null, 'a.txt'), 'a.txt: upload failed (HTTP 502).');
     // A message that already names the file is not prefixed with it again.
     assert.strictEqual(uploadErrorText(400, { error: 'x.git ends in .git, a name the Files sidebar never shows, so it cannot be uploaded.' }, 'x.git'),

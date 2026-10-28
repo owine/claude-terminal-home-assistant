@@ -963,7 +963,7 @@ async function checkZipMenu(browser, url) {
         await zipItem.click();
         await waitFor(async () => held === 3 && /reach/.test((await notice()).text));
         check('a network failure is shown in the notice', await notice(),
-            (v) => v.kind === 'error' && /Could not reach the add-on/.test(v.text));
+            (v) => v.kind === 'error' && /Could not reach the app/.test(v.text));
 
         // A 200 that is not a plan (a proxy's page, say) is no passed check.
         await context.unroute(isPreflight);
@@ -1005,7 +1005,7 @@ async function checkZipMenu(browser, url) {
             await waitFor(async () => /late\.bin/.test((await notice()).text)), true);
         releaseNewer();
         check('and the newer zip\'s refusal after it',
-            await waitFor(async () => /Could not reach the add-on to prepare ctp-other\.zip/.test((await notice()).text)), true);
+            await waitFor(async () => /Could not reach the app to prepare ctp-other\.zip/.test((await notice()).text)), true);
         await context.unroute(isFixturePreflight);
         await context.unroute(isOtherPreflight);
 
@@ -1662,7 +1662,7 @@ async function checkUploads(browser, url) {
         const before = bodies.length;
         await pick(uploadButton, local('big.bin', Buffer.alloc(26 * 1024 * 1024)));
         check('a file over the limit is refused, naming the limit and its option',
-            await waitFor(async () => /26\.0 MB, over the 25 MB upload limit \(the add-on's upload_max_mb option\)/.test((await notice()).text)), true);
+            await waitFor(async () => /26\.0 MB, over the 25 MB upload limit \(the app's upload_max_mb option\)/.test((await notice()).text)), true);
         check('and its body is never sent', bodies.length - before, 0);
 
         // The progress bar, while a body is held back.
@@ -2534,7 +2534,7 @@ async function checkTerminalUploads(browser, url) {
         const bodiesBefore = bodies.length;
         await fire('page', 'drop', { files: [['ok.txt', 'text/plain', 'ok\n'], ['big.bin', 'application/octet-stream', 26 * 1024 * 1024]] });
         check('a file over upload_max_mb is refused in the status line, naming the limit and its option',
-            await waitFor(async () => /26\.0 MB, over the 25 MB upload limit \(the add-on's upload_max_mb option\)/.test(await status())), true);
+            await waitFor(async () => /26\.0 MB, over the 25 MB upload limit \(the app's upload_max_mb option\)/.test(await status())), true);
         check('the file before it in the batch is still typed', await typed(`${INBOX_DIR}/ok.txt`), true);
         check('and the refused body is never sent', bodies.length - bodiesBefore, 1);
         // "Sent to terminal: …" came first and arms a 5 s clear; the refusal
@@ -2577,7 +2577,7 @@ async function checkTerminalUploads(browser, url) {
         await context.route(isBody, (route) => route.abort());
         await fire('page', 'drop', { files: [['lost.txt', 'text/plain', 'lost\n']] });
         check('an upload that gets no answer says so',
-            await waitFor(async () => /^⚠️ Could not reach the add-on to upload lost\.txt\./.test(await status())), true);
+            await waitFor(async () => /^⚠️ Could not reach the app to upload lost\.txt\./.test(await status())), true);
         check('and types nothing', atPrompt(), '');
         await context.unroute(isBody);
 

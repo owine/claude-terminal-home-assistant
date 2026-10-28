@@ -47,7 +47,7 @@ const DEFAULT_MAX_MB = 25;
 // INBOX_MARKER, which is written here when the wrapper makes the folder: a
 // folder called uploads that was there first is the user's, and never swept.
 // A folder chosen with "Upload here" is never swept.
-const INBOX_MARKER_NOTE = 'The Claude Terminal Prowine add-on made this folder as its upload inbox, '
+const INBOX_MARKER_NOTE = 'The Claude Terminal Prowine app made this folder as its upload inbox, '
     + 'and at every start deletes the files at its top level older than upload_retention_days. '
     + 'Delete this file to stop that.\n';
 // A client that stops sending must not hold a descriptor and a part forever:
@@ -85,7 +85,7 @@ const FS_REFUSALS = new Map([
     ['ENOSPC', [507, DISK_FULL_TEXT]],
     ['EDQUOT', [507, DISK_FULL_TEXT]],
     ['EROFS', [403, 'The file system is read-only, so the file was not saved.']],
-    ['EACCES', [403, 'The add-on is not allowed to write there, so the file was not saved.']],
+    ['EACCES', [403, 'The app is not allowed to write there, so the file was not saved.']],
     ['ENAMETOOLONG', [400, 'The name is too long for the file system there, so the file was not saved. Try a shorter name.']],
 ]);
 // Control characters, and the invisible marks that reorder or hide text:
@@ -237,7 +237,7 @@ function createUploads({
         link: fsp.link, rename: fsp.rename, realpath: fsp.realpath, lstat: fsp.lstat, opendir: fsp.opendir, ...ops,
     };
     const maxMb = Math.round(maxBytes / MB);
-    const limitText = `the ${maxMb} MB upload limit (the add-on's upload_max_mb option)`;
+    const limitText = `the ${maxMb} MB upload limit (the app's upload_max_mb option)`;
     // A size that rounds to the limit or under ("1.0 MB, over the 1 MB
     // limit") would read as no excess at all: then it is just "over".
     const tooBig = (bytes) => new FilesError(413, bytes === undefined || Number((bytes / MB).toFixed(1)) <= maxMb
@@ -676,8 +676,8 @@ function createUploads({
             log(`Upload not saved: its part could not be recorded in ${record.file}: ${err.message}`);
             const dir = path.dirname(record.file);
             throw DISK_FULL.has(err && err.code)
-                ? new FilesError(507, `The add-on's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`)
-                : new FilesError(500, `The add-on could not write to its data folder (${dir}), so the file was not saved. The add-on's log says why.`);
+                ? new FilesError(507, `The app's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`)
+                : new FilesError(500, `The app could not write to its data folder (${dir}), so the file was not saved. The app's log says why.`);
         }
     }
 

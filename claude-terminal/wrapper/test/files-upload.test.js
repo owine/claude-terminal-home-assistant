@@ -1290,7 +1290,7 @@ test('check=1 refuses a size over the cap, naming the limit and the option', asy
         let res = await post(url, { name: 'big.bin', check: '1', size: String(3 * 1024 * 1024) });
         assert.strictEqual(res.status, 413);
         assert.deepStrictEqual(await res.json(),
-            { error: 'This file is 3.0 MB, over the 1 MB upload limit (the add-on\'s upload_max_mb option).' });
+            { error: 'This file is 3.0 MB, over the 1 MB upload limit (the app\'s upload_max_mb option).' });
         for (const size of [undefined, '', 'abc', '-1', '1.5']) {
             res = await post(url, { name: 'big.bin', check: '1', ...(size === undefined ? {} : { size }) });
             assert.strictEqual(res.status, 400, String(size));
@@ -1305,7 +1305,7 @@ test('check=1: a file just over the cap is over it, never "1.0 MB, over the 1 MB
         let res = await post(url, { name: 'edge.bin', check: '1', size: String(1024 * 1024 + 1) });
         assert.strictEqual(res.status, 413);
         assert.deepStrictEqual(await res.json(),
-            { error: 'This file is over the 1 MB upload limit (the add-on\'s upload_max_mb option).' });
+            { error: 'This file is over the 1 MB upload limit (the app\'s upload_max_mb option).' });
         res = await post(url, { name: 'edge.bin', check: '1', size: String(Math.round(1.2 * 1024 * 1024)) });
         assert.match((await res.json()).error, /^This file is 1\.2 MB, over the 1 MB upload limit/);
         // positive control: a file at the cap is not over it
@@ -1348,7 +1348,7 @@ test('upload: a body that runs over the cap is cut off with a 413 and leaves no 
             for (let i = 0; i < 3; i++) sock.write(`80000\r\n${'y'.repeat(512 * 1024)}\r\n`);
             const text = await within(answered, 'the 413');
             assert.match(text, /^HTTP\/1\.1 413 /);
-            assert.match(text, /This file is over the 1 MB upload limit \(the add-on's upload_max_mb option\)\./);
+            assert.match(text, /This file is over the 1 MB upload limit \(the app's upload_max_mb option\)\./);
         });
     });
     assert.deepStrictEqual(escapes, []);
@@ -1669,10 +1669,10 @@ test('upload: a record that cannot be written is said to be the add-on\'s data f
     });
     const dir = path.dirname(file);
     for (const [code, status, text] of [
-        ['ENOSPC', 507, `The add-on's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`],
-        ['EDQUOT', 507, `The add-on's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`],
-        ['EACCES', 500, `The add-on could not write to its data folder (${dir}), so the file was not saved. The add-on's log says why.`],
-        ['EROFS', 500, `The add-on could not write to its data folder (${dir}), so the file was not saved. The add-on's log says why.`],
+        ['ENOSPC', 507, `The app's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`],
+        ['EDQUOT', 507, `The app's data folder (${dir}) is full, so the file was not saved. Free some space and try again.`],
+        ['EACCES', 500, `The app could not write to its data folder (${dir}), so the file was not saved. The app's log says why.`],
+        ['EROFS', 500, `The app could not write to its data folder (${dir}), so the file was not saved. The app's log says why.`],
     ]) {
         const logged = [];
         await withServer({ uploads: createUploads({ api, record: failing(code) }), log: (m) => logged.push(m) }, async (url) => {

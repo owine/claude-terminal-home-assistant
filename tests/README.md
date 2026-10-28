@@ -1,6 +1,6 @@
 # Shell test suite
 
-Unit tests for the add-on's startup scripts — `claude-terminal/run.sh` and
+Unit tests for the app's startup scripts — `claude-terminal/run.sh` and
 `claude-terminal/scripts/health-check.sh`.
 
 ```bash
@@ -14,7 +14,7 @@ No dependencies beyond bash and the usual POSIX tools. Runs in CI as the
 ## How it works
 
 The scripts under test are container startup code: they run under
-`#!/usr/bin/with-contenv bashio`, read add-on options from the Supervisor API,
+`#!/usr/bin/with-contenv bashio`, read app options from the Supervisor API,
 and write to `/data`. None of that exists on a developer laptop or a CI runner.
 
 So each suite sources the script under test with `bashio` stubbed, and points
@@ -23,13 +23,13 @@ it at a temporary fixture tree:
 - **`main` is not executed.** `run.sh`, `health-check.sh`, `setup-ha-mcp.sh`,
   `claude-session-picker.sh` and `persist-install` all guard their entrypoint with
   `[ "${BASH_SOURCE[0]}" = "${0}" ]`, so sourcing them defines functions
-  without starting the add-on.
+  without starting the app.
 - **Absolute paths reach fixtures through a prefix seam.** `CLAUDE_BIN_PREFIX`
   (health-check.sh) and `LEGACY_AUTH_PREFIX` (run.sh) are empty in production
   and set by a test to a temporary directory standing in for `/`. Paths like
   `/root/.config/anthropic` cannot be relocated any other way.
 - **`bashio::config`** reads from values recorded by `set_config`, so a test
-  can simulate any add-on option without a Supervisor.
+  can simulate any app option without a Supervisor.
 - **`bashio::log.*` writes to stderr**, because that is what the real bashio
   does (it writes to `$LOG_FD`, never stdout). This is load-bearing, not
   cosmetic: helpers like `get_working_directory` return their result on stdout
@@ -103,7 +103,7 @@ Portability cuts the other way here. **bash 3.2's errexit is laxer than bash
 5's**: `false || ((n++))` aborts a bash 5 script and does not abort 3.2. That
 exact line stopped `claude-doctor` at its first failing check in production,
 and a test for it passes on a stock Mac against the broken code. CI runs bash 5
-and will catch it; to see it locally, run the suite in the add-on image:
+and will catch it; to see it locally, run the suite in the app image:
 
 ```bash
 docker run --rm -v "$PWD:/repo:ro" -w /repo --entrypoint bash \
