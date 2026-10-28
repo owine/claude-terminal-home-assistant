@@ -172,7 +172,7 @@ where you usually work.
 
 In addition to your Home Assistant config at `/config`, the terminal mounts every
 installed app's configuration directory under `/addon_configs/<repo>_<slug>/`
-(Home Assistant's standard mount for `all_addon_configs`). This lets Claude read
+(the `all_app_configs` mapping, kept at the path it has always had). This lets Claude read
 and edit other apps' configs from one place — for example inspecting another
 app's YAML while wiring up an integration.
 
