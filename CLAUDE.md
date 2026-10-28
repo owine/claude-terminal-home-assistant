@@ -135,7 +135,7 @@ in 2.7.4.
 ## Conventions
 
 ### File Standards
-- **Shell Scripts**: `#!/usr/bin/with-contenv bashio`, 4-space indent, `bashio::log.error` for errors
+- **Shell Scripts**: `#!/command/with-contenv bashio`, 4-space indent, `bashio::log.error` for errors
 - **YAML**: 2-space indent
 - **Credentials**: 600 file permissions
 

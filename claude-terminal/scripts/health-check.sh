@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bashio
+#!/command/with-contenv bashio
 
 # Health check script for Claude Terminal app
 # Validates environment and provides diagnostic information

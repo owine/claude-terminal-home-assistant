@@ -137,7 +137,7 @@ git commit -m "docs: clarify persistent package installation"
 
 ### Shell Scripts
 
-- Use `#!/usr/bin/with-contenv bashio` for app scripts
+- Use `#!/command/with-contenv bashio` for app scripts
 - Include descriptive comments for complex logic
 - Use `bashio::log.*` for logging
 - Handle errors gracefully with proper exit codes

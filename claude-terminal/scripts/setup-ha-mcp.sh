@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bashio
+#!/command/with-contenv bashio
 # Setup ha-mcp (Home Assistant MCP Server) for Claude Code
 # This script configures Claude Code to use ha-mcp for Home Assistant integration
 # Repository: https://github.com/homeassistant-ai/ha-mcp

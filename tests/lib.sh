@@ -2,7 +2,7 @@
 # Shared helpers for the shell test suite.
 #
 # The scripts under test are add-on startup code: they run under
-# `#!/usr/bin/with-contenv bashio` inside the container, talk to the Supervisor
+# `#!/command/with-contenv bashio` inside the container, talk to the Supervisor
 # API, and touch /data. None of that is available in CI, so each test sources
 # the script under test with bashio stubbed and points it at a temporary
 # directory tree.
