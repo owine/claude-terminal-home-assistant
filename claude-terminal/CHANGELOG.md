@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.12.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.11.2...v2.12.0) (2026-10-28)
+
+**1 feature · 4 bug fixes · 8 dependency updates**
+
+### ✨ Features
+
+- label every option in the Configuration tab ([#489](https://github.com/owine/claude-terminal-home-assistant/issues/489))
+
+### 🐛 Bug Fixes
+
+- stream uploads through ingress so files over 16 MiB arrive ([#487](https://github.com/owine/claude-terminal-home-assistant/issues/487))
+- map app configs with all_app_configs, at /addon_configs ([#488](https://github.com/owine/claude-terminal-home-assistant/issues/488))
+- update body-parser to v2.4.0 [security] ([#468](https://github.com/owine/claude-terminal-home-assistant/issues/468))
+- update dependency multer to v2.5.0 [security] ([#463](https://github.com/owine/claude-terminal-home-assistant/issues/463))
+
+### 📦 Dependencies
+
+- update python3 apk package to v3.14.10-r1 ([#486](https://github.com/owine/claude-terminal-home-assistant/issues/486))
+- update dependency cli/cli to v2.103.2 ([#480](https://github.com/owine/claude-terminal-home-assistant/issues/480), [#484](https://github.com/owine/claude-terminal-home-assistant/issues/484))
+- update ghcr.io/home-assistant/base:3.24 docker digest to 89f3a85 ([#473](https://github.com/owine/claude-terminal-home-assistant/issues/473), [#482](https://github.com/owine/claude-terminal-home-assistant/issues/482))
+- update all non-major dependencies ([#476](https://github.com/owine/claude-terminal-home-assistant/issues/476))
+- update curl apk package to v8.23.0-r0 ([#471](https://github.com/owine/claude-terminal-home-assistant/issues/471))
+- update nodejs apk package to v24.22.1-r0 ([#462](https://github.com/owine/claude-terminal-home-assistant/issues/462))
+- update nano apk package to v9.3-r0 ([#461](https://github.com/owine/claude-terminal-home-assistant/issues/461))
+- update dependency claude-code to v2.1.306 ([#455](https://github.com/owine/claude-terminal-home-assistant/issues/455))
+
 ## [2.11.2](https://github.com/owine/claude-terminal-home-assistant/compare/v2.11.1...v2.11.2) (2026-10-20)
 
 
