@@ -3,7 +3,11 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24@sha256:89f3a85707bf03d97012e0ca517d3b335dcbc224edabbb18dcb4e14150d086e6
 FROM ${BUILD_FROM}
 
+# io.hass.type: the base image sets "base", and the builder action stamps only
+# io.hass.version and io.hass.arch, so without this the published image says it
+# is a base image. The Supervisor sets "app" itself only when it builds one.
 LABEL \
+  io.hass.type="app" \
   org.opencontainers.image.title="Claude Terminal Prowine" \
   org.opencontainers.image.description="Enhanced terminal interface for Claude Code CLI" \
   org.opencontainers.image.source="https://github.com/owine/claude-terminal-home-assistant" \
