@@ -72,7 +72,7 @@ command substitution must never have its log output redirected to stdout.
 hadolint claude-terminal/Dockerfile
 shellcheck --external-sources claude-terminal/run.sh claude-terminal/scripts/*.sh \
   claude-terminal/scripts/persist-install tests/*.sh test-wrapper-integration.sh
-yamllint -c .yamllint.yml claude-terminal/config.yaml \
+yamllint -c .yamllint.yml claude-terminal/config.yaml claude-terminal/translations/ \
   .trivy.yaml .trivyignore.yaml .github/workflows/
 actionlint
 (cd claude-terminal/wrapper && npm ci && npm run lint)   # ESLint (wrapper JS)
@@ -83,6 +83,7 @@ ruff check                                                # Python (tools/)
 
 ### App Structure (claude-terminal/)
 - **config.yaml** — App configuration (slug: `claude_terminal_prowine`); declares the multi-arch `image:` pull location
+- **translations/en.yaml** — Configuration-tab label and help text for every option, and the Network tab's port warning. A new option needs an entry; `tests/test-translations.sh` fails without one
 - **Dockerfile** — Alpine container with Node.js and Claude Code CLI; sets the base image (digest-pinned `ghcr.io/home-assistant/base`, Renovate-managed) and the OCI labels formerly in build.yaml
 - **run.sh** — Startup script: health check → environment init → tools → services → terminal
 - **scripts/** — Modular credential management scripts

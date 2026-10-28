@@ -1,0 +1,98 @@
+---
+# Labels and help text for the Configuration tab. Every key under
+# configuration must match a key in config.yaml's schema, and every key under
+# network one in its ports (tests/test-translations.sh checks both).
+configuration:
+  auto_launch_claude:
+    name: Start Claude automatically
+    description: >-
+      Start Claude as soon as the terminal opens. Turn off to get a session
+      picker instead (new, continue, resume, shell and more).
+  dangerously_skip_permissions:
+    name: Skip permission prompts
+    description: >-
+      DANGEROUS. Run Claude with --dangerously-skip-permissions: no prompts
+      before it edits files or runs commands, as root. With automatic start
+      on, every session runs this way; with it off, the session picker offers
+      YOLO Mode instead.
+  enable_ha_mcp:
+    name: Home Assistant MCP server
+    description: >-
+      Connect Claude to Home Assistant through the bundled ha-mcp server, so
+      it can read states and call services.
+  working_directory:
+    name: Working directory
+    description: >-
+      Directory the terminal starts in. Empty means /config. A path that does
+      not exist logs a warning and falls back to /config.
+  claude_code_oauth_token:
+    name: Claude Code OAuth token
+    description: >-
+      Log in without the browser flow: run `claude setup-token` where you are
+      already logged in and paste the token here. Never written to the log.
+      Token logins cannot start Remote Control sessions. Leave empty to log in
+      interactively.
+  login_notification:
+    name: Login notification
+    description: >-
+      While a browser login is waiting, post Claude's login link as a Home
+      Assistant notification (it reaches the Companion app too), and dismiss
+      it once the login succeeds. Skipped when a token is set.
+  tmux_mouse_mode:
+    name: Mouse mode
+    description: >-
+      The wheel scrolls history and a drag selects and copies. Hold Shift
+      (Option on macOS) to use the terminal's own selection. Off: no mouse
+      reporting, and the wheel sends arrow keys. Flip it live with Prefix + m.
+  persist_npm_cache:
+    name: Keep the npm cache
+    description: >-
+      Keep the npm cache in /data, so it survives restarts but is included in
+      backups (it can reach several GB). Off keeps it in /tmp.
+  image_retention_days:
+    name: Keep pasted images for (days)
+    description: >-
+      Pasted and dropped images in /data/images older than this are deleted at
+      startup. 0 keeps them forever.
+  upload_max_mb:
+    name: Upload size limit (MB)
+    description: >-
+      Largest file the Files sidebar or the terminal uploads into /config,
+      from 1 to 1024. Small pasted images have their own 10 MB limit.
+  upload_retention_days:
+    name: Keep uploads for (days)
+    description: >-
+      Files at the top of the upload inbox, /config/uploads, last modified
+      longer ago than this are deleted at startup. 0 keeps them forever. A
+      folder chosen with "Upload here" is never swept.
+  persistent_apk_packages:
+    name: Alpine packages
+    description: >-
+      Alpine (apk) packages installed on every start, so they survive
+      restarts and updates.
+  persistent_pip_packages:
+    name: Python packages
+    description: >-
+      Python (pip) packages installed on every start, so they survive restarts
+      and updates.
+  init_commands:
+    name: Startup commands
+    description: >-
+      Shell commands run as root, in order, on every start, after packages are
+      installed and before the terminal opens. Each gets 120 seconds; start
+      services in the background (nohup cmd > file.log 2>&1 &). A failing
+      command only warns.
+  enable_docker:
+    name: Docker access
+    description: >-
+      Install the Docker CLI and use the host's Docker daemon. Also requires
+      Protection Mode off in the Info tab. Effectively root on the host.
+  enable_docker_buildx:
+    name: Docker Buildx
+    description: >-
+      Also install docker buildx for image builds. Needs Docker access on.
+
+network:
+  7680/tcp: >-
+    Web UI. WARNING: UNAUTHENTICATED - anyone who can reach this port gets a
+    root terminal. Leave blank to use ingress only (recommended).
