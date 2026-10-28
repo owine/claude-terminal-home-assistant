@@ -35,16 +35,13 @@ panel_admin: true
 #
 # Assigning a host port in the app's Network tab is the opt-in, and is what
 # the PWA-over-a-stable-URL setup in DOCS.md needs. Put it behind an
-# authenticating reverse proxy if it leaves the LAN.
+# authenticating reverse proxy if it leaves the LAN. The Network tab's warning
+# lives in translations/en.yaml (network), which replaced ports_description.
 ports:
   7680/tcp: null
-ports_description:
-  7680/tcp: >-
-    Web UI and image upload service. WARNING: UNAUTHENTICATED - anyone who can
-    reach this port gets a root terminal. Leave blank to use ingress only
-    (recommended)
 
-# App configuration options
+# App configuration options. Their labels and help text in the Configuration
+# tab come from translations/en.yaml - add an entry there with each new option.
 options:
   auto_launch_claude: true
   dangerously_skip_permissions: false

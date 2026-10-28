@@ -70,6 +70,7 @@ jobs:
           yamllint --version
           yamllint -c .yamllint.yml \
             claude-terminal/config.yaml \
+            claude-terminal/translations/ \
             .trivy.yaml \
             .trivyignore.yaml \
             .github/workflows/
