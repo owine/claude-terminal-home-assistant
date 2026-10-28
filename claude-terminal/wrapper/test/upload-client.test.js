@@ -406,7 +406,8 @@ test('the image types and limit are the image upload\'s own', () => {
     assert.deepStrictEqual([...client.IMAGE_TYPES].sort(), Object.keys(naming.EXTENSION_FOR_MIME).sort());
     assert.strictEqual(client.IMAGE_MAX_BYTES, naming.IMAGE_MAX_BYTES);
     const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-    assert.match(server, /fileSize:\s*IMAGE_MAX_BYTES\b/, 'server.js must limit images with IMAGE_MAX_BYTES');
+    assert.strictEqual(naming.IMAGE_UPLOAD_LIMITS.fileSize, naming.IMAGE_MAX_BYTES);
+    assert.match(server, /limits:\s*IMAGE_UPLOAD_LIMITS\b/, 'server.js must limit images with IMAGE_UPLOAD_LIMITS');
 });
 
 test('terminalRoute: a small allowlisted image to the image upload, everything else to the inbox', () => {

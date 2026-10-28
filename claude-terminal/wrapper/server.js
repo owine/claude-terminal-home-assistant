@@ -32,7 +32,7 @@ const {
     errorResponseFor,
     INVALID_FILE_TYPE,
 } = require('./http-guards');
-const { uploadFilename, isAllowedImageMime, IMAGE_MAX_BYTES } = require('./upload-naming');
+const { uploadFilename, isAllowedImageMime, IMAGE_UPLOAD_LIMITS } = require('./upload-naming');
 const { loginNotifierFromEnv } = require('./login-notifier');
 const { createFilesApi, createFilesRouter, createHaCheck } = require('./files-api');
 const { createDownloads, createDownloadRouter } = require('./files-download');
@@ -94,11 +94,10 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage: storage,
-    limits: {
-        // 10 MB. The terminal routes bigger images to the Files inbox by the
-        // same constant (public/upload-client.js).
-        fileSize: IMAGE_MAX_BYTES
-    },
+    // One image of at most 10 MB, and nothing else. The terminal routes
+    // bigger images to the Files inbox by the same constant
+    // (public/upload-client.js).
+    limits: IMAGE_UPLOAD_LIMITS,
     fileFilter: (req, file, cb) => {
         // Accept images only - the same table the filename is derived from
         if (isAllowedImageMime(file.mimetype)) {
