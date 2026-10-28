@@ -683,7 +683,7 @@ init_docker() {
     # Validate socket presence (mounted by docker_api when Protection Mode is OFF).
     if [ ! -S "/run/docker.sock" ]; then
         bashio::log.warning "Docker socket /run/docker.sock not found."
-        bashio::log.warning "Disable Protection Mode in the add-on's Info tab to enable Docker access."
+        bashio::log.warning "Disable Protection Mode in the app's Info tab to enable Docker access."
         return 0
     fi
 
@@ -723,7 +723,7 @@ export_oauth_token() {
 
     if [ -n "$token" ] && [ "$token" != "null" ]; then
         export CLAUDE_CODE_OAUTH_TOKEN="$token"
-        bashio::log.info "CLAUDE_CODE_OAUTH_TOKEN set from add-on configuration"
+        bashio::log.info "CLAUDE_CODE_OAUTH_TOKEN set from app configuration"
     fi
 }
 
@@ -934,11 +934,11 @@ prune_upload_inbox() {
         *) return 0 ;;
     esac
     if [ -L "$marker" ]; then
-        bashio::log.warning "${marker} is a symlink, not the add-on's marker; not sweeping ${dir} (upload_retention_days)"
+        bashio::log.warning "${marker} is a symlink, not the app's marker; not sweeping ${dir} (upload_retention_days)"
         return 0
     fi
     if [ ! -f "$marker" ]; then
-        bashio::log.info "${dir} has no ${marker_name} marker, so it is not swept (upload_retention_days). To have it swept as the upload inbox: touch ${marker}. To keep it as your own folder, move it elsewhere; the add-on makes a fresh inbox on the next upload"
+        bashio::log.info "${dir} has no ${marker_name} marker, so it is not swept (upload_retention_days). To have it swept as the upload inbox: touch ${marker}. To keep it as your own folder, move it elsewhere; the app makes a fresh inbox on the next upload"
         return 0
     fi
     prune_old_files "$dir" upload_retention_days '*' "upload inbox files" "$marker_name"

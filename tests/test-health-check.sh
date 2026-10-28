@@ -64,7 +64,7 @@ assert_contains "and surfaces the real error" "$out" "Error relocating"
 setup_bins "$fixture"
 assert_status "no binary at all fails" 1 check_claude_cli
 out=$(check_claude_cli 2>&1)
-assert_contains "and points at the recovery" "$out" "Restart the add-on"
+assert_contains "and points at the recovery" "$out" "Restart the app"
 
 # --- probe order ------------------------------------------------------------
 #

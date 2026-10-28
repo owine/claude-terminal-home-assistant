@@ -1,7 +1,7 @@
 ---
 name: persistent-package-manager
 description: |
-  Install and manage packages that persist across container restarts in Home Assistant add-ons.
+  Install and manage packages that persist across container restarts in Home Assistant apps.
   Use this skill when users ask to install system packages (git, vim, python3) or Python packages
   (homeassistant-cli, requests, pandas). Automatically uses persist-install instead of apk/pip
   to ensure packages survive reboots and container recreations.
@@ -12,7 +12,7 @@ description: |
 ## Purpose
 
 This skill governs **how you behave** when a user in the Claude Terminal Home
-Assistant add-on needs a package installed. Its job is to make sure packages
+Assistant app needs a package installed. Its job is to make sure packages
 **persist across container restarts and reboots**. You must NEVER use `apk add`
 or `pip install` directly — those write to ephemeral storage that disappears on
 restart.
@@ -189,7 +189,7 @@ You: "Development tools installed:
 When users want packages installed automatically on every startup, point them at
 the **Home Assistant UI**: **Settings → Apps → Claude Terminal → Configuration**,
 then add entries under `persistent_apk_packages` / `persistent_pip_packages` and
-Save + Restart. The add-on reads these from `/data/options.json`, which the
+Save + Restart. The app reads these from `/data/options.json`, which the
 Supervisor manages — do not tell users to hand-edit it. Full details and a config
 example are in `PERSISTENT_PACKAGES.md`.
 

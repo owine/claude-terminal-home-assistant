@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Claude Terminal Prowine** — a Home Assistant add-on providing a web-based terminal with Claude Code CLI pre-installed and persistent package management.
+**Claude Terminal Prowine** — a Home Assistant app providing a web-based terminal with Claude Code CLI pre-installed and persistent package management.
 
 **Fork Attribution:** Personal fork by [@owine](https://github.com/owine), built upon:
 - [heytcass/home-assistant-addons](https://github.com/heytcass/home-assistant-addons) - Original by Tom Cassady
@@ -82,7 +82,7 @@ ruff check                                                # Python (tools/)
 ## Architecture
 
 ### App Structure (claude-terminal/)
-- **config.yaml** — Add-on configuration (slug: `claude_terminal_prowine`); declares the multi-arch `image:` pull location
+- **config.yaml** — App configuration (slug: `claude_terminal_prowine`); declares the multi-arch `image:` pull location
 - **Dockerfile** — Alpine container with Node.js and Claude Code CLI; sets the base image (digest-pinned `ghcr.io/home-assistant/base`, Renovate-managed) and the OCI labels formerly in build.yaml
 - **run.sh** — Startup script: health check → environment init → tools → services → terminal
 - **scripts/** — Modular credential management scripts
@@ -161,11 +161,11 @@ in 2.7.4.
 
 ### Docker Socket Access (optional feature)
 
-Two new add-on options (both default `false`):
+Two new app options (both default `false`):
 - `enable_docker` — installs `docker-cli` + `docker-cli-compose` via `persist-install` at startup and expects the host Docker socket at `/run/docker.sock`
 - `enable_docker_buildx` — additionally installs `docker-cli-buildx`; only meaningful when `enable_docker` is also `true`
 
-The manifest sets `docker_api: true`, but this is **inert while Protection Mode is ON** (the HA Supervisor default). The socket is only bind-mounted into the container when the user disables Protection Mode in the add-on's **Info** tab. Both the config option AND the Protection Mode toggle are required — neither alone is sufficient.
+The manifest sets `docker_api: true`, but this is **inert while Protection Mode is ON** (the HA Supervisor default). The socket is only bind-mounted into the container when the user disables Protection Mode in the app's **Info** tab. Both the config option AND the Protection Mode toggle are required — neither alone is sufficient.
 
 The Docker CLI packages are installed via `persist-install` (unpinned, floats to current Alpine repo version) and are not tracked by Renovate — consistent with how `persistent_apk_packages` behaves. Docker socket access is effectively root on the host; it compounds with `dangerously_skip_permissions`.
 
@@ -293,7 +293,7 @@ persist-install --python requests      # Python packages
 persist-install --list                 # Show installed
 ```
 
-Packages persist to `/data/packages/` (bin, lib, python venv). Auto-install via add-on config: `persistent_apk_packages` and `persistent_pip_packages` lists.
+Packages persist to `/data/packages/` (bin, lib, python venv). Auto-install via app config: `persistent_apk_packages` and `persistent_pip_packages` lists.
 
 See `claude-terminal/PERSISTENT_PACKAGES.md` for full details.
 

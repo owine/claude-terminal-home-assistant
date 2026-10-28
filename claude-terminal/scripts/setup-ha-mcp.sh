@@ -30,7 +30,7 @@ configure_ha_mcp_server() {
     # Verify pre-installed ha-mcp binary exists
     if [ ! -x "$HA_MCP_BIN" ]; then
         bashio::log.warning "ha-mcp binary not found at ${HA_MCP_BIN} - setup skipped"
-        bashio::log.warning "This may indicate a build issue. Try reinstalling the add-on."
+        bashio::log.warning "This may indicate a build issue. Try reinstalling the app."
         return 0
     fi
 

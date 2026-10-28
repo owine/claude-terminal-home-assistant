@@ -138,7 +138,7 @@ check_claude_cli() {
 
     if [ -z "$claude_bin" ]; then
         bashio::log.error "Claude CLI not found ✗"
-        bashio::log.info "Restart the add-on: startup installs the binary into"
+        bashio::log.info "Restart the app: startup installs the binary into"
         bashio::log.info "/data/home/.local/bin from the bundled copy at /root/.local/bin"
         return 1
     fi

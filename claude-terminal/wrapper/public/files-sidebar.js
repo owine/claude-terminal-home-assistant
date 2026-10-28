@@ -132,8 +132,8 @@
         if (rel === INBOX) {
             return {
                 disabled: false,
-                hint: 'Cleared after upload_retention_days if the add-on made it',
-                title: 'If the add-on made this folder (it holds .ctp-inbox), files here are deleted once they are older '
+                hint: 'Cleared after upload_retention_days if the app made it',
+                title: 'If the app made this folder (it holds .ctp-inbox), files here are deleted once they are older '
                     + 'than the upload_retention_days option (30 days unless changed). A folder you made is never cleared.',
             };
         }
@@ -182,10 +182,10 @@
      */
     function uploadErrorText(status, data, name) {
         const shown = displayName(name);
-        if (status === 0) return 'Could not reach the add-on to upload ' + shown + '. Check the connection and try again.';
+        if (status === 0) return 'Could not reach the app to upload ' + shown + '. Check the connection and try again.';
         const said = data && typeof data.error === 'string' ? data.error : '';
         if (said) return said.includes(shown) ? said : shown + ': ' + said;
-        if (status === 413) return shown + ' is over the upload limit (the add-on\'s upload_max_mb option).';
+        if (status === 413) return shown + ' is over the upload limit (the app\'s upload_max_mb option).';
         return shown + ': upload failed (HTTP ' + status + ').';
     }
 

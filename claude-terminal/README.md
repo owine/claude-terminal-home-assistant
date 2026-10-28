@@ -75,7 +75,7 @@ claude-doctor
 The app works with zero configuration out of the box, with optional settings available (see [DOCS.md](DOCS.md#configuration) for the full list of options):
 
 - **Port**: The web interface is reached through HA ingress. Port 7680 can also be published directly from **Configuration → Network**, but it is unauthenticated — see the warning in [DOCS.md](DOCS.md#access-methods) before turning it on
-- **Authentication**: OAuth with Anthropic (credentials persist in the add-on's private `/data` volume, under `/data/home/.claude/`)
+- **Authentication**: OAuth with Anthropic (credentials persist in the app's private `/data` volume, under `/data/home/.claude/`)
 - **Terminal**: Full bash environment with Claude Code CLI pre-installed
 - **Volumes**: Access to your Home Assistant `/config` directory
 
@@ -98,7 +98,7 @@ For local development and testing:
 # add --platform linux/arm64 (or linux/amd64) to cross-build.
 docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal-prowine ./claude-terminal
-# No Supervisor outside Home Assistant: the stub serves the add-on options
+# No Supervisor outside Home Assistant: the stub serves the app options
 python3 tests/stub-supervisor.py &
 docker run -p 7680:7680 -v "$(pwd)/config:/config" \
   -e SUPERVISOR_API=http://host.docker.internal:8099 \
@@ -142,7 +142,7 @@ For detailed usage instructions, see the [documentation](DOCS.md).
 
 ## Version History
 
-This add-on uses automated release management. For the current version and complete changelog, see [CHANGELOG.md](CHANGELOG.md).
+This app uses automated release management. For the current version and complete changelog, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Useful Links
 

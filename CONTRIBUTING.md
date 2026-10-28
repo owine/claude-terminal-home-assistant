@@ -38,7 +38,7 @@ docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
   -t local/claude-terminal:test ./claude-terminal
 
 # Run locally (7680 = web UI/ingress; ttyd is loopback-only inside the container).
-# Outside Home Assistant there is no Supervisor to serve the add-on options,
+# Outside Home Assistant there is no Supervisor to serve the app options,
 # so start the stub first or the container exits at boot.
 python3 tests/stub-supervisor.py &
 docker run -d --name test-claude-dev -p 7680:7680 \

@@ -98,7 +98,7 @@ aliases (e.g. `--python`, `-p`, and `python` all work).
 
 ### PATH Priority
 
-At startup the add-on prepends the persistent directories to `PATH` (and sets
+At startup the app prepends the persistent directories to `PATH` (and sets
 `LD_LIBRARY_PATH`) so persistent packages are always found first. The exact
 export, from `run.sh`, is:
 
@@ -154,11 +154,11 @@ persistent_pip_packages:
 
 ### Via config file (Advanced)
 
-The add-on reads its options from `/data/options.json`. This file is **normally
+The app reads its options from `/data/options.json`. This file is **normally
 managed by the Home Assistant UI options** (the Configuration tab above) — the
 Supervisor regenerates it whenever you Save, so hand-editing is rarely needed and
 manual changes can be overwritten. Prefer the UI; inspect `/data/options.json`
-only to confirm what the add-on actually received:
+only to confirm what the app actually received:
 
 ```json
 {
@@ -405,11 +405,11 @@ du -sh /data/packages/*
 
 ## 🐳 Docker CLI (via `enable_docker`)
 
-Enabling the `enable_docker` add-on option automatically installs `docker-cli` and `docker-cli-compose` via `persist-install` into `/data/packages` at startup — so the tools survive container restarts without any manual steps.
+Enabling the `enable_docker` app option automatically installs `docker-cli` and `docker-cli-compose` via `persist-install` into `/data/packages` at startup — so the tools survive container restarts without any manual steps.
 
 If `enable_docker_buildx: true` is also set, `docker-cli-buildx` is installed in the same way, adding `docker buildx` support for image builds.
 
-**Important:** installing the CLI tools alone is not enough to use Docker. The host Docker socket (`/run/docker.sock`) is only mounted into the container when **Protection Mode is disabled** in the add-on's **Info** tab. While Protection Mode is on (the default), the socket is never available, and `docker` commands will fail with a daemon connection error.
+**Important:** installing the CLI tools alone is not enough to use Docker. The host Docker socket (`/run/docker.sock`) is only mounted into the container when **Protection Mode is disabled** in the app's **Info** tab. While Protection Mode is on (the default), the socket is never available, and `docker` commands will fail with a daemon connection error.
 
 Like all packages installed via `persist-install`, the Docker CLI version floats to whatever Alpine's package repos currently provide — it is not version-pinned and is not tracked by Renovate.
 

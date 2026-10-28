@@ -192,12 +192,12 @@ test('uploadOne: a 409 that is not a taken name is a refusal, even with someone 
 });
 
 test('uploadOne: a refused question is a problem with its status, and nothing is sent', async () => {
-    const limit = 'big.bin is 26.0 MB, over the 25 MB upload limit (the add-on\'s upload_max_mb option).';
+    const limit = 'big.bin is 26.0 MB, over the 25 MB upload limit (the app\'s upload_max_mb option).';
     const { fetchImpl } = fakeFetch({ status: 413, data: { error: limit } }, new TypeError('Failed to fetch'));
     const { XHRImpl, sent } = fakeXHR();
     assert.deepStrictEqual(await client.uploadOne(file('big.bin'), { fetchImpl, XHRImpl }), { problem: limit, status: 413 });
     assert.deepStrictEqual(await client.uploadOne(file('a.txt'), { fetchImpl, XHRImpl }),
-        { problem: 'Could not reach the add-on to upload a.txt. Check the connection and try again.', status: 0 });
+        { problem: 'Could not reach the app to upload a.txt. Check the connection and try again.', status: 0 });
     assert.strictEqual(sent.length, 0);
 });
 
