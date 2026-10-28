@@ -14,7 +14,7 @@ No dependencies beyond bash and the usual POSIX tools. Runs in CI as the
 ## How it works
 
 The scripts under test are container startup code: they run under
-`#!/usr/bin/with-contenv bashio`, read app options from the Supervisor API,
+`#!/command/with-contenv bashio`, read app options from the Supervisor API,
 and write to `/data`. None of that exists on a developer laptop or a CI runner.
 
 So each suite sources the script under test with `bashio` stubbed, and points

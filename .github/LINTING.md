@@ -84,7 +84,7 @@ package is reported by hadolint as DL3018.
 ### shellcheck SC1008 (Ignored)
 
 ```bash
-#!/usr/bin/with-contenv bashio
+#!/command/with-contenv bashio
 ```
 
 This shebang is specific to Home Assistant apps and is treated as bash by our configuration.
