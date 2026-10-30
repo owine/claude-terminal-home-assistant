@@ -1,6 +1,6 @@
 # Home Assistant base image — multi-arch minimal Alpine; buildx selects the arch per build.
 # For local testing, override with --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24
-ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24@sha256:89f3a85707bf03d97012e0ca517d3b335dcbc224edabbb18dcb4e14150d086e6
+ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24@sha256:880016115f356afc814398e17ba68a7ee66dfc1b4eaef09755ea2c9fa18ea481
 FROM ${BUILD_FROM}
 
 # io.hass.type: the base image sets "base", and the builder action stamps only
