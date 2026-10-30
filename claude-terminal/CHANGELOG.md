@@ -1,5 +1,36 @@
 # Changelog
 
+## [3.0.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.12.0...v3.0.0) (2026-10-30)
+
+**1 breaking change · 2 features · 3 bug fixes · 5 dependency updates**
+
+### 💥 Breaking Changes
+
+- keep Claude out of secrets.yaml, .storage and databases by default ([#500](https://github.com/owine/claude-terminal-home-assistant/issues/500))
+
+> **Upgrading:** Claude can no longer read or edit `/config/secrets.yaml`, `/config/.storage` or the databases at the top of `/config`. To restore access, set `secrets_yaml_access`, `storage_access` or `database_access` to `read_only` or `full` in the Configuration tab. This holds even with `dangerously_skip_permissions` on.
+>
+> Packages installed with `persist-install` are now reinstalled through apk at every start, complete with their dependencies. On the first start after upgrading, packages installed the old way are migrated automatically. Check the app log for any it couldn't match.
+
+### ✨ Features
+
+- add a Shift+Tab key button for switching Claude's mode on phones ([#498](https://github.com/owine/claude-terminal-home-assistant/issues/498))
+- Shift+Enter inserts a newline in Claude's prompt ([#495](https://github.com/owine/claude-terminal-home-assistant/issues/495))
+
+### 🐛 Bug Fixes
+
+- start ha-mcp without its PyPI update checks so it connects at boot ([#509](https://github.com/owine/claude-terminal-home-assistant/issues/509))
+- persist packages as a recorded list replayed through apk ([#501](https://github.com/owine/claude-terminal-home-assistant/issues/501))
+- refresh the shipped Claude commands and skill on every start ([#497](https://github.com/owine/claude-terminal-home-assistant/issues/497))
+
+### 📦 Dependencies
+
+- update all non-major dependencies ([#505](https://github.com/owine/claude-terminal-home-assistant/issues/505))
+- update dependency ha-mcp to v9 ([#507](https://github.com/owine/claude-terminal-home-assistant/issues/507))
+- update ghcr.io/home-assistant/base:3.24 docker digest to 8800161 ([#502](https://github.com/owine/claude-terminal-home-assistant/issues/502))
+- update dependency eslint to v10.14.0 ([#506](https://github.com/owine/claude-terminal-home-assistant/issues/506))
+- update nodejs apk package to v24.22.1-r1 ([#494](https://github.com/owine/claude-terminal-home-assistant/issues/494))
+
 ## [2.12.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.11.2...v2.12.0) (2026-10-28)
 
 **1 feature · 4 bug fixes · 8 dependency updates**

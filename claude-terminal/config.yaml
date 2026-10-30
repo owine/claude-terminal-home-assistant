@@ -1,7 +1,7 @@
 ---
 name: "Claude Terminal Prowine"
 description: "Enhanced terminal interface for Anthropic's Claude Code CLI with persistent auth, package management, and file uploads"
-version: "2.12.0" # bumped by publish.yml once the image is live
+version: "3.0.0" # bumped by publish.yml once the image is live
 slug: "claude_terminal_prowine"
 image: "ghcr.io/owine/claude-terminal-prowine"
 init: false
