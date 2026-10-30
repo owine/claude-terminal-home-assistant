@@ -65,12 +65,23 @@ configure_ha_mcp_server() {
     # with-contenv, so SUPERVISOR_TOKEN is in the environment the tmux server,
     # ttyd and claude inherit, and tmux.conf lists it in update-environment so
     # re-attached sessions keep it.
+    #
+    # HA_MCP_DISABLE_UPDATE_CHECK / FASTMCP_CHECK_FOR_UPDATES: ha-mcp asks PyPI
+    # for a newer ha-mcp, and its bundled fastmcp for a newer fastmcp, BEFORE it
+    # answers Claude's MCP handshake. When DNS is not answering yet - at boot -
+    # each lookup blocks for the resolver's ~5 s timeout (httpx's own timeout
+    # does not cover name resolution), which on a slow box pushed startup past
+    # Claude Code's 30 s MCP timeout: the server came up "failed" until
+    # reconnected from /mcp. Neither answer is useful here; the image pins
+    # ha-mcp and Renovate bumps it.
     # shellcheck disable=SC2016  # the literal ${SUPERVISOR_TOKEN} is the point
     if timeout 30 claude mcp add home-assistant \
         --env "HOMEASSISTANT_URL=http://supervisor/core" \
         --env 'HOMEASSISTANT_TOKEN=${SUPERVISOR_TOKEN}' \
         --env "ENABLE_SKILLS=true" \
         --env "ENABLE_SKILLS_AS_TOOLS=true" \
+        --env "HA_MCP_DISABLE_UPDATE_CHECK=true" \
+        --env "FASTMCP_CHECK_FOR_UPDATES=off" \
         -- "$HA_MCP_BIN"; then
         bashio::log.info "ha-mcp configured successfully!"
         bashio::log.info "Claude Code now has access to Home Assistant via MCP"
