@@ -3230,6 +3230,53 @@ async function checkViewportFitMissing(browser, url) {
     }
 }
 
+// Shift+Enter has to reach the pane as backslash + return, with no second
+// return from xterm after it. bash reads exactly that as a line continuation,
+// so `echo one` Shift+Enter `two` Enter prints "onetwo"; an extra return would
+// run `echo one` on its own and print "one". The key press is the only thing
+// typed through the browser - it is the input path under test.
+async function checkShiftEnter(browser, url) {
+    await resetPane();
+    const { typed } = await watchPrompt();
+    const output = () => dexec(['tmux', 'capture-pane', '-pJ']).split('\n').map((l) => l.trimEnd());
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    const page = await context.newPage();
+    try {
+        await page.goto(url, { waitUntil: 'load' });
+        const wrapper = await wrapperFrame(page);
+        // The wrapper attaches its handlers from a 500 ms poll, so `term` exists
+        // for a moment before they do; a key pressed then gets xterm's plain
+        // return. Wait on xterm's own record of the handler, not a sleep.
+        const attached = () => wrapper.evaluate(`!!${TERM}._core._customKeyEventHandler`);
+        check('the Shift+Enter key handler is attached to the terminal',
+            await waitFor(attached), true);
+        await wrapper.evaluate(`${TERM}.focus()`);
+
+        dexec(['tmux', 'send-keys', '-l', 'echo one'], { stdio: 'ignore' });
+        await typed('echo one');
+        await page.keyboard.press('Shift+Enter');
+        // bash's continuation prompt, once the backslash + return has landed.
+        await waitFor(() => output().filter(Boolean).pop() === '>');
+        typeLine('two');
+        await waitFor(() => output().includes('onetwo'));
+        const lines = output();
+        check('Shift+Enter continues the line instead of submitting it',
+            { joined: lines.includes('onetwo'), ranEarly: lines.includes('one') },
+            (v) => v.joined && !v.ranEarly);
+
+        // Plain Enter from the browser must still submit.
+        await resetPane();
+        const prompt = await watchPrompt();
+        dexec(['tmux', 'send-keys', '-l', 'echo plain-enter'], { stdio: 'ignore' });
+        await prompt.typed('echo plain-enter');
+        await page.keyboard.press('Enter');
+        check('plain Enter still submits',
+            await waitFor(() => output().includes('plain-enter')), true);
+    } finally {
+        await context.close();
+    }
+}
+
 async function run(engine, mode, url) {
     console.log(`\n=== ${engine.name()} / ${mode} ===`);
     const failuresBefore = failures;
@@ -3716,6 +3763,7 @@ async function run(engine, mode, url) {
     await checkKeyboardViewport(browser, engine, mode, url);
     await checkOuterViewportTeardown(browser, mode, url);
     await checkViewportFitMissing(browser, url);
+    await checkShiftEnter(browser, url);
     dexec(['rm', '-rf', SIDEBAR_DIR, ZIP_CAP_DIR]);
 
     if (failures > failuresBefore) {
