@@ -9,7 +9,7 @@
 // in a way that looked fine in CI.
 //
 // Not part of `npm test` — it needs a running container and real browser
-// engines, neither of which CI has. Run it locally:
+// engines. CI runs it in test.yml's Integration jobs; run it locally:
 //
 //   docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/base:3.24 \
 //     -t local/ctp ./claude-terminal
@@ -21,6 +21,9 @@
 //   # the zip checks read archives with the host's python3 (zipfile module)
 //   CTP_PLAYWRIGHT=/tmp/pw/node_modules/playwright/index.mjs \
 //     node claude-terminal/wrapper/test/integration/mouse-and-clipboard.mjs
+//
+// Add CTP_ENGINE=webkit|chromium and/or CTP_MODE=direct|ingress to run one
+// combination, as each CI job does.
 //
 // Every engine runs against BOTH access paths: the direct :7680 port, and an
 // ingress-shaped harness that serves the wrapper under a path prefix inside a
@@ -40,9 +43,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startIngress } from './ingress-harness.mjs';
 
-// Playwright is deliberately NOT a devDependency: CI cannot run this test (it
-// needs a live container), so adding it would cost every CI install a download
-// for nothing. Resolve it from wherever it happens to be installed instead.
+// Playwright is deliberately NOT a devDependency: only the integration jobs run
+// this test (it needs a live container), so adding it would cost every other
+// npm ci a download for nothing. Resolve it from wherever it is installed.
 const { webkit, chromium } = await import(process.env.CTP_PLAYWRIGHT || 'playwright');
 
 const DIRECT_URL = process.env.CTP_URL || 'http://localhost:7680/';
@@ -3724,10 +3727,26 @@ async function run(engine, mode, url) {
     await browser.close();
 }
 
+// CTP_ENGINE and CTP_MODE narrow the run to one engine and/or access path.
+// CI runs each combination as its own job, on its own runner and container,
+// so the four proceed in parallel. An unknown value is an error rather than
+// an empty run: a typo there must not turn into a green job that ran nothing.
+const pick = (name, all) => {
+    const want = process.env[name];
+    if (!want) return all;
+    const chosen = all.filter(([key]) => key === want);
+    if (chosen.length === 0) {
+        throw new Error(`${name}=${want} matches none of: ${all.map(([key]) => key).join(', ')}`);
+    }
+    return chosen;
+};
+const engines = pick('CTP_ENGINE', [['webkit', webkit], ['chromium', chromium]]);
+
 const ingress = await startIngress();
 try {
-    for (const engine of [webkit, chromium]) {
-        for (const [mode, url] of [['direct', DIRECT_URL], ['ingress', ingress.url]]) {
+    const modes = pick('CTP_MODE', [['direct', DIRECT_URL], ['ingress', ingress.url]]);
+    for (const [, engine] of engines) {
+        for (const [mode, url] of modes) {
             await run(engine, mode, url);
         }
     }
