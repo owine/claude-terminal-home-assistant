@@ -246,7 +246,15 @@ in_pane() {
     } > "$script"
     tmux kill-server 2>/dev/null
     rm -f "$pane_tmp"/out.*
-    tmux -f /dev/null new-session -d -s picker -x 80 -y 30 "bash $script"
+    # A fresh socket directory per pane. kill-server returns before the old
+    # server has exited, and a new-session on the same socket could reach it
+    # while it was still going away: "server exited unexpectedly", no pane,
+    # and every capture after it blank (seen three times on CI runners).
+    TMUX_TMPDIR=$(new_tmpdir)
+    export TMUX_TMPDIR
+    if ! tmux -f /dev/null new-session -d -s picker -x 80 -y 30 "bash $script"; then
+        _fail "tmux new-session could not start the pane"
+    fi
 }
 
 # wait_for <file> - up to 5 s
