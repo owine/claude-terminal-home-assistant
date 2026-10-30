@@ -47,11 +47,12 @@ tests/run-tests.sh health     # filter by filename
 (cd claude-terminal/wrapper && npm test)
 
 # Integration test: real browsers against a real tmux. NOT part of `npm test`,
-# but CI does run it - test.yml runs it on the amd64 build only, since
-# Playwright ships no WebKit build for aarch64. It covers the wiring between
-# browser, xterm.js, ttyd and tmux that unit tests cannot see - every
-# mouse/clipboard bug of 2.7.0-2.7.4 lived there and passed CI. Runs both WebKit
-# and Chromium, against the direct port AND an ingress-shaped harness.
+# but CI does run it - test.yml's four `Integration <engine> <mode>` jobs, on
+# amd64 only, since Playwright ships no WebKit build for aarch64. It covers the
+# wiring between browser, xterm.js, ttyd and tmux that unit tests cannot see -
+# every mouse/clipboard bug of 2.7.0-2.7.4 lived there and passed CI. Runs both
+# WebKit and Chromium, against the direct port AND an ingress-shaped harness;
+# CTP_ENGINE=webkit|chromium and CTP_MODE=direct|ingress narrow it to one.
 # Needs the stub Supervisor running, as above.
 docker run -d --name ctp -p 7680:7680 \
   -e SUPERVISOR_API=http://host.docker.internal:8099 \
@@ -249,8 +250,8 @@ edit the draft's notes before publishing, not the file afterwards.
   files at the tagged commit, and the draft targets `main` for that reason.
 
 **`main` does not accept direct pushes.** The `main protection` ruleset requires a pull
-request plus 4 passing status checks (`Lint all`, `Unit tests`, `Test build amd64`,
-`Test build aarch64`), and enforces linear history — so merge commits are disabled and only
+request plus 5 passing status checks (`Lint all`, `Unit tests`, `Test build amd64`,
+`Test build aarch64`, `Integration tests`), and enforces linear history — so merge commits are disabled and only
 squash or rebase merges are available. Branch before committing. The one automated bypass
 actor is the `claude-terminal-release-bot` app, for `promote`'s version commit only
 (made with GraphQL `createCommitOnBranch`, which GitHub signs, against an `expectedHeadOid`).
@@ -276,7 +277,7 @@ gh run list --workflow=publish.yml --limit 3
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `release-drafter.yml` | Push to main, manual | Refresh the draft GitHub Release (notes + next version) |
-| `test.yml` | Push to main, PRs | Unit tests (shell + wrapper JS) and build validation (init → per-arch native builds, no QEMU) |
+| `test.yml` | Push to main, PRs | Unit tests (shell + wrapper JS), build validation (init → per-arch native builds + smoke test, no QEMU), and the browser integration test as four parallel amd64 jobs summarised by `Integration tests`. On a PR touching nothing under `claude-terminal/`, `tests/` or test.yml, the build, smoke and browser steps skip while the required checks still report |
 | `lint.yml` | Push/PR to main | hadolint, shellcheck, yamllint, actionlint, ESLint, Ruff |
 | `publish.yml` | Release published | Build + sign + push images, then bump `config.yaml` + prepend `CHANGELOG.md` on main (init → per-arch → manifest → promote + scan) |
 | `security.yml` | Push/PR to main + weekly cron | Trivy filesystem security scan; opens tracking issue on findings |
