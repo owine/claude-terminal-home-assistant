@@ -779,10 +779,17 @@ function connect(port, body, length) {
     });
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Poll until predicate holds, or ms pass. One evaluation per pass, and its
+// result is the answer: evaluating it again on the way out could disagree with
+// the pass that ended the loop (a value that flickers), which failed a test on
+// CI. performance.now(): a monotonic clock, unlike Date.now().
 async function until(predicate, ms) {
-    const end = Date.now() + ms;
-    while (!predicate() && Date.now() < end) await sleep(10);
-    return predicate();
+    const end = performance.now() + ms;
+    for (;;) {
+        if (predicate()) return true;
+        if (performance.now() >= end) return false;
+        await sleep(10);
+    }
 }
 
 testAsync('request deadline: a body that stops arriving is cut off after idleMs, and its partial file removed', async () => {

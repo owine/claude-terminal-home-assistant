@@ -131,10 +131,17 @@ function openFds(ino) {
     }).length;
 }
 
+// Poll until predicate holds, or ms pass. One evaluation per pass, and its
+// result is the answer: evaluating it again on the way out could disagree with
+// the pass that ended the loop (a value that flickers), which failed a test on
+// CI. performance.now(): a monotonic clock, unlike Date.now().
 async function until(predicate, ms = 3000) {
-    const end = Date.now() + ms;
-    while (!predicate() && Date.now() < end) await sleep(20);
-    return predicate();
+    const end = performance.now() + ms;
+    for (;;) {
+        if (predicate()) return true;
+        if (performance.now() >= end) return false;
+        await sleep(20);
+    }
 }
 
 function rawRequest(port, target, method = 'GET') {

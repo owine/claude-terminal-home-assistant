@@ -394,10 +394,17 @@ test('the marker is never shown: not in the listing, recent changes or a zip', a
 // --- the route: helpers ---
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Poll until predicate holds, or ms pass. One evaluation per pass, and its
+// result is the answer: evaluating it again on the way out could disagree with
+// the pass that ended the loop (a value that flickers), which failed a test on
+// CI. performance.now(): a monotonic clock, unlike Date.now().
 async function until(predicate, ms = 3000) {
-    const end = Date.now() + ms;
-    while (!predicate() && Date.now() < end) await sleep(20);
-    return predicate();
+    const end = performance.now() + ms;
+    for (;;) {
+        if (predicate()) return true;
+        if (performance.now() >= end) return false;
+        await sleep(20);
+    }
 }
 
 // A test signal that never comes fails the test instead of hanging the run.
@@ -425,6 +432,25 @@ function openFds(ino) {
             return false;
         }
     }).length;
+}
+
+// The shared record, wrapped so a test can wait for an upload's cleanup to
+// finish: dropping the part from the record is the last thing receive()'s
+// cleanup does. Assert after that, not on a poll. A poll could pass before the
+// upload had even made its part, and openFds could count the file the
+// record's own rewrite opens - on Linux it can take the inode the part just
+// freed - as the part's descriptor still open.
+function signallingRecord() {
+    let finished;
+    const cleanedUp = new Promise((r) => { finished = r; });
+    return {
+        cleanedUp,
+        record: {
+            file: record.file,
+            add: (p) => record.add(p),
+            remove: (p) => record.remove(p).finally(finished),
+        },
+    };
 }
 
 // Parts anywhere under the root: what a failed upload must never leave.
@@ -1391,8 +1417,9 @@ test('upload: a client that leaves before the first byte is written leaves nothi
     const inPlan = new Promise((r) => { entered = r; });
     let left;
     const clientGone = new Promise((r) => { left = r; });
+    const tracked = signallingRecord();
     const slow = createUploads({
-        api, record, partName: () => PART,
+        api, record: tracked.record, partName: () => PART,
         onPlanned: async () => { entered(); await clientGone; await sleep(50); },
     });
     const escapes = [];
@@ -1402,7 +1429,9 @@ test('upload: a client that leaves before the first byte is written leaves nothi
             await within(inPlan, 'the plan');
             sock.destroy();
             left();
-            assert.ok(await until(() => !fs.existsSync(partPath()) && recorded().length === 0), 'part or record left');
+            await within(tracked.cleanedUp, 'the upload to clean up after the client left');
+            assert.strictEqual(fs.existsSync(partPath()), false, 'part left');
+            assert.deepStrictEqual(recorded(), [], 'record left');
         });
     });
     assert.deepStrictEqual(escapes, []);
@@ -1412,7 +1441,8 @@ test('upload: a client that leaves before the first byte is written leaves nothi
 
 test('upload: a client that leaves mid-upload releases the part\'s descriptor and leaves nothing', async () => {
     const escapes = [];
-    const named = createUploads({ api, record, partName: () => PART });
+    const tracked = signallingRecord();
+    const named = createUploads({ api, record: tracked.record, partName: () => PART });
     await noStrays(async () => {
         await withServer({ uploads: named, escapes }, async (url) => {
             const sock = await rawUpload(url, { name: 'mid.bin', dest: 'blueprints' },
@@ -1421,8 +1451,10 @@ test('upload: a client that leaves mid-upload releases the part\'s descriptor an
             const ino = fs.statSync(partPath()).ino;
             assert.strictEqual(openFds(ino), 1, 'positive control: the part is open');
             sock.destroy();
-            assert.ok(await until(() => openFds(ino) === 0), 'descriptor left open');
-            assert.ok(await until(() => !fs.existsSync(partPath()) && recorded().length === 0), 'part or record left');
+            await within(tracked.cleanedUp, 'the upload to clean up after the client left');
+            assert.strictEqual(openFds(ino), 0, 'descriptor left open');
+            assert.strictEqual(fs.existsSync(partPath()), false, 'part left');
+            assert.deepStrictEqual(recorded(), [], 'record left');
         });
     });
     assert.deepStrictEqual(escapes, []);
@@ -1431,12 +1463,15 @@ test('upload: a client that leaves mid-upload releases the part\'s descriptor an
 
 test('upload: a client that stops sending is cut off after idleMs, once and quietly logged', async () => {
     const logged = [];
-    const stalling = createUploads({ api, record, partName: () => PART, idleMs: 300 });
+    const tracked = signallingRecord();
+    const stalling = createUploads({ api, record: tracked.record, partName: () => PART, idleMs: 300 });
     await withServer({ uploads: stalling, log: (m) => logged.push(m) }, async (url) => {
         const sock = await rawUpload(url, { name: 'stall.bin', dest: 'blueprints' }, { length: 1000, first: 'x'.repeat(100) });
         assert.ok(await until(() => fs.existsSync(partPath()), 2000), 'positive control: the part exists');
         const ino = fs.statSync(partPath()).ino;
-        assert.ok(await until(() => openFds(ino) === 0 && !fs.existsSync(partPath()), 4000), 'stalled upload kept its part');
+        await within(tracked.cleanedUp, 'the stalled upload to be cut off and cleaned up');
+        assert.strictEqual(openFds(ino), 0, 'stalled upload kept its descriptor');
+        assert.strictEqual(fs.existsSync(partPath()), false, 'stalled upload kept its part');
         sock.destroy();
         assert.ok(await until(() => logged.length > 0, 1000), 'nothing logged');
         await sleep(100);   // and nothing more
