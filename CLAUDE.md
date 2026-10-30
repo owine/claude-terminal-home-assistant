@@ -266,6 +266,15 @@ release-drafter reads the **PR title**, and squash-merging makes that title the 
 subject on `main` too, so the title is the one thing that must carry the Conventional Commits
 prefix. Retitling a merged PR re-sorts it on the next draft refresh.
 
+A **rebase merge** is sorted the same way: release-drafter finds PRs through each commit's
+associated pull requests, which GitHub keeps for rebased commits (verified on #351), and lists
+the PR once by its title. What differs is `main`'s history: it gets the PR's own commits, not
+its title, so each commit message must stand on its own and carry a Conventional Commits
+prefix. **But GitHub's rebase-and-merge drops commit signatures:** #510's two commits were
+signed on their branch and landed on `main` unsigned. A squash merge is signed by GitHub
+(committer `GitHub`, verified), so squash is the default; rebase only where separate commits
+on `main` matter more than their signatures.
+
 ```bash
 # Inspect the current draft, and verify a release
 gh release list --limit 3
