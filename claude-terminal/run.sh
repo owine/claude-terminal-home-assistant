@@ -194,21 +194,10 @@ PROFILE_EOF
         bashio::log.info "  - tmux configuration installed"
     fi
 
-    # Setup Claude Code skills and commands
-    if [ -d "/opt/.claude" ]; then
-        if [ ! -d "$data_home/.claude" ]; then
-            cp -r /opt/.claude "$data_home/.claude"
-            bashio::log.info "  - Claude Code skills & commands installed"
-        else
-            bashio::log.info "  - Claude Code skills & commands: already configured"
-        fi
-    fi
+    install_shipped_claude_assets "$data_home/.claude"
 
     # Migrate any existing authentication files from legacy locations into
-    # HOME, where Claude Code reads them. After the skills setup above, not
-    # before: that setup only runs when ~/.claude does not exist yet, and the
-    # migration creates ~/.claude to hold a credential, which would otherwise
-    # cost a first-boot user the bundled skills and commands.
+    # HOME, where Claude Code reads them.
     migrate_legacy_auth_files "$data_home"
     secure_claude_credentials "$data_home"
 
@@ -297,6 +286,23 @@ install_bundled_claude() {
     cp "$source" "$launcher"
     chmod +x "$launcher"
     bashio::log.info "  - Claude binary installed to persistent home"
+}
+
+# Copy the commands and skills shipped in the image over ~/.claude on every
+# start. They used to be copied only into a missing ~/.claude, which exists
+# from the first boot on (it holds the login), so an existing install kept
+# its first version of them for good. Only the shipped files are written: the
+# login, settings, projects and the user's own commands and skills stay. A
+# shipped file the user edited in place is replaced; DOCS.md says to save
+# variants under another name.
+install_shipped_claude_assets() {
+    local target="$1"
+    local source="${SHIPPED_CLAUDE_DIR:-/opt/.claude}"
+
+    [ -d "$source" ] || return 0
+    mkdir -p "$target"
+    cp -R "$source/." "$target/"
+    bashio::log.info "  - Claude Code skills & commands: up to date"
 }
 
 # Reclaim persistent storage taken by superseded Claude Code binaries.
