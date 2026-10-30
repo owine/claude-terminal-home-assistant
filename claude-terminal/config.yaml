@@ -147,6 +147,9 @@ backup_exclude:
   - "*_claude_terminal_prowine/home/.claude/cache"
   - "*_claude_terminal_prowine/home/.local/bin/claude"
   - "*_claude_terminal_prowine/.local/share/claude/versions"
+  # apk's download cache behind persist-install's replay: rebuilt from the
+  # network on the first start after a restore.
+  - "*_claude_terminal_prowine/packages/apk-cache"
 
 # Volume mappings for file access
 map:

@@ -15,8 +15,8 @@ CURRENT_SUITE="health-check.sh"
 
 # Lay out a fixture mirroring the three real install locations under a
 # relocatable prefix. Each argument names a location to populate:
-#   packages  -> /data/packages/bin/claude   (first on the runtime PATH)
 #   home      -> /data/home/.local/bin/claude (where `claude` actually resolves)
+#   packages  -> /data/packages/bin/claude   (old persist-install copy, end of PATH)
 #   root      -> /root/.local/bin/claude      (bundled copy, not on PATH)
 # Prefix a name with "broken:" to install a binary that exists and is +x but
 # aborts on launch, the way a libc mismatch behaves.
@@ -79,10 +79,17 @@ out=$(check_claude_cli 2>&1)
 assert_contains "and names the binary that actually runs" "$out" "/data/home/.local/bin/claude"
 assert_not_contains "not the bundled fallback" "$out" "/root/.local/bin/claude"
 
-setup_bins "$fixture" broken:packages home root
-assert_status "/data/packages wins over both, matching PATH" 1 check_claude_cli
+# /data/packages/bin is last on PATH now: an old persist-install copy there
+# fills a gap, but never shadows the launcher in $HOME/.local/bin.
+setup_bins "$fixture" home broken:packages root
+assert_status "the home launcher wins over an old /data/packages copy, matching PATH" 0 check_claude_cli
 out=$(check_claude_cli 2>&1)
-assert_contains "and names the /data/packages copy" "$out" "/data/packages/bin/claude"
+assert_contains "and is the one named" "$out" "/data/home/.local/bin/claude"
+
+setup_bins "$fixture" broken:packages root
+assert_status "with no home launcher, the /data/packages copy is what runs" 1 check_claude_cli
+out=$(check_claude_cli 2>&1)
+assert_contains "and is named" "$out" "/data/packages/bin/claude"
 
 setup_bins "$fixture" root
 assert_status "the bundled copy is still used when it is all there is" 0 check_claude_cli

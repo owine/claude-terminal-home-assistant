@@ -37,9 +37,9 @@ restart.
               ↕
 ┌─────────────────────────────────────────┐
 │  /data/packages (PERSISTENT)           │
-│  - persist-install installs HERE       │
-│  - Survives reboots & updates          │
-│  ✅ Permanent storage                  │
+│  - persist-install RECORDS it here     │
+│  - reinstalled by apk on every start   │
+│  ✅ Permanent, dependencies included   │
 └─────────────────────────────────────────┘
 ```
 
@@ -195,11 +195,11 @@ example are in `PERSISTENT_PACKAGES.md`.
 
 ## Troubleshooting (behavioral note)
 
-If a freshly installed package isn't found, confirm it landed in
-`/data/packages/bin` (or the venv) and that `/data/packages` is on `PATH`, then
-re-run `persist-install`. The complete troubleshooting playbook (PATH checks,
-Python import errors, shared-library issues, clean slate) is in
-`PERSISTENT_PACKAGES.md` — refer users there rather than restating it.
+If a package is missing after a restart, check `persist-install --list` shows
+it, then run `persist-install --restore` (the app does the same at every start;
+the app log names any package it could not restore). To stop reinstalling one,
+use `persist-install --remove <pkg>`. The complete troubleshooting playbook is
+in `PERSISTENT_PACKAGES.md` — refer users there rather than restating it.
 
 ## Important Reminders
 

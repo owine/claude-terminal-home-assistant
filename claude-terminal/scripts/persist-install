@@ -1,62 +1,33 @@
 #!/bin/bash
 
-# User-friendly command for installing packages persistently
-# Usage: persist-install python git vim
-
-PERSIST_ROOT="/data/packages"
-PERSIST_BIN="$PERSIST_ROOT/bin"
-PERSIST_LIB="$PERSIST_ROOT/lib"
-PERSIST_LIBEXEC="$PERSIST_ROOT/libexec"
-PERSIST_PYTHON="$PERSIST_ROOT/python"
-
-# `apk info -L` reports paths RELATIVE to / ("usr/bin/tree"), preceded by a
-# header line naming the package ("tree-2.2.1-r0 contains:"). Anchor a listed
-# line at / so it names a real file; a raw relative path would resolve against
-# whatever directory the caller happens to be in.
-persist_absolute_path() {
-    printf '/%s\n' "${1#/}"
-}
-
-# Echo the persistent destination directory for one line of `apk info -L`
-# output, or nothing when the line is not a file worth persisting.
+# Install packages that survive container restarts.
+#   persist-install git vim            # system packages (Alpine apk)
+#   persist-install --python requests  # Python packages (persistent venv)
 #
-# Matching absolute paths here is what made the whole feature a no-op: apk
-# emits relative paths, so the original patterns never matched and every
-# install reported success while copying nothing to /data. Accept both
-# spellings so no future caller can reintroduce that silently.
-persist_target_dir() {
-    local file="$1"
+# System packages persist as INPUTS, not files: the specs you asked for are
+# recorded in $PERSIST_WORLD, apk keeps what it downloads in $PERSIST_CACHE,
+# and run.sh replays the list through apk on every start. That gives a
+# complete installation each time - data files, dependencies, symlinks and
+# triggers included - where the earlier approach copied only a package's
+# binaries, shared libraries and libexec helpers out of the container and
+# lost the rest: python3 came back without its 582-file standard library, and
+# no package's own dependencies were ever kept. With the cache warm the replay
+# takes seconds and works without a network.
+#
+# Copies made by that earlier approach are left where they were
+# ($PERSIST_ROOT/bin, lib, libexec). run.sh puts them at the END of PATH and
+# LD_LIBRARY_PATH, so they only fill gaps, and --migrate-legacy turns them
+# into recorded packages once.
 
-    # Skip the "<pkg>-<version> contains:" header. A real path never ends in a
-    # colon, so this cannot swallow a file.
-    case "$file" in
-        ""|*:) return 0 ;;
-    esac
-
-    local absolute
-    absolute=$(persist_absolute_path "$file")
-
-    case "$absolute" in
-        /usr/bin/*|/usr/sbin/*|/bin/*|/sbin/*) printf '%s\n' "$PERSIST_BIN" ;;
-        /usr/lib/*.so|/usr/lib/*.so.*|/lib/*.so|/lib/*.so.*) printf '%s\n' "$PERSIST_LIB" ;;
-        /usr/libexec/*)
-            # libexec keeps its directory structure, where bin and lib flatten.
-            # Nothing searches libexec by PATH: the programs that use it look in
-            # an exact location, so the relative path IS the interface. Docker
-            # finds `docker compose` at docker/cli-plugins/docker-compose and
-            # git finds its helpers under git-core; flattening either into bin
-            # would put the file on PATH and still leave the subcommand missing.
-            local relative subdir
-            relative="${absolute#/usr/libexec/}"
-            subdir=$(dirname "$relative")
-            if [ "$subdir" = "." ]; then
-                printf '%s\n' "$PERSIST_LIBEXEC"
-            else
-                printf '%s/%s\n' "$PERSIST_LIBEXEC" "$subdir"
-            fi
-            ;;
-    esac
-}
+PERSIST_ROOT="${PERSIST_ROOT:-/data/packages}"
+PERSIST_WORLD="${PERSIST_WORLD:-$PERSIST_ROOT/world}"
+PERSIST_CACHE="${PERSIST_CACHE:-$PERSIST_ROOT/apk-cache}"
+PERSIST_PYTHON="${PERSIST_PYTHON:-$PERSIST_ROOT/python}"
+PERSIST_LEGACY_BIN="${PERSIST_LEGACY_BIN:-$PERSIST_ROOT/bin}"
+PERSIST_MIGRATED="${PERSIST_MIGRATED:-$PERSIST_ROOT/.legacy-migrated}"
+# Where an installed command lives on the container filesystem. A test seam;
+# production checks the real system directories.
+SYSTEM_BIN_DIRS="${SYSTEM_BIN_DIRS:-/usr/bin /usr/sbin /bin /sbin}"
 
 # Echo the Python minor version (e.g. "3.14") the system interpreter reports.
 system_python_minor() {
@@ -99,137 +70,262 @@ Install packages that survive container restarts!
 USAGE:
     persist-install <package1> [package2] [...]
     persist-install --python <package1> [package2] [...]
+    persist-install --remove <package1> [package2] [...]
     persist-install --list
     persist-install --help
 
 EXAMPLES:
     persist-install git vim htop          # Install system packages
     persist-install --python requests pandas  # Install Python packages
+    persist-install --remove htop         # Stop reinstalling it on restart
     persist-install --list                # Show installed packages
 
 NOTES:
-    • Packages are installed to: /data/packages (persistent storage)
-    • Survives container restarts and reboots
-    • System packages copied from Alpine APK
-    • Python packages installed to virtual environment
-
-QUICK START:
-    1. persist-install python3 py3-pip    # Install Python (first time)
-    2. Reboot and enjoy! Packages will still be there!
+    • System packages are recorded in $PERSIST_WORLD and reinstalled
+      by apk on every start, complete with their dependencies and data files
+    • apk's downloads are cached in $PERSIST_CACHE, so the reinstall
+      is quick and works offline once a package has been fetched
+    • Python packages live in a virtual environment on persistent storage
 
 EOF
+}
+
+# Echo the bare package name of an apk spec: "curl=8.1-r0", "curl>8" and
+# "curl~8" all name "curl", and "curl@edge" pins a repository tag.
+apk_package_name() {
+    printf '%s\n' "${1%%[=<>~@]*}"
+}
+
+# The recorded specs, one per line, blank lines and comments dropped.
+read_world() {
+    [ -f "$PERSIST_WORLD" ] || return 0
+    grep -vE '^[[:space:]]*(#|$)' "$PERSIST_WORLD" 2>/dev/null | tr -d '\r'
+}
+
+# Rewrite the world file from stdin, sorted and de-duplicated, atomically.
+write_world() {
+    mkdir -p "$(dirname "$PERSIST_WORLD")" || return 1
+    sort -u > "$PERSIST_WORLD.tmp" && mv "$PERSIST_WORLD.tmp" "$PERSIST_WORLD"
+}
+
+# Print the world without any entry for the package names given.
+world_without() {
+    local names=" " spec
+    for spec in "$@"; do
+        names="$names$(apk_package_name "$spec") "
+    done
+    read_world | while IFS= read -r spec; do
+        case "$names" in
+            *" $(apk_package_name "$spec") "*) ;;
+            *) printf '%s\n' "$spec" ;;
+        esac
+    done
+}
+
+# Record specs. A spec replaces any entry for the same package, so
+# `persist-install curl=8.2-r0` after `persist-install curl` pins it rather
+# than keeping both.
+world_add() {
+    { world_without "$@"; printf '%s\n' "$@"; } | write_world
+}
+
+world_remove() {
+    world_without "$@" | write_world
+}
+
+# A leading dash is an option, not a package. Passed through, apk would act
+# on it (--allow-untrusted, -X <repo>), so refuse before installing anything.
+reject_option_names() {
+    local spec
+    for spec in "$@"; do
+        case "$spec" in
+            -*)
+                echo "❌ Invalid package name: $spec (package names cannot start with -)"
+                return 1
+                ;;
+        esac
+    done
+}
+
+# Install specs through apk with the persistent cache. All at once first; if
+# that fails, one at a time - online, then from the cache alone - so one bad
+# or unreachable package cannot keep the others out. Returns non-zero when
+# any of them is still not installed.
+apk_install() {
+    if apk add --no-progress --cache-dir "$PERSIST_CACHE" "$@"; then
+        return 0
+    fi
+
+    echo "⚠️  apk could not install them together; trying one at a time"
+    local spec failed=0
+    for spec in "$@"; do
+        if apk add --no-progress --cache-dir "$PERSIST_CACHE" "$spec" ||
+           apk add --no-progress --cache-dir "$PERSIST_CACHE" --no-network "$spec"; then
+            echo "   ✓ $spec"
+        else
+            echo "   ✗ $spec"
+            failed=1
+        fi
+    done
+    return "$failed"
+}
+
+# Whether the package a spec names is installed now.
+spec_installed() {
+    apk info -e "$(apk_package_name "$1")" >/dev/null 2>&1
+}
+
+# persist-install <spec>... - install and record. Only specs that actually
+# installed are recorded, so a failure can be retried and a typo is not
+# replayed on every start.
+install_system_packages() {
+    reject_option_names "$@" || exit 1
+    mkdir -p "$PERSIST_CACHE" || { echo "❌ Cannot write to $PERSIST_CACHE"; exit 1; }
+
+    echo "📦 Installing system packages: $*"
+    local status=0
+    apk_install "$@" || status=1
+
+    local spec installed=()
+    for spec in "$@"; do
+        spec_installed "$spec" && installed+=("$spec")
+    done
+    if [ "${#installed[@]}" -gt 0 ]; then
+        world_add "${installed[@]}" || { echo "❌ Could not record them in $PERSIST_WORLD"; exit 1; }
+    fi
+
+    echo ""
+    if [ "$status" -ne 0 ]; then
+        echo "❌ Not all packages installed. Recorded: ${installed[*]:-(none)}"
+        exit 1
+    fi
+    echo "✅ System packages installed and persisted!"
+    echo "💡 Reinstalled on every start, with their dependencies and data files"
+}
+
+# persist-install --no-record <spec>... - install through the persistent cache
+# without recording. run.sh uses it for packages an app option owns
+# (persistent_apk_packages, enable_docker): the option is their record, so
+# taking one out of it, or turning the option off, really stops it.
+install_unrecorded() {
+    reject_option_names "$@" || exit 1
+    mkdir -p "$PERSIST_CACHE" || exit 1
+    apk_install "$@" || exit 1
+}
+
+# persist-install --remove <name>... - stop reinstalling them on start.
+remove_packages() {
+    reject_option_names "$@" || exit 1
+    world_remove "$@" || exit 1
+    echo "🗑️  Removed from the persistent list: $*"
+    echo "   Still installed until the app restarts; 'apk del $*' drops them now."
+}
+
+# persist-install --restore - replay the world. Called by run.sh at start.
+restore_packages() {
+    local specs=()
+    local spec
+    while IFS= read -r spec; do
+        specs+=("$spec")
+    done < <(read_world)
+    [ "${#specs[@]}" -gt 0 ] || return 0
+
+    mkdir -p "$PERSIST_CACHE" || exit 1
+    echo "♻️  Restoring ${#specs[@]} persistent package(s): ${specs[*]}"
+    apk_install "${specs[@]}" || exit 1
+}
+
+# persist-install --migrate-legacy - turn the binaries the copy-based version
+# left in $PERSIST_LEGACY_BIN into recorded packages, once.
+#
+# Nothing recorded which package a copied binary came from, so ask apk which
+# package provides that command (cmd:<name>). A command already installed on
+# the system - by the image, a restored package, or an app option - needs
+# nothing. One provider is installed and recorded; none or several (cmd:docker
+# is provided by docker-cli and podman-docker) is reported, never guessed.
+# Without a reachable package index nothing is decided and the next start
+# tries again.
+migrate_legacy() {
+    [ -e "$PERSIST_MIGRATED" ] && return 0
+    if [ ! -d "$PERSIST_LEGACY_BIN" ] || [ -z "$(ls -A "$PERSIST_LEGACY_BIN" 2>/dev/null)" ]; then
+        mkdir -p "$(dirname "$PERSIST_MIGRATED")" && : > "$PERSIST_MIGRATED"
+        return 0
+    fi
+
+    if ! apk search -q -x cmd:sh >/dev/null 2>&1; then
+        echo "⚠️  Package index unreachable; legacy package migration will retry on the next start"
+        return 0
+    fi
+
+    local file name dir providers count found pkgs=() unresolved=()
+    for file in "$PERSIST_LEGACY_BIN"/*; do
+        name=$(basename "$file")
+        found=no
+        for dir in $SYSTEM_BIN_DIRS; do
+            if [ -e "$dir/$name" ]; then found=yes; break; fi
+        done
+        [ "$found" = yes ] && continue
+
+        providers=$(apk search -q -x "cmd:$name" 2>/dev/null)
+        count=$(printf '%s\n' "$providers" | grep -c .)
+        if [ "$count" -eq 1 ]; then
+            case " ${pkgs[*]} " in
+                *" $providers "*) ;;
+                *) pkgs+=("$providers") ;;
+            esac
+        else
+            unresolved+=("$name")
+        fi
+    done
+
+    local status=0
+    if [ "${#pkgs[@]}" -gt 0 ]; then
+        echo "📦 Migrating legacy packages to the persistent list: ${pkgs[*]}"
+        ( install_system_packages "${pkgs[@]}" ) || status=1
+    fi
+    if [ "${#unresolved[@]}" -gt 0 ]; then
+        echo "⚠️  No single package provides: ${unresolved[*]}"
+        echo "   Their old copies stay at the end of PATH. Reinstall what you still"
+        echo "   need with persist-install <package>."
+    fi
+    # A failed install is retried on the next start; anything else is final.
+    [ "$status" -eq 0 ] && : > "$PERSIST_MIGRATED"
+    return 0
 }
 
 list_packages() {
     echo "=== 📦 Persistent Packages ==="
     echo ""
-    echo "📁 Location: $PERSIST_ROOT"
-    echo ""
-
-    echo "🔧 System Binaries ($PERSIST_BIN):"
-    if [ -d "$PERSIST_BIN" ] && [ -n "$(ls -A "$PERSIST_BIN" 2>/dev/null)" ]; then
-        for bin in "$PERSIST_BIN"/*; do
-            echo "  • $(basename "$bin")"
-        done
+    echo "🔧 System packages (reinstalled on every start, from $PERSIST_WORLD):"
+    local specs
+    specs=$(read_world)
+    if [ -n "$specs" ]; then
+        printf '%s\n' "$specs" | sed 's/^/  • /'
     else
-        echo "  (none installed)"
+        echo "  (none recorded)"
     fi
     echo ""
 
     echo "🐍 Python Packages ($PERSIST_PYTHON/venv):"
     if [ -f "$PERSIST_PYTHON/venv/bin/pip" ]; then
-        source "$PERSIST_PYTHON/venv/bin/activate"
-        pip list --format=columns | tail -n +3 | sed 's/^/  • /'
+        "$PERSIST_PYTHON/venv/bin/pip" list --format=columns 2>/dev/null | tail -n +3 | sed 's/^/  • /'
     else
         echo "  (virtual environment not created)"
-        echo "  Run: persist-install python3 py3-pip"
+        echo "  Run: persist-install --python <package>"
     fi
     echo ""
 
-    echo "💾 Total size:"
-    du -sh "$PERSIST_ROOT" 2>/dev/null || echo "  0B"
-}
-
-# Echo the bare package name of an apk spec: "curl=8.1-r0", "curl>8" and
-# "curl~8" all name "curl", and "curl@edge" pins a repository tag.
-#
-# `apk add` accepts a constrained spec, but `apk info -L` does not: given one it
-# prints nothing and fails. Looking the files up by the spec as typed installed
-# the package for this boot only while reporting it persisted.
-apk_package_name() {
-    printf '%s\n' "${1%%[=<>~@]*}"
-}
-
-install_system_packages() {
-    local packages=("$@")
-    local pkg
-
-    # A leading dash is an option, not a package. Passed through, apk would act
-    # on it (--allow-untrusted, -X <repo>), so refuse before installing anything.
-    for pkg in "${packages[@]}"; do
-        case "$pkg" in
-            -*)
-                echo "❌ Invalid package name: $pkg (package names cannot start with -)"
-                exit 1
-                ;;
-        esac
-    done
-
-    echo "📦 Installing system packages: ${packages[*]}"
-    echo ""
-
-    # Install via APK first
-    echo "⏳ Installing via APK..."
-    if ! apk add --no-cache "${packages[@]}"; then
-        echo "❌ Failed to install packages"
-        exit 1
-    fi
-
-    # Copy to persistent storage
-    echo "💾 Copying to persistent storage..."
-    mkdir -p "$PERSIST_BIN" "$PERSIST_LIB" "$PERSIST_LIBEXEC"
-
-    local name listing unlisted=()
-    for pkg in "${packages[@]}"; do
-        echo "  Processing: $pkg"
-
-        # Get list of files installed by package. persist_target_dir handles the
-        # header line and the relative paths apk emits; see its definition.
-        name=$(apk_package_name "$pkg")
-        listing=$(apk info -L "$name" 2>/dev/null)
-
-        # Even a package with no files prints a "<pkg> contains:" header, so no
-        # output at all means the lookup failed and nothing was persisted.
-        if [ -z "$listing" ]; then
-            echo "    ❌ apk lists no files for $name - nothing was persisted"
-            unlisted+=("$pkg")
-            continue
-        fi
-
-        printf '%s\n' "$listing" | while read -r line; do
-            dest=$(persist_target_dir "$line")
-            [ -n "$dest" ] || continue
-
-            file=$(persist_absolute_path "$line")
-            [ -f "$file" ] || continue
-
-            # libexec destinations are nested (docker/cli-plugins, git-core),
-            # so the directory may not exist yet.
-            mkdir -p "$dest" 2>/dev/null || true
-
-            if cp -a "$file" "$dest/" 2>/dev/null && [ "$dest" != "$PERSIST_LIB" ]; then
-                echo "    ✓ $(basename "$file")"
-            fi
+    if [ -d "$PERSIST_LEGACY_BIN" ] && [ -n "$(ls -A "$PERSIST_LEGACY_BIN" 2>/dev/null)" ]; then
+        echo "📁 Copies from before packages were recorded ($PERSIST_LEGACY_BIN, end of PATH):"
+        local copy
+        for copy in "$PERSIST_LEGACY_BIN"/*; do
+            echo "  • $(basename "$copy")"
         done
-    done
-
-    echo ""
-    if [ "${#unlisted[@]}" -gt 0 ]; then
-        echo "❌ Installed but NOT persisted (lost on restart): ${unlisted[*]}"
-        exit 1
+        echo "   Safe to delete once 'persist-install --list' shows what you need above."
+        echo ""
     fi
-    echo "✅ System packages installed and persisted!"
-    echo "💡 These packages will survive container restarts"
+
+    echo "💾 apk cache: $(du -sh "$PERSIST_CACHE" 2>/dev/null | cut -f1 || echo 0B)"
 }
 
 install_python_packages() {
@@ -299,24 +395,32 @@ main() {
         exit 1
     fi
 
-    case "${1:-}" in
-        --help|-h|help)
+    local cmd="${1:-}"
+    case "$cmd" in
+        --help|-h|help|"")
             show_help
             ;;
         --list|-l|list)
             list_packages
             ;;
-        --python|-p|python)
+        --restore)
+            restore_packages
+            ;;
+        --migrate-legacy)
+            migrate_legacy
+            ;;
+        --python|-p|python|--remove|--no-record)
             shift
             if [ $# -eq 0 ]; then
                 echo "❌ Error: No packages specified"
-                echo "Usage: persist-install --python <package1> [package2] ..."
+                echo "Usage: persist-install $cmd <package1> [package2] ..."
                 exit 1
             fi
-            install_python_packages "$@"
-            ;;
-        "")
-            show_help
+            case "$cmd" in
+                --remove) remove_packages "$@" ;;
+                --no-record) install_unrecorded "$@" ;;
+                *) install_python_packages "$@" ;;
+            esac
             ;;
         *)
             install_system_packages "$@"
