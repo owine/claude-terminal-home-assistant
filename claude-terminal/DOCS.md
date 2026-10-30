@@ -239,7 +239,7 @@ file can override:
   opens the file itself is not caught, so treat this as a guard against
   accidents, not a sandbox
 - Only commands that name a protected path are checked: a search over all of
-  `/config` (for instance `rg -uu /config`) still reads into `.storage`
+  `/config` (for instance `rg -uu token /config`) still reads into `.storage`
 - Set an option to `full` to give Claude that access, for instance to have it
   add an entry to `secrets.yaml`. With all three at `full` the managed
   settings file is removed
