@@ -8,9 +8,11 @@ on:
       - 'tests/**'
       - '.github/workflows/test.yml'
   # Run on every PR (no paths filter): the branch ruleset requires
-  # `Test build amd64` and `Test build aarch64` to pass, so a PR that doesn't
-  # touch the filtered paths would leave them expected-but-missing and
-  # permanently block merge.
+  # `Test build amd64`, `Test build aarch64` and `Integration tests` to pass,
+  # so a PR that doesn't touch the filtered paths would leave them
+  # expected-but-missing and permanently block merge. Instead `init` works out
+  # whether the PR touches those paths, and the heavy steps skip when it
+  # doesn't - inside the required jobs, which still report success.
   pull_request:
 
 concurrency:
@@ -36,9 +38,16 @@ jobs:
     runs-on: ubuntu-26.04
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      amd64-image: ${{ steps.amd64.outputs.image }}
+      amd64-os: ${{ steps.amd64.outputs.os }}
+      code: ${{ steps.changes.outputs.code }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A PR checks out its merge commit; with its first parent, the base
+          # tip, that is enough to list what the PR changes.
+          fetch-depth: 2
 
       - name: Get build matrix
         id: matrix
@@ -46,6 +55,42 @@ jobs:
         with:
           architectures: ${{ env.ARCHITECTURES }}
           image-name: ${{ env.IMAGE_NAME }}
+
+      # The integration jobs build and test the amd64 image on the runner label
+      # `Test build amd64` gets, taken from the builder's matrix for the reason
+      # given above that job's `runs-on`.
+      - name: Pick the amd64 entry
+        id: amd64
+        env:
+          MATRIX: ${{ steps.matrix.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          image=$(jq -er '.include[] | select(.arch == "amd64") | .image' <<< "$MATRIX")
+          os=$(jq -er '.include[] | select(.arch == "amd64") | .os' <<< "$MATRIX")
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "os=$os" >> "$GITHUB_OUTPUT"
+
+      # Whether this run touches anything the build and browser tests cover.
+      # A push already passed the paths filter above, so it does. Keep the
+      # pattern in step with `on.push.paths`.
+      - name: Detect relevant changes
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          printf '%s\n' "$changed"
+          if grep -qE '^(claude-terminal/|tests/|\.github/workflows/test\.yml$)' <<< "$changed"; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No changes under claude-terminal/, tests/ or test.yml: build, smoke and integration tests skipped"
+          fi
 
   unit:
     name: Unit tests
@@ -103,7 +148,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Gated on `init`'s change check at step level, never job level: a matrix
+      # job skipped as a whole reports under its unexpanded name, so the
+      # required `Test build <arch>` checks would never appear.
       - name: Build image
+        if: needs.init.outputs.code == 'true'
         uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
         with:
           arch: ${{ matrix.arch }}
@@ -118,67 +167,13 @@ jobs:
           version: ${{ github.sha }}
 
       - name: Smoke test
+        if: needs.init.outputs.code == 'true'
         env:
           IMAGE: ${{ matrix.image }}:test
         run: |
           set -euo pipefail
 
-          # run.sh reads every option from the Supervisor API, and since bashio
-          # 2026.08 an unreachable Supervisor aborts startup instead of yielding
-          # "" (see tests/stub-supervisor.py). Serve config.yaml's own defaults,
-          # so the container boots the way a fresh install does. The stub stays
-          # up for the rest of the job; the runner reaps it at the end.
-          # It binds the docker bridge gateway - what host-gateway resolves to -
-          # since Linux Docker does not forward host.docker.internal to loopback.
-          # The fake token below is deliberate here, unlike in a local run: it
-          # takes setup-ha-mcp.sh down its registration path, which CI then covers.
-          yq -o=json '.options' claude-terminal/config.yaml > "$RUNNER_TEMP/options.json"
-          STUB_HOST=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
-          STUB_URL="http://${STUB_HOST}:8099/addons/self/options/config"
-          python3 tests/stub-supervisor.py --bind "$STUB_HOST" \
-            --options "$RUNNER_TEMP/options.json" \
-            > "$RUNNER_TEMP/stub-supervisor.log" 2>&1 &
-          for _ in $(seq 1 10); do
-            curl -sf --max-time 1 "$STUB_URL" > /dev/null && break
-            sleep 0.5
-          done
-          curl -sf --max-time 1 "$STUB_URL" > /dev/null || {
-            echo "ERROR: stub Supervisor did not start"; cat "$RUNNER_TEMP/stub-supervisor.log"; exit 1;
-          }
-
-          docker run -d \
-            --name smoke-test \
-            -p 7680:7680 \
-            -p 7681:7681 \
-            -e SUPERVISOR_TOKEN=smoke-test-fake-token \
-            -e SUPERVISOR_API=http://host.docker.internal:8099 \
-            --add-host=host.docker.internal:host-gateway \
-            "$IMAGE"
-
-          # Poll until the wrapper (7680) and ttyd behind it both respond, or
-          # timeout. ttyd is loopback-only, so it is reached through the
-          # wrapper's /terminal/ proxy - the same path a browser takes.
-          echo "Waiting for services to start (up to 60s)..."
-          READY=false
-          for i in $(seq 1 30); do
-            if curl -sf --max-time 2 http://localhost:7680/terminal/ > /dev/null 2>&1 && \
-               curl -sf --max-time 2 http://localhost:7680/ > /dev/null 2>&1; then
-              echo "Services ready after $((i * 2))s"
-              READY=true
-              break
-            fi
-            # Bail early if the container crashed
-            if ! docker ps -q --filter name=smoke-test | grep -q .; then
-              echo "Container exited unexpectedly"
-              exit 1
-            fi
-            sleep 2
-          done
-
-          if [ "$READY" != "true" ]; then
-            echo "ERROR: Services did not become ready within 60s"
-            exit 1
-          fi
+          tests/ci-start-container.sh "$IMAGE" smoke-test
 
           # Verify ttyd answers through the proxy — proves ttyd started, exec'd
           # its command, and the wrapper can reach it on loopback
@@ -186,7 +181,7 @@ jobs:
           [ "$TTYD_CODE" = "200" ] || { echo "ERROR: ttyd via proxy returned HTTP $TTYD_CODE"; exit 1; }
           echo "ttyd via proxy: HTTP $TTYD_CODE"
 
-          # 7681 is published above on purpose: ttyd must NOT answer on it.
+          # 7681 is published on purpose: ttyd must NOT answer on it.
           # ttyd binds loopback only, so docker's port forward finds nothing
           # listening and the connection fails. An HTTP code here means ttyd
           # is reachable from outside the container, bypassing the wrapper.
@@ -218,29 +213,80 @@ jobs:
 
           echo "Smoke test passed"
 
-      # Everything below is amd64-only: the integration test drives real browser
-      # engines against the running container, and Playwright's WebKit build is
-      # not available for the aarch64 runner. The aarch64 job keeps the smoke
-      # test, which is what it is there to prove.
+      - name: Show container logs
+        if: always() && needs.init.outputs.code == 'true'
+        run: |
+          docker logs smoke-test 2>&1 || true
+          echo "=== stub Supervisor ==="
+          cat "$RUNNER_TEMP/stub-supervisor.log" 2>/dev/null || true
+
+      - name: Cleanup
+        if: always() && needs.init.outputs.code == 'true'
+        run: |
+          docker stop smoke-test 2>/dev/null || true
+          docker rm smoke-test 2>/dev/null || true
+
+  # Covers the wiring between browser, xterm.js, ttyd and tmux that the unit
+  # tests cannot see. Every mouse and clipboard bug in 2.7.0-2.7.4 lived there
+  # and passed CI; this is what closes that hole.
+  #
+  # amd64 only: Playwright ships no WebKit build for the aarch64 runner. Each
+  # engine/access-path combination is its own job, with its own runner,
+  # container and rate limiters, so the four run in parallel rather than one
+  # after another (~6 min serially). Each builds the image itself rather than
+  # waiting on `Test build amd64`: on a warm cache that is ~35 s, against
+  # several minutes of waiting.
+  integration:
+    name: Integration ${{ matrix.engine }} ${{ matrix.mode }}
+    needs: init
+    # Job-level skip is fine here, unlike the build jobs: these names are not
+    # required checks. `Integration tests` below is, and it accounts for it.
+    if: needs.init.outputs.code == 'true'
+    runs-on: ${{ needs.init.outputs.amd64-os }}
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [webkit, chromium]
+        mode: [direct, ingress]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same inputs as `Test build amd64`, so both hit the same layer cache.
+      - name: Build image
+        uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
+        with:
+          arch: amd64
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./claude-terminal
+          cosign: "false"
+          image: ${{ needs.init.outputs.amd64-image }}
+          image-tags: |
+            test
+          load: "true"
+          push: "false"
+          version: ${{ github.sha }}
+
+      - name: Start container
+        env:
+          IMAGE: ${{ needs.init.outputs.amd64-image }}:test
+        run: tests/ci-start-container.sh "$IMAGE" ctp
+
       - name: Set up Node
-        if: matrix.arch == 'amd64'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.22.1' # renovate: datasource=node-version depName=node-lts-24 packageName=node
           cache: npm
           cache-dependency-path: claude-terminal/wrapper/package-lock.json
 
-      # Covers the wiring between browser, xterm.js, ttyd and tmux that the unit
-      # tests cannot see. Every mouse and clipboard bug in 2.7.0-2.7.4 lived
-      # there and passed CI; this is what closes that hole. Reuses the container
-      # the smoke test already started and health-checked, so there is no second
-      # build and no second startup wait.
       # Playwright is deliberately not a devDependency (see the test header), so
       # install it out-of-tree. Pinning the version here is what makes the
       # browser cache below correct: the cache key has to change when the
       # browsers do, and Playwright's binaries are tied to its version.
       - name: Install Playwright
-        if: matrix.arch == 'amd64'
         id: playwright
         run: |
           set -euo pipefail
@@ -250,37 +296,40 @@ jobs:
         env:
           PLAYWRIGHT_VERSION: '1.64.1' # renovate: datasource=npm depName=playwright
 
-      # Browser binaries are ~400MB and were re-downloaded on every run. The key
-      # is the Playwright version, not the lockfile: nothing else changes them,
-      # so there is exactly one entry per version rather than one per branch or
-      # per commit. GitHub evicts caches untouched for 7 days, so entries for old
-      # Playwright versions clear themselves once Renovate bumps the pin.
+      # Browser binaries were re-downloaded on every run before this cache. The
+      # key is the Playwright version, not the lockfile: nothing else changes
+      # them, so there is exactly one entry per version and engine rather than
+      # one per branch or per commit. GitHub evicts caches untouched for 7
+      # days, so entries for old Playwright versions clear themselves once
+      # Renovate bumps the pin.
       - name: Cache Playwright browsers
-        if: matrix.arch == 'amd64'
         id: browser-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.engine }}
 
       # --with-deps installs apt packages, which live outside the cached path and
       # so must run either way; it is fast when the packages are already present.
       # Only the browser download is skipped on a cache hit.
-      - name: Install browsers
-        if: matrix.arch == 'amd64'
+      - name: Install browser
+        env:
+          ENGINE: ${{ matrix.engine }}
+          CACHE_HIT: ${{ steps.browser-cache.outputs.cache-hit }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.browser-cache.outputs.cache-hit }}" = "true" ]; then
-            /tmp/pw/node_modules/.bin/playwright install-deps chromium webkit
+          if [ "$CACHE_HIT" = "true" ]; then
+            /tmp/pw/node_modules/.bin/playwright install-deps "$ENGINE"
           else
-            /tmp/pw/node_modules/.bin/playwright install --with-deps chromium webkit
+            /tmp/pw/node_modules/.bin/playwright install --with-deps "$ENGINE"
           fi
 
       - name: Integration test (browser to tmux wiring)
-        if: matrix.arch == 'amd64'
         env:
-          CTP_CONTAINER: smoke-test
+          CTP_CONTAINER: ctp
           CTP_URL: http://localhost:7680/
+          CTP_ENGINE: ${{ matrix.engine }}
+          CTP_MODE: ${{ matrix.mode }}
         run: |
           set -euo pipefail
 
@@ -294,37 +343,47 @@ jobs:
 
       # A failing browser test is opaque without the other side of the wiring.
       - name: Integration test diagnostics
-        if: failure() && matrix.arch == 'amd64'
+        if: failure()
         run: |
           echo "=== container logs (tail) ==="
-          docker logs smoke-test 2>&1 | tail -80 || true
+          docker logs ctp 2>&1 | tail -80 || true
+          echo "=== stub Supervisor ==="
+          cat "$RUNNER_TEMP/stub-supervisor.log" 2>/dev/null || true
           echo "=== tmux state ==="
-          docker exec smoke-test tmux display -p \
+          docker exec ctp tmux display -p \
             'mouse=#{mouse} in_mode=#{pane_in_mode} scroll=#{scroll_position} history=#{history_size} cmd=#{pane_current_command}' || true
 
       # The tmux side alone rarely explains a browser failure. The test writes a
       # screenshot and the page's console output for each combination that
       # failed, and only for those - a green run uploads nothing.
       - name: Upload browser artifacts
-        if: failure() && matrix.arch == 'amd64'
+        if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: integration-failure-artifacts
+          name: integration-failure-artifacts-${{ matrix.engine }}-${{ matrix.mode }}
           path: claude-terminal/wrapper/test/integration/artifacts/
           if-no-files-found: ignore
           # Long enough to debug the PR that produced them, short enough that
           # failed runs do not accumulate screenshots for months.
           retention-days: 3
 
-      - name: Show container logs
-        if: always()
+  # The one check the branch ruleset requires for the browser tests, so the
+  # ruleset need not track the matrix's four names. Passes when every
+  # combination passed, or when `init` found nothing they cover and they were
+  # skipped for that reason. Anything else - a failure, a cancellation, or
+  # `init` itself failing - fails it.
+  integration-result:
+    name: Integration tests
+    needs: [init, integration]
+    if: always()
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Check integration results
+        env:
+          CODE: ${{ needs.init.outputs.code }}
+          RESULT: ${{ needs.integration.result }}
         run: |
-          docker logs smoke-test 2>&1 || true
-          echo "=== stub Supervisor ==="
-          cat "$RUNNER_TEMP/stub-supervisor.log" 2>/dev/null || true
-
-      - name: Cleanup
-        if: always()
-        run: |
-          docker stop smoke-test 2>/dev/null || true
-          docker rm smoke-test 2>/dev/null || true
+          echo "relevant changes: ${CODE:-unknown}; integration jobs: $RESULT"
+          if [ "$RESULT" = "success" ]; then exit 0; fi
+          if [ "$RESULT" = "skipped" ] && [ "$CODE" = "false" ]; then exit 0; fi
+          exit 1
