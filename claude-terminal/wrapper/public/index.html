@@ -424,6 +424,18 @@
             flex-shrink: 0;
         }
 
+        /* Narrower keys on phones. Without this the Shift+Tab key pushed a
+           360-390px header onto a third row, the way the Files button once
+           did (see .header-btn above). Here, not in that block: this has to
+           come after the .ctrl-btn rule it overrides. */
+        @media (max-width: 600px) {
+            .ctrl-btn {
+                padding-left: 4px;
+                padding-right: 4px;
+                min-width: 26px;
+            }
+        }
+
         .ctrl-btn:hover {
             background: #4d4d4d;
             border-color: #666;
@@ -1107,6 +1119,7 @@
             <!-- Terminal control buttons -->
             <button class="ctrl-btn" data-input="\x03" title="Ctrl+C (Interrupt)">^C</button>
             <button class="ctrl-btn" data-input="\x09" title="Tab (Autocomplete)">Tab</button>
+            <button class="ctrl-btn" data-input="\x1b[Z" title="Shift+Tab (in Claude: switch permission mode)">&#8679;Tab</button>
             <button class="ctrl-btn" data-input="\x1b" title="Escape">Esc</button>
             <button class="ctrl-btn" data-input="\x1b[D" title="Left Arrow">&larr;</button>
             <button class="ctrl-btn" data-input="\x1b[A" title="Up Arrow">&uarr;</button>
@@ -1503,6 +1516,7 @@
         const INPUT_MAP = {
             '\\x03': '\x03',  // Ctrl+C
             '\\x09': '\x09',  // Tab
+            '\\x1b[Z': '\x1b[Z',  // Shift+Tab: cycles Claude's permission mode
             '\\x1b': '\x1b',  // Escape
             '\\x1b[A': '\x1b[A',  // Up
             '\\x1b[B': '\x1b[B',  // Down
