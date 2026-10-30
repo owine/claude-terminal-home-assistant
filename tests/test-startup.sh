@@ -30,7 +30,7 @@ record() { printf '%s\n' "$1" >> "$order_file"; }
 # Replace every step main() calls with a recorder. The real ones touch /data,
 # the Supervisor and the network - run_init_commands would run whatever an
 # /data/options.json on the test machine lists.
-steps="init_environment export_oauth_token export_login_notification export_upload_max_mb prune_uploaded_images
+steps="init_environment export_oauth_token export_login_notification write_managed_settings export_upload_max_mb prune_uploaded_images
 prune_upload_inbox run_health_check setup_session_picker setup_persistent_packages init_docker migrate_legacy_packages setup_ha_mcp
 run_init_commands start_wrapper_service start_web_terminal"
 for step in $steps; do
@@ -84,6 +84,10 @@ for before in setup_persistent_packages init_docker; do
     assert_status "migrate_legacy_packages runs after $before" 0 \
         test "$(position "$before")" -lt "$(position migrate_legacy_packages)"
 done
+# Claude reads managed settings when it starts, and start_web_terminal creates
+# the session that launches it at boot.
+assert_status "write_managed_settings runs before the terminal starts" 0 \
+    test "$(position write_managed_settings)" -lt "$(position start_web_terminal)"
 # init_commands may use persistent packages and the Docker CLI, and must be
 # done before the terminal opens.
 init_cmds=$(position run_init_commands)
