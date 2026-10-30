@@ -204,6 +204,9 @@ mapping cannot be disabled without forking the app.
 |--------|---------|-------------|
 | `auto_launch_claude` | `true` | Automatically start Claude when opening the terminal |
 | `dangerously_skip_permissions` | `false` | Run Claude with unrestricted file access ⚠️ |
+| `secrets_yaml_access` | `none` | What Claude may do with `/config/secrets.yaml`: `none` (neither read nor edit), `read_only`, or `full`. See Protected Files below |
+| `storage_access` | `none` | The same for `/config/.storage` (login tokens, integration credentials, state Home Assistant rewrites while running) |
+| `database_access` | `none` | The same for the SQLite databases at the top of `/config`: `*.db` and their `-wal`/`-shm` files, such as the recorder's `home-assistant_v2.db` and ZHA's `zigbee.db` |
 | `enable_ha_mcp` | `true` | Enable Home Assistant MCP server integration |
 | `working_directory` | `""` | Directory the terminal session starts in. Empty means `/config`, which is where it already started. A path that does not exist logs a warning and falls back to `/config` |
 | `claude_code_oauth_token` | `""` | Token from `claude setup-token`, for logging in without the browser OAuth flow. Masked in the UI and never logged. See Authentication below |
@@ -219,7 +222,26 @@ mapping cannot be disabled without forking the app.
 | `enable_docker` | `false` | Install the Docker CLI and enable host Docker socket access (requires Protection Mode disabled) ⚠️ |
 | `enable_docker_buildx` | `false` | Also install `docker buildx` for image builds (only meaningful with `enable_docker`) |
 
-### Authentication
+### Protected Files
+
+Three options limit what Claude can do with Home Assistant's most sensitive
+files, each on its own: `secrets_yaml_access`, `storage_access` and
+`database_access`. Each takes `none` (the default: Claude can neither read nor
+edit), `read_only` (it can read, but not change), or `full` (no limit).
+
+They are written at every start as Claude Code *managed settings*
+(`/etc/claude-code/managed-settings.json`), the one place no other settings
+file can override:
+
+- They hold in every permission mode, including with
+  `dangerously_skip_permissions` on
+- A blocked read stops `cat` of the file in a shell command too. A script that
+  opens the file itself is not caught, so treat this as a guard against
+  accidents, not a sandbox
+- Set an option to `full` to give Claude that access, for instance to have it
+  add an entry to `secrets.yaml`. With all three at `full` the managed
+  settings file is removed
+
 
 By default Claude prompts you to log in through your browser the first time you
 use it. That flow requires copying a long URL out of the terminal, which the

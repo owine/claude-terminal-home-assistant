@@ -212,6 +212,56 @@ assert_contains "turning it off is logged" "$logged" "disabled"
 unset LOGIN_NOTIFICATION
 
 # ---------------------------------------------------------------------------
+# write_managed_settings
+# ---------------------------------------------------------------------------
+printf '\n%s\n' "write_managed_settings"
+
+settings_dir=$(new_tmpdir)
+export CLAUDE_MANAGED_SETTINGS="$settings_dir/claude-code/managed-settings.json"
+deny_rules() { jq -r '.permissions.deny | join(" ")' "$CLAUDE_MANAGED_SETTINGS" 2>/dev/null; }
+
+reset_config
+write_managed_settings 2>/dev/null
+assert_eq "unset options deny reading and editing all three" \
+    "Read(//config/secrets.yaml) Edit(//config/secrets.yaml) Read(//config/.storage/**) Edit(//config/.storage/**) Read(//config/*.db) Edit(//config/*.db) Read(//config/*.db-*) Edit(//config/*.db-*)" \
+    "$(deny_rules)"
+assert_eq "the file is valid JSON with nothing but permissions.deny" '["permissions"]' \
+    "$(jq -c 'keys' "$CLAUDE_MANAGED_SETTINGS" 2>/dev/null)"
+
+reset_config
+set_config secrets_yaml_access "read_only"
+set_config storage_access "full"
+set_config database_access "none"
+write_managed_settings 2>/dev/null
+assert_eq "read_only denies only editing, full denies nothing, none denies both" \
+    "Edit(//config/secrets.yaml) Read(//config/*.db) Edit(//config/*.db) Read(//config/*.db-*) Edit(//config/*.db-*)" \
+    "$(deny_rules)"
+
+reset_config
+set_config secrets_yaml_access "null"
+set_config storage_access "something-else"
+set_config database_access "full"
+write_managed_settings 2>/dev/null
+assert_eq "an unrecognised value fails closed, as none" \
+    "Read(//config/secrets.yaml) Edit(//config/secrets.yaml) Read(//config/.storage/**) Edit(//config/.storage/**)" \
+    "$(deny_rules)"
+
+# Full on all three must remove a file left by an earlier boot: the
+# container's writable layer survives a Supervisor restart.
+reset_config
+set_config secrets_yaml_access "full"
+set_config storage_access "full"
+set_config database_access "full"
+logged=$(write_managed_settings 2>&1)
+assert_eq "full on every path removes the managed settings" "no" \
+    "$([ -e "$CLAUDE_MANAGED_SETTINGS" ] && echo yes || echo no)"
+assert_contains "and says so in the log" "$logged" "off"
+(set -e; write_managed_settings 2>/dev/null)
+assert_eq "with nothing to remove, that is not an error under set -e" "0" "$?"
+unset CLAUDE_MANAGED_SETTINGS
+unset -f deny_rules
+
+# ---------------------------------------------------------------------------
 # export_upload_max_mb
 # ---------------------------------------------------------------------------
 # Passed to the wrapper as read; the wrapper owns the fallback to 25

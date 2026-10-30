@@ -15,6 +15,24 @@ configuration:
       before it edits files or runs commands, as root. With automatic start
       on, every session runs this way; with it off, the session picker offers
       YOLO Mode instead.
+  secrets_yaml_access:
+    name: Claude's access to secrets.yaml
+    description: >-
+      What Claude may do with /config/secrets.yaml: none (neither read nor
+      edit), read_only, or full. Holds even when permission prompts are
+      skipped.
+  storage_access:
+    name: Claude's access to .storage
+    description: >-
+      What Claude may do with /config/.storage, which holds login tokens,
+      integration credentials and state Home Assistant rewrites while
+      running: none, read_only, or full.
+  database_access:
+    name: Claude's access to databases
+    description: >-
+      What Claude may do with the SQLite databases at the top of /config
+      (the recorder's home-assistant_v2.db, ZHA's zigbee.db): none,
+      read_only, or full.
   enable_ha_mcp:
     name: Home Assistant MCP server
     description: >-

@@ -51,6 +51,15 @@ ports:
 options:
   auto_launch_claude: true
   dangerously_skip_permissions: false
+  # secrets_yaml_access / storage_access / database_access: what Claude may do
+  #   with /config/secrets.yaml, /config/.storage, and the SQLite databases at
+  #   the top of /config (*.db and their -wal/-shm files). none (default):
+  #   neither read nor edit; read_only: read but not edit; full: no limit.
+  #   Enforced as Claude Code managed settings, so they hold even with
+  #   dangerously_skip_permissions on.
+  secrets_yaml_access: none
+  storage_access: none
+  database_access: none
   enable_ha_mcp: true
   # working_directory: Directory the terminal session starts in.
   #   Empty (default) means /config, which is where the container already
@@ -111,6 +120,9 @@ options:
 schema:
   auto_launch_claude: bool?
   dangerously_skip_permissions: bool?
+  secrets_yaml_access: list(none|read_only|full)?
+  storage_access: list(none|read_only|full)?
+  database_access: list(none|read_only|full)?
   enable_ha_mcp: bool?
   working_directory: str?
   claude_code_oauth_token: password?

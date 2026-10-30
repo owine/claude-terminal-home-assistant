@@ -700,6 +700,59 @@ export_oauth_token() {
     fi
 }
 
+# Print the deny rules one *_access option asks for, one per line, for each
+# path pattern given: none (the default, and anything unrecognised - this
+# fails closed) denies reading and editing, read_only denies editing, full
+# denies nothing. An Edit rule covers every built-in tool that writes files.
+ha_path_deny_rules() {
+    local option="$1"
+    shift
+    local access pattern
+    access=$(bashio::config "$option" 'none')
+    for pattern in "$@"; do
+        case "$access" in
+            full) ;;
+            read_only) printf 'Edit(%s)\n' "$pattern" ;;
+            *) printf 'Read(%s)\nEdit(%s)\n' "$pattern" "$pattern" ;;
+        esac
+    done
+}
+
+# Keep Claude away from Home Assistant's sensitive files, as far as the
+# secrets_yaml_access, storage_access and database_access options say:
+# secrets.yaml, .storage (auth tokens, integration credentials, state HA
+# rewrites while running) and the SQLite databases at the top of /config
+# (the recorder's, ZHA's zigbee.db). Written as Claude Code *managed*
+# settings, the one scope every install reads and no user or project file
+# can loosen: a deny from any scope beats an allow from any other, and deny
+# rules hold in every permission mode, --dangerously-skip-permissions
+# included. A Read deny also stops `cat` of the path through Bash; a script
+# that opens the file is not caught.
+#
+# With every path at full the file is removed rather than left empty: the
+# container's writable layer survives a Supervisor restart, so a file from an
+# earlier boot would otherwise keep enforcing what the user just turned off.
+write_managed_settings() {
+    local file="${CLAUDE_MANAGED_SETTINGS:-/etc/claude-code/managed-settings.json}"
+    local rules
+    rules=$(
+        ha_path_deny_rules secrets_yaml_access '//config/secrets.yaml'
+        ha_path_deny_rules storage_access '//config/.storage/**'
+        ha_path_deny_rules database_access '//config/*.db' '//config/*.db-*'
+    )
+
+    if [ -z "$rules" ]; then
+        rm -f "$file"
+        bashio::log.info "Home Assistant file protection: off (every *_access option is full)"
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$file")"
+    printf '%s\n' "$rules" | jq -R . | jq -s '{permissions: {deny: .}}' > "$file"
+    chmod 644 "$file"
+    bashio::log.info "Home Assistant file protection: $(printf '%s\n' "$rules" | wc -l | tr -d ' ') deny rule(s) in $file"
+}
+
 # Hand the login_notification option to the wrapper, which posts Claude's
 # login link as a Home Assistant notification (wrapper/login-notifier.js).
 # Anything but an explicit false keeps it on, matching the option's default.
@@ -1148,6 +1201,7 @@ main() {
     init_environment
     export_oauth_token
     export_login_notification
+    write_managed_settings
     export_upload_max_mb
     prune_uploaded_images
     prune_upload_inbox
