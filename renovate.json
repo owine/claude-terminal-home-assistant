@@ -21,6 +21,11 @@
       "registryUrls": ["https://dl-cdn.alpinelinux.org/alpine?branch=v3.24&components=main,community&arch=x86_64"]
     },
     {
+      "description": "Claude Code's release channel lists bare version numbers, so point Renovate at the GitHub repo, whose v<version> releases carry the notes for each bump PR",
+      "matchDatasources": ["custom.claude-code"],
+      "sourceUrl": "https://github.com/anthropics/claude-code"
+    },
+    {
       "description": "Auto-merge Claude Code patch updates from the stable channel",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["custom.claude-code"],
