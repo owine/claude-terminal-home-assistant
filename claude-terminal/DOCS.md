@@ -238,6 +238,8 @@ file can override:
 - A blocked read stops `cat` of the file in a shell command too. A script that
   opens the file itself is not caught, so treat this as a guard against
   accidents, not a sandbox
+- Only commands that name a protected path are checked: a search over all of
+  `/config` (for instance `rg -uu /config`) still reads into `.storage`
 - Set an option to `full` to give Claude that access, for instance to have it
   add an entry to `secrets.yaml`. With all three at `full` the managed
   settings file is removed
