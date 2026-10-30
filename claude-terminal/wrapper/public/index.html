@@ -1269,6 +1269,7 @@
 
     <script src="login-link.js"></script>
     <script src="terminal-clipboard.js"></script>
+    <script src="terminal-keys.js"></script>
     <script src="files-sidebar.js"></script>
     <script src="upload-client.js"></script>
     <script src="files-sidebar-ui.js"></script>
@@ -1412,6 +1413,17 @@
             // the session. Parser handlers survive terminal.reset(), so one
             // registration per instance is enough.
             if (term[HANDLERS_REGISTERED]) return;
+
+            // Shift+Enter starts a new line in Claude's prompt rather than
+            // submitting it (see terminal-keys.js). Ahead of the clipboard check
+            // so that a missing clipboard script does not take this with it.
+            // term.input with wasUserInput: typed, never wrapped as a paste.
+            if (window.TerminalKeys) {
+                term.attachCustomKeyEventHandler(
+                    window.TerminalKeys.createKeyHandler((data) => term.input(data, true)));
+            } else {
+                console.error('[wrapper] terminal-keys.js did not load');
+            }
 
             // terminal-clipboard.js can fail to load (404 mid-rollout, wrapper
             // restart). Check here rather than discovering it inside a handler.
