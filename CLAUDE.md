@@ -294,7 +294,7 @@ persist-install --python requests      # Python packages
 persist-install --list                 # Show installed
 ```
 
-Packages persist to `/data/packages/` (bin, lib, python venv). Auto-install via app config: `persistent_apk_packages` and `persistent_pip_packages` lists.
+System packages persist as a recorded list (`/data/packages/world`) plus apk's download cache (`/data/packages/apk-cache`, backup-excluded); `run.sh` replays the list through apk at every start, so each comes back complete with its dependencies. Python packages live in the venv at `/data/packages/python/venv`. Auto-install via app config: `persistent_apk_packages` and `persistent_pip_packages` lists, installed `--no-record` so the option stays their only record. `/data/packages/bin|lib|libexec` are leftovers of the old copy-based version: last on `PATH`, never on `LD_LIBRARY_PATH`, migrated once by `persist-install --migrate-legacy`.
 
 See `claude-terminal/PERSISTENT_PACKAGES.md` for full details.
 

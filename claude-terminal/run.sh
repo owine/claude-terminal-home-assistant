@@ -14,23 +14,20 @@ init_environment() {
     local claude_config_dir="/data/.config/claude"
     local gh_config_dir="/data/.config/gh"
     local persist_root="/data/packages"
-    local persist_bin="$persist_root/bin"
-    local persist_lib="$persist_root/lib"
-    local persist_libexec="$persist_root/libexec"
     local persist_python="$persist_root/python"
 
     bashio::log.info "Initializing Claude Code environment in /data..."
 
     # Create all required directories
     if ! mkdir -p "$data_home" "$data_home/.local/bin" "$config_dir/claude" "$config_dir/gh" "$cache_dir" "$state_dir" "/data/.local" \
-                  "$persist_bin" "$persist_lib" "$persist_libexec" "$persist_python"; then
+                  "$persist_python"; then
         bashio::log.error "Failed to create directories in /data"
         exit 1
     fi
 
     # Set permissions
     chmod 755 "$data_home" "$config_dir" "$cache_dir" "$state_dir" "$claude_config_dir" "$gh_config_dir" \
-              "$persist_root" "$persist_bin" "$persist_lib" "$persist_libexec" "$persist_python"
+              "$persist_root" "$persist_python"
 
     # Set XDG and application environment variables
     export HOME="$data_home"
@@ -93,22 +90,21 @@ init_environment() {
     # and HOME are both exported by this point.
     prune_claude_versions
 
-    # Setup persistent package paths (HIGHEST PRIORITY)
-    # Include $HOME/.local/bin for Claude Code native components
-    export PATH="$persist_bin:$persist_python/venv/bin:$HOME/.local/bin:$PATH"
-    export LD_LIBRARY_PATH="$persist_lib:${LD_LIBRARY_PATH:-}"
-    export PKG_CONFIG_PATH="$persist_lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    # Persistent packages are reinstalled into the system paths by apk (see
+    # setup_persistent_packages), so they need no PATH entry of their own. The
+    # venv and $HOME/.local/bin (Claude Code's native launcher) come first.
+    # $persist_root/bin goes LAST: it holds binaries copied by persist-install
+    # before it recorded packages instead, which may only fill gaps now - never
+    # shadow a real installation. Their copied libraries get no
+    # LD_LIBRARY_PATH entry at all: every entry there is searched before the
+    # system directories wherever it sits, so a stale .so would win.
+    export PATH="$persist_python/venv/bin:$HOME/.local/bin:$PATH:$persist_root/bin"
 
     # Python virtual environment if it exists
     if [ -d "$persist_python/venv" ]; then
         export VIRTUAL_ENV="$persist_python/venv"
         bashio::log.info "  - Python venv: active"
     fi
-
-    # bin and lib are reached through PATH and LD_LIBRARY_PATH, which are now
-    # set. libexec cannot be: it has to be copied back onto the freshly rebuilt
-    # container filesystem before anything looks for a helper there.
-    restore_persistent_libexec
 
     # Create profile script for persistent environment variables
     # This ensures ALL bash sessions (including ttyd shells) have correct PATH
@@ -142,11 +138,10 @@ export GH_CONFIG_DIR="/data/.config/gh"
 # selection no longer depends on denying it: Shift+drag (Option on macOS) forces
 # xterm's own selection whatever holds mouse reporting.
 
-# Persistent package paths (HIGHEST PRIORITY)
-# Include $HOME/.local/bin for Claude Code native components
-export PATH="/data/packages/bin:/data/packages/python/venv/bin:$HOME/.local/bin:$PATH"
-export LD_LIBRARY_PATH="/data/packages/lib:${LD_LIBRARY_PATH:-}"
-export PKG_CONFIG_PATH="/data/packages/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+# Persistent packages: apk reinstalls them into the system paths at start.
+# The venv and Claude Code's native launcher come first; copies persist-install
+# made before it recorded packages come last, to fill gaps only (see run.sh).
+export PATH="/data/packages/python/venv/bin:$HOME/.local/bin:$PATH:/data/packages/bin"
 
 # Python virtual environment if it exists
 if [ -d "/data/packages/python/venv" ]; then
@@ -221,53 +216,6 @@ PROFILE_EOF
     bashio::log.info "  - GitHub config: $GH_CONFIG_DIR"
     bashio::log.info "  - Cache: $XDG_CACHE_HOME"
     bashio::log.info "  - Persistent packages: $persist_root"
-}
-
-# Put persisted libexec helpers back where their programs look for them.
-#
-# /data/packages/bin and /data/packages/lib work by being prepended to PATH and
-# LD_LIBRARY_PATH. libexec has no such variable: whatever uses a helper there
-# looks in a fixed absolute location - Docker finds `docker compose` at
-# /usr/libexec/docker/cli-plugins/docker-compose, git finds its helpers under
-# /usr/libexec/git-core - and that location lives on the container filesystem,
-# which is rebuilt on every restart. So the files have to be copied back.
-#
-# An existing target is never overwritten. /data outlives the image, so a helper
-# persisted against an older Alpine must not replace the one the current image
-# shipped - the same hazard as a stale credential in the legacy auth migration,
-# or a stale .so ahead of the system one on LD_LIBRARY_PATH. The image always
-# wins; persistence only fills gaps.
-#
-# PERSIST_LIBEXEC_DIR and LIBEXEC_TARGET_DIR are test seams with production
-# defaults.
-restore_persistent_libexec() {
-    local source_root="${PERSIST_LIBEXEC_DIR:-/data/packages/libexec}"
-    local target_root="${LIBEXEC_TARGET_DIR:-/usr/libexec}"
-
-    [ -d "$source_root" ] || return 0
-
-    local source relative target restored=0
-    # -type f only: directories are created on demand below, and a dangling
-    # symlink persisted from an older image would restore nothing useful.
-    while IFS= read -r source; do
-        [ -n "$source" ] || continue
-        relative="${source#"$source_root"/}"
-        target="$target_root/$relative"
-
-        # The image's own copy wins.
-        [ -e "$target" ] && continue
-
-        mkdir -p "$(dirname "$target")" || continue
-        # -a preserves the executable bit, without which Docker skips a plugin
-        # silently - indistinguishable from it not being installed.
-        cp -a "$source" "$target" 2>/dev/null && restored=$((restored + 1))
-    done <<EOF
-$(find "$source_root" -type f 2>/dev/null)
-EOF
-
-    if [ "$restored" -gt 0 ]; then
-        bashio::log.info "  - Persistent packages: restored $restored libexec helper(s)"
-    fi
 }
 
 # Copy the image's Claude binary into the persistent home if none is there.
@@ -500,6 +448,11 @@ setup_persistent_packages() {
         bashio::log.info "Persistent package manager installed: 'persist-install'"
     fi
 
+    # Replay what persist-install recorded, from apk's persistent cache. Before
+    # the option packages below, so a list that cannot be restored in full
+    # still leaves those to install.
+    /usr/local/bin/persist-install --restore || bashio::log.warning "Some persistent packages could not be restored"
+
     # Auto-install packages from configuration
     auto_install_packages
 }
@@ -520,16 +473,20 @@ auto_install_packages() {
     apk_count=$(jq -r '.persistent_apk_packages | if type == "array" then length else 0 end' "$options" 2>/dev/null) || apk_count=0
     pip_count=$(jq -r '.persistent_pip_packages | if type == "array" then length else 0 end' "$options" 2>/dev/null) || pip_count=0
 
-    # Install APK packages if configured
+    # Install APK packages if configured. --no-record: the option is their
+    # record, so one taken out of it is not reinstalled on the next start.
     if [ "$apk_count" -gt 0 ] 2>/dev/null; then
-        bashio::log.info "Auto-installing ${apk_count} system package(s) from config..."
+        local apk_packages=()
+        local pkg
+        while IFS= read -r pkg; do
+            [ -n "$pkg" ] && apk_packages+=("$pkg")
+        done < <(jq -r '.persistent_apk_packages[]' "$options" 2>/dev/null)
 
-        jq -r '.persistent_apk_packages[]' "$options" 2>/dev/null | while read -r pkg; do
-            if [ -n "$pkg" ]; then
-                bashio::log.info "  Installing: $pkg"
-                /usr/local/bin/persist-install "$pkg" || bashio::log.warning "Failed to install: $pkg"
-            fi
-        done || true
+        if [ "${#apk_packages[@]}" -gt 0 ]; then
+            bashio::log.info "Auto-installing ${#apk_packages[@]} system package(s) from config: ${apk_packages[*]}"
+            /usr/local/bin/persist-install --no-record "${apk_packages[@]}" ||
+                bashio::log.warning "Not every configured system package installed"
+        fi
     fi
 
     # Install Python packages if configured
@@ -561,8 +518,8 @@ auto_install_packages() {
 # - BusyBox's (the image's) signals that shell's PID only. Programs it started
 #   (`sleep 30; true`, `npm ci && npm run build`) keep running after it is
 #   stopped.
-# - GNU coreutils' (if coreutils is a persistent package, /data/packages/bin
-#   comes first) moves itself and the command into a new process group and
+# - GNU coreutils' (if coreutils is a persistent package, apk installs its
+#   timeout over BusyBox's) moves itself and the command into a new process group and
 #   signals the whole group, so those programs stop too - and so does any
 #   service the command backgrounded before it ran out of time.
 # Neither reaches run.sh's own process group, which the wrapper supervisor
@@ -655,7 +612,8 @@ log_output_line() {
 }
 
 # Optional Docker CLI support.
-# Installs docker-cli (+ compose, optional buildx) via persist-install and
+# Installs docker-cli (+ compose, optional buildx) through persist-install's
+# cache, unrecorded - turning the option off stops installing them - and
 # validates access to the host Docker socket. Requires Protection Mode OFF.
 # Never aborts startup — all failures degrade to warnings.
 init_docker() {
@@ -675,7 +633,7 @@ init_docker() {
     fi
 
     # shellcheck disable=SC2086  # word-splitting is intentional for the package list
-    if ! /usr/local/bin/persist-install $packages; then
+    if ! /usr/local/bin/persist-install --no-record $packages; then
         bashio::log.warning "Failed to install Docker CLI packages; 'docker' may be unavailable"
         return 0
     fi
@@ -699,6 +657,15 @@ init_docker() {
     else
         bashio::log.warning "Docker socket present but daemon unreachable ('docker version' failed)."
     fi
+}
+
+# Turn binaries the copy-based persist-install left in /data/packages/bin into
+# recorded packages, once (see persist-install --migrate-legacy). After the
+# restore, the option packages and the Docker CLI, so whatever those already
+# provide is not looked up at all. Never fails startup.
+migrate_legacy_packages() {
+    [ -x /usr/local/bin/persist-install ] || return 0
+    /usr/local/bin/persist-install --migrate-legacy || bashio::log.warning "Legacy package migration failed; it retries on the next start"
 }
 
 # Legacy monitoring functions removed - using simplified /data approach
@@ -1191,6 +1158,7 @@ main() {
     setup_session_picker
     setup_persistent_packages
     init_docker
+    migrate_legacy_packages
     setup_ha_mcp
     run_init_commands
 

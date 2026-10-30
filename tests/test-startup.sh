@@ -31,7 +31,7 @@ record() { printf '%s\n' "$1" >> "$order_file"; }
 # the Supervisor and the network - run_init_commands would run whatever an
 # /data/options.json on the test machine lists.
 steps="init_environment export_oauth_token export_login_notification export_upload_max_mb prune_uploaded_images
-prune_upload_inbox run_health_check setup_session_picker setup_persistent_packages init_docker setup_ha_mcp
+prune_upload_inbox run_health_check setup_session_picker setup_persistent_packages init_docker migrate_legacy_packages setup_ha_mcp
 run_init_commands start_wrapper_service start_web_terminal"
 for step in $steps; do
     eval "$step() { record $step; }"
@@ -77,6 +77,12 @@ done
 # it starts.
 for early in export_oauth_token export_login_notification; do
     assert_status "$early runs before the wrapper starts" 0 test "$(position "$early")" -lt "${wrapper:-0}"
+done
+# Legacy migration skips any command the restore, the option packages or the
+# Docker CLI already installed, so it runs after all three.
+for before in setup_persistent_packages init_docker; do
+    assert_status "migrate_legacy_packages runs after $before" 0 \
+        test "$(position "$before")" -lt "$(position migrate_legacy_packages)"
 done
 # init_commands may use persistent packages and the Docker CLI, and must be
 # done before the terminal opens.

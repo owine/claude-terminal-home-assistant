@@ -113,9 +113,10 @@ check_claude_cli() {
     # with-contenv resets PATH to the s6 container environment, which does not
     # include /data/home/.local/bin (set at runtime by run.sh, not at build time).
     #
-    # Order mirrors the runtime PATH that run.sh exports
-    # (/data/packages/bin, then $HOME/.local/bin, then the system path), so the
-    # binary probed here is the one a user's `claude` actually launches.
+    # Order mirrors the runtime PATH that run.sh exports ($HOME/.local/bin,
+    # the system path, then /data/packages/bin - copies left by the old
+    # persist-install, last so they only fill gaps), so the binary probed here
+    # is the one a user's `claude` actually launches.
     # Probing the bundled /root copy first would green-tick a working binary
     # while the persistent copy that really runs is broken - and diagnosing
     # exactly that is the point of this check. /root/.local/bin is not even on
@@ -127,8 +128,8 @@ check_claude_cli() {
     # paths, which cannot be relocated otherwise.
     local prefix="${CLAUDE_BIN_PREFIX:-}"
     local claude_bin=""
-    for candidate in "$prefix/data/packages/bin/claude" \
-                     "$prefix/data/home/.local/bin/claude" \
+    for candidate in "$prefix/data/home/.local/bin/claude" \
+                     "$prefix/data/packages/bin/claude" \
                      "$prefix/root/.local/bin/claude"; do
         if [ -x "$candidate" ]; then
             claude_bin="$candidate"
