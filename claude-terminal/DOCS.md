@@ -705,6 +705,7 @@ another site cannot upload into your `/config`: such a request is refused.
 - **Python packages**: Install pip packages in persistent virtual environment
 - **Auto-install**: Configure packages to install automatically on startup
 - **Simple command**: Use `persist-install` for all package management
+- **Claude commands and skill**: the app's `/install`, `/install-python` and `/list-packages` commands and its persistent-package skill are refreshed in `~/.claude` on every start, so an update reaches existing installs. Your own commands and skills are left alone; save a variant of a shipped one under a different name, or the next start replaces it
 - **Storage location**: `/data/packages/` (permanent storage)
 
 See [PERSISTENT_PACKAGES.md](PERSISTENT_PACKAGES.md) for complete guide.

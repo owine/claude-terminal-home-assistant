@@ -136,6 +136,51 @@ assert_eq "no image binary, nothing installed" "no" \
 unset CLAUDE_BUNDLED_BIN
 
 # ---------------------------------------------------------------------------
+# install_shipped_claude_assets
+# ---------------------------------------------------------------------------
+printf '\n%s\n' "install_shipped_claude_assets"
+
+shipped_dir=$(new_tmpdir)
+mkdir -p "$shipped_dir/commands" "$shipped_dir/skills/persistent-package-manager"
+printf 'install v2\n' > "$shipped_dir/commands/install.md"
+printf 'skill v2\n' > "$shipped_dir/skills/persistent-package-manager/SKILL.md"
+export SHIPPED_CLAUDE_DIR="$shipped_dir"
+
+home_dir=$(new_tmpdir)
+install_shipped_claude_assets "$home_dir/.claude" 2>/dev/null
+assert_eq "a fresh home gets the shipped commands" \
+    "install v2" "$(cat "$home_dir/.claude/commands/install.md" 2>/dev/null)"
+assert_eq "and the shipped skills" \
+    "skill v2" "$(cat "$home_dir/.claude/skills/persistent-package-manager/SKILL.md" 2>/dev/null)"
+
+# The case that never updated before: ~/.claude exists from the first boot,
+# holding the login, the user's settings and skills, and older shipped files.
+home_dir=$(new_tmpdir)
+mkdir -p "$home_dir/.claude/commands" "$home_dir/.claude/skills/persistent-package-manager" \
+    "$home_dir/.claude/skills/mine"
+printf 'install v1\n' > "$home_dir/.claude/commands/install.md"
+printf 'skill v1\n' > "$home_dir/.claude/skills/persistent-package-manager/SKILL.md"
+printf 'my command\n' > "$home_dir/.claude/commands/mine.md"
+printf 'my skill\n' > "$home_dir/.claude/skills/mine/SKILL.md"
+printf '{"token":"t"}\n' > "$home_dir/.claude/.credentials.json"
+printf '{"model":"x"}\n' > "$home_dir/.claude/settings.json"
+install_shipped_claude_assets "$home_dir/.claude" 2>/dev/null
+assert_eq "an existing home gets the current shipped command" \
+    "install v2" "$(cat "$home_dir/.claude/commands/install.md")"
+assert_eq "and the current shipped skill" \
+    "skill v2" "$(cat "$home_dir/.claude/skills/persistent-package-manager/SKILL.md")"
+assert_eq "the user's own command is kept" "my command" "$(cat "$home_dir/.claude/commands/mine.md")"
+assert_eq "the user's own skill is kept" "my skill" "$(cat "$home_dir/.claude/skills/mine/SKILL.md")"
+assert_eq "the login is untouched" '{"token":"t"}' "$(cat "$home_dir/.claude/.credentials.json")"
+assert_eq "settings are untouched" '{"model":"x"}' "$(cat "$home_dir/.claude/settings.json")"
+
+home_dir=$(new_tmpdir)
+(set -e; SHIPPED_CLAUDE_DIR="$shipped_dir/missing" install_shipped_claude_assets "$home_dir/.claude" 2>/dev/null)
+assert_eq "no shipped directory is not an error under set -e" "0" "$?"
+assert_eq "and creates nothing" "no" "$([ -e "$home_dir/.claude" ] && echo yes || echo no)"
+unset SHIPPED_CLAUDE_DIR
+
+# ---------------------------------------------------------------------------
 # export_login_notification
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "export_login_notification"
