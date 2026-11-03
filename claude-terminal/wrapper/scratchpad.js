@@ -236,7 +236,7 @@ function createScratchpads({
         // Live ids: first under their cwd's own slug, which no cap limits;
         // only if that misses, in every entry MAX_TMP_ENTRIES let through.
         for (const [id, cwd] of live) {
-            await probe(slugOf(cwd), id);
+            if (cwd) await probe(slugOf(cwd), id);
             for (const slug of entries) {
                 if (found.has(id)) break;
                 await probe(slug, id);

@@ -130,7 +130,8 @@ test('symlinks: a scratchpad that is a symlink, or a slug pointing out of the tm
     fs.mkdirSync(path.join(t.tmpRoot, '-config', B), { recursive: true });
     fs.symlinkSync(path.join(outside, A, 'scratchpad'), path.join(t.tmpRoot, '-config', B, 'scratchpad'));
     fs.symlinkSync(outside, path.join(t.tmpRoot, '-escape'));
-    t.record(100, { sessionId: A });
+    // cwd /escape makes A's direct slug lookup go through the -escape symlink.
+    t.record(100, { sessionId: A, cwd: '/escape' });
     t.record(101, { sessionId: B });
     const { dirs } = await createScratchpads({ ...t, isAlive: alive(100, 101), log: quiet }).discover();
     assert.strictEqual(dirs.size, 0, [...dirs.values()].join(', '));
@@ -276,8 +277,8 @@ test('a live session\'s folder under its cwd\'s slug is found past MAX_TMP_ENTRI
     const t = tree();
     t.record(100, { sessionId: A, cwd: '/config', kind: 'interactive' });
     const dir = t.pad('-config', A);
-    // Made after it, and named to sort before it, so neither creation order
-    // nor name order (APFS returns names sorted) puts -config first.
+    // fs.readdir returns names sorted, and `-aN` sorts before `-config`, so a
+    // scan-only lookup never reaches the live folder.
     for (let i = 0; i < 1100; i++) fs.mkdirSync(path.join(t.tmpRoot, `-a${i}`));
     const { active, dirs } = await createScratchpads({ ...t, isAlive: alive(100), log: quiet }).discover();
     assert.strictEqual(active, A);
