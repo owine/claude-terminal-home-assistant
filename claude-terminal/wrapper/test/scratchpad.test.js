@@ -13,7 +13,11 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { createScratchpads, looksLikeClaude, defaultIsAlive, defaultProcStartOf, startTimeFromStat, UUID } = require('../scratchpad.js');
+const express = require('express');
+const { once } = require('node:events');
+const { createRateLimiter } = require('../http-guards.js');
+const { createZipSlots } = require('../files-download.js');
+const { createScratchpads, createScratchpadRouter, looksLikeClaude, defaultIsAlive, defaultProcStartOf, startTimeFromStat, UUID } = require('../scratchpad.js');
 
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scratchpad-')));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -317,4 +321,133 @@ test('defaultIsAlive: a dead PID is not; where /proc exists, a live non-claude p
     const hasProc = fs.existsSync('/proc/self/cmdline');
     assert.strictEqual(await defaultIsAlive(process.pid), !hasProc,
         hasProc ? 'with /proc, a non-claude process is not a session' : 'without /proc, kill() is all there is');
+});
+
+// --- router ---
+
+async function withRouter(t, { isAlive = alive(), filesLimiter = createRateLimiter({ max: 1000 }), scratchpads } = {}, fn) {
+    const app = express();
+    app.use('/api/scratchpad', createScratchpadRouter({
+        scratchpads: scratchpads || createScratchpads({ ...t, isAlive, log: quiet }),
+        filesLimiter,
+        zipLimiter: createRateLimiter({ max: 1000 }),
+        zipSlots: createZipSlots(2),
+        log: quiet,
+    }));
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+        await fn(`http://127.0.0.1:${server.address().port}/api/scratchpad`);
+    } finally {
+        server.closeAllConnections();
+        await new Promise((r) => server.close(r));
+    }
+}
+
+test('router: /sessions answers the public fields, no-store, and is not taken for an id', async () => {
+    const t = tree();
+    t.record(100, { sessionId: A, kind: 'interactive', name: 'main', updatedAt: 1 });
+    t.pad('-config', A);
+    await withRouter(t, { isAlive: alive(100) }, async (url) => {
+        const res = await fetch(`${url}/sessions`);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.headers.get('cache-control'), 'no-store');
+        const body = await res.json();
+        assert.strictEqual(body.active, A);
+        assert.deepStrictEqual(Object.keys(body.sessions[0]).sort(),
+            ['cwd', 'exists', 'id', 'kind', 'label', 'live', 'mtime', 'status', 'updatedAt']);
+        assert.ok(!JSON.stringify(body).includes(t.tmpRoot), 'folder paths stay server-side here');
+    });
+});
+
+test('router: list (empty path = the root), preview, confinement and tiers', async () => {
+    const t = tree();
+    const dir = t.pad('-config', A);
+    fs.writeFileSync(path.join(dir, '.env'), 'TOKEN=1\n');
+    fs.writeFileSync(path.join(t.tmpRoot, 'outside.txt'), 'NO');
+    await withRouter(t, {}, async (url) => {
+        let res = await fetch(`${url}/${A}/list?path=`);
+        assert.strictEqual(res.status, 200);
+        const listing = await res.json();
+        assert.strictEqual(listing.root, dir);
+        assert.deepStrictEqual(listing.entries.map((e) => e.name).sort(), ['.env', 'note.md']);
+        res = await fetch(`${url}/${A}/preview?path=note.md`);
+        assert.strictEqual((await res.json()).content, 'x');
+        for (const p of ['../../outside.txt', path.join(t.tmpRoot, 'outside.txt')]) {
+            assert.strictEqual((await fetch(`${url}/${A}/preview?path=${encodeURIComponent(p)}`)).status, 404, p);
+        }
+        assert.strictEqual((await fetch(`${url}/${A}/preview?path=.env`)).status, 403);
+        assert.strictEqual((await fetch(`${url}/${A}/preview?path=.env&protected=1`)).status, 200);
+    });
+});
+
+test('router: bad and unknown ids are 404; a bad id never reaches discovery', async () => {
+    const t = tree();
+    t.pad('-config', A);
+    let discovered = 0;
+    const real = createScratchpads({ ...t, isAlive: alive(), log: quiet });
+    const counting = { discover: () => { discovered++; return real.discover(); } };
+    await withRouter(t, { scratchpads: counting }, async (url) => {
+        assert.strictEqual((await fetch(`${url}/not-a-uuid/list`)).status, 404);
+        assert.strictEqual(discovered, 0);
+        const res = await fetch(`${url}/${B}/list`);
+        assert.strictEqual(res.status, 404);
+        assert.match((await res.json()).error, /No such scratchpad/);
+    });
+});
+
+test('router: read-only, no HA check, and downloads keep the same-site guard', async () => {
+    const t = tree();
+    t.pad('-config', A);
+    await withRouter(t, {}, async (url) => {
+        for (const [p, method] of [['upload?name=x', 'POST'], ['ha-check', 'POST'], ['nope', 'GET']]) {
+            const res = await fetch(`${url}/${A}/${p}`, { method, body: method === 'POST' ? 'x' : undefined });
+            assert.strictEqual(res.status, 404, p);
+            assert.match(res.headers.get('content-type'), /json/, p);
+        }
+        const cross = await fetch(`${url}/${A}/download?path=note.md`, { headers: { 'Sec-Fetch-Site': 'cross-site' } });
+        assert.strictEqual(cross.status, 403);
+        const ok = await fetch(`${url}/${A}/download?path=note.md`);
+        assert.strictEqual(ok.status, 200);
+        assert.strictEqual(await ok.text(), 'x');
+    });
+});
+
+test('router: an over-limit request is refused before discovery runs', async () => {
+    const t = tree();
+    t.pad('-config', A);
+    let discovered = 0;
+    const real = createScratchpads({ ...t, isAlive: alive(), log: quiet });
+    const counting = { discover: () => { discovered++; return real.discover(); } };
+    await withRouter(t, { scratchpads: counting, filesLimiter: createRateLimiter({ max: 1 }) }, async (url) => {
+        assert.strictEqual((await fetch(`${url}/${A}/list`)).status, 200);
+        const before = discovered;
+        assert.strictEqual((await fetch(`${url}/${A}/list`)).status, 429);
+        assert.strictEqual(discovered, before);
+    });
+});
+
+test('router: a folder that disappears drops its cached router', async () => {
+    const t = tree();
+    const dir = t.pad('-config', A);
+    await withRouter(t, {}, async (url) => {
+        assert.strictEqual((await fetch(`${url}/${A}/list`)).status, 200);
+        fs.rmSync(path.dirname(dir), { recursive: true });
+        assert.strictEqual((await fetch(`${url}/${A}/list`)).status, 404);
+    });
+});
+
+test('router: a folder swapped for a symlink after discovery is refused by the realpath re-check', async () => {
+    const t = tree();
+    const dir = t.pad('-config', A);
+    const other = t.pad('-other', B);
+    // A stub whose dirs map still names dir, as a discover() that ran just
+    // before the swap would: only the router's own check can catch it now.
+    const stub = { discover: async () => ({ active: A, sessions: [], dirs: new Map([[A, dir]]) }) };
+    await withRouter(t, { scratchpads: stub }, async (url) => {
+        assert.strictEqual((await fetch(`${url}/${A}/list`)).status, 200);
+        fs.rmSync(dir, { recursive: true });
+        fs.symlinkSync(other, dir);
+        assert.strictEqual((await fetch(`${url}/${A}/list`)).status, 404);
+    });
 });

@@ -34,6 +34,10 @@ const fsp = require('node:fs/promises');
 const { constants: fsConstants } = require('node:fs');
 const path = require('node:path');
 
+const express = require('express');
+const { createFilesApi, createFilesRouter } = require('./files-api');
+const { createDownloads, createDownloadRouter } = require('./files-download');
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RECORD_NAME = /^(\d+)\.json$/;
 // Names looked at, dead ones included: a folder of stale records is bounded
@@ -309,4 +313,81 @@ function createScratchpads({
     return { discover };
 }
 
-module.exports = { createScratchpads, looksLikeClaude, defaultIsAlive, defaultProcStartOf, startTimeFromStat, UUID };
+const PUBLIC_FIELDS = ['id', 'label', 'cwd', 'live', 'kind', 'status', 'updatedAt', 'mtime', 'exists'];
+const publicSession = (s) => Object.fromEntries(PUBLIC_FIELDS.map((k) => [k, s[k]]));
+const passThrough = (req, res, next) => next();
+const noSuchScratchpad = (res) => res.status(404).json({ error: 'No such scratchpad' });
+
+/**
+ * /api/scratchpad: GET /sessions, and /<id>/{list,preview,recent,download,
+ * download-zip} served by that session's own files API, rooted at its
+ * scratchpad folder, so nothing outside it is reachable. Read-only: no
+ * upload router, no HA check.
+ *
+ * filesLimiter runs before the lookup, so an over-limit request costs no
+ * filesystem work; the inner routers then get a pass-through limiter so a
+ * request counts once. That departs from the download router's own rule
+ * (cross-site requests refused before any limiter): here a cross-site
+ * download spends the shared budget, and one discover(), before the inner
+ * same-site guard refuses it. Accepted: another site can already spend the
+ * budget with GETs to /list.
+ */
+function createScratchpadRouter({ scratchpads, filesLimiter, zipLimiter, zipSlots, log = console.error }) {
+    const router = express.Router();
+    const cache = new Map();   // id -> { dir, router }; bounded by discover()'s 50
+
+    // Before the /:id mount, which would otherwise take "sessions" for an id.
+    router.get('/sessions', filesLimiter, async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+        const { active, sessions } = await scratchpads.discover();
+        res.json({ active, sessions: sessions.map(publicSession) });
+    });
+
+    // A nested router, not '/:id/(list|...)': path-to-regexp 8 (Express 5)
+    // has no such groups. Express fills req.params.id and strips the mount.
+    router.use('/:id', filesLimiter, async (req, res, next) => {
+        res.set('Cache-Control', 'no-store');
+        const { id } = req.params;
+        if (!UUID.test(id)) return noSuchScratchpad(res);
+        const { dirs } = await scratchpads.discover();
+        for (const [key, entry] of cache) {
+            if (dirs.get(key) !== entry.dir) cache.delete(key);
+        }
+        const dir = dirs.get(id);
+        if (!dir) return noSuchScratchpad(res);
+        // discover() checked dir moments ago; check again that it is still
+        // itself (no component swapped for a symlink since), because
+        // files-api re-resolves its root on every request.
+        let real;
+        try {
+            real = await fsp.realpath(dir);
+        } catch {
+            return noSuchScratchpad(res);
+        }
+        if (real !== dir) {
+            cache.delete(id);
+            return noSuchScratchpad(res);
+        }
+        let entry = cache.get(id);
+        if (!entry) {
+            const api = createFilesApi({ root: dir });
+            const sub = express.Router();
+            sub.use(createFilesRouter({ api, readLimiter: passThrough, log }));
+            sub.use(createDownloadRouter({
+                downloads: createDownloads({ api }),
+                fileLimiter: passThrough,
+                zipLimiter,
+                zipSlots,
+                log,
+            }));
+            entry = { dir, router: sub };
+            cache.set(id, entry);
+        }
+        // Anything the session router has no route for is a JSON 404 too.
+        entry.router(req, res, (err) => (err ? next(err) : noSuchScratchpad(res)));
+    });
+
+    return router;
+}
+
+module.exports = { createScratchpads, createScratchpadRouter, looksLikeClaude, defaultIsAlive, defaultProcStartOf, startTimeFromStat, UUID };
