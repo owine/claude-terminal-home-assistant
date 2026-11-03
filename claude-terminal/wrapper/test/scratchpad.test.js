@@ -451,3 +451,16 @@ test('router: a folder swapped for a symlink after discovery is refused by the r
         assert.strictEqual((await fetch(`${url}/${A}/list`)).status, 404);
     });
 });
+
+test('router: when an id moves to another folder, the new folder is served, not the cached one', async () => {
+    const t = tree();
+    const dir1 = t.pad('-one', A, 'one.md');
+    const dir2 = t.pad('-two', A, 'two.md');
+    let call = 0;
+    const stub = { discover: async () => ({ active: A, sessions: [], dirs: new Map([[A, call++ === 0 ? dir1 : dir2]]) }) };
+    await withRouter(t, { scratchpads: stub }, async (url) => {
+        const names = async () => (await (await fetch(`${url}/${A}/list?path=`)).json()).entries.map((e) => e.name);
+        assert.deepStrictEqual(await names(), ['one.md']);
+        assert.deepStrictEqual(await names(), ['two.md']);
+    });
+});

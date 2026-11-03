@@ -368,8 +368,11 @@ function createScratchpadRouter({ scratchpads, filesLimiter, zipLimiter, zipSlot
             cache.delete(id);
             return noSuchScratchpad(res);
         }
+        // Rebuild on a dir mismatch too: the prune above ran before the
+        // realpath await, so a concurrent request may have replaced this
+        // entry with one for a folder this request never checked.
         let entry = cache.get(id);
-        if (!entry) {
+        if (!entry || entry.dir !== dir) {
             const api = createFilesApi({ root: dir });
             const sub = express.Router();
             sub.use(createFilesRouter({ api, readLimiter: passThrough, log }));
