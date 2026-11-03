@@ -40,6 +40,30 @@ const { createCrossSiteGuard } = require('./http-guards');
 const MAX_ZIP_BYTES = 200 * 1024 * 1024;
 // Zips running at once, from the request until the transfer settles.
 const MAX_CONCURRENT_ZIPS = 2;
+
+/**
+ * The zip budget: at most `max` zips at once. One instance can be shared by
+ * several download routers (server.js hands the same one to the Files
+ * router and to every Scratchpad session's), so the cap stays global: one
+ * per router would multiply it, and it is there to keep a Raspberry Pi's CPU
+ * for the terminal. release() never goes below zero, but callers must still
+ * release exactly once per take: with a shared budget, a double release
+ * would let another router's zip run past the cap.
+ */
+function createZipSlots(max = MAX_CONCURRENT_ZIPS) {
+    let inFlight = 0;
+    return Object.freeze({
+        max,
+        tryTake() {
+            if (inFlight >= max) return false;
+            inFlight++;
+            return true;
+        },
+        release() {
+            if (inFlight > 0) inFlight--;
+        },
+    });
+}
 // How many of the largest files a refusal names.
 const LARGEST_NAMED = 5;
 
@@ -540,7 +564,8 @@ function createDownloads({
  * createCrossSiteGuard). Every failure before the first byte is a JSON
  * error; after it, the response is aborted and logged.
  *
- * At most `maxZips` zips run at once, counted from the request until the
+ * At most `zipSlots.max` zips run at once (across every router sharing
+ * `zipSlots`), counted from the request until the
  * transfer settles: each walks a tree and deflates up to 200 MB, and on a
  * Raspberry Pi a few at once would starve the terminal. The rate limiter
  * bounds how often they start; this bounds how many run together.
@@ -551,9 +576,15 @@ function createDownloads({
  * way a download can fail after its preflight passed (a file deleted, the
  * folder grown past the cap), and ends the same way: a failed download.
  */
-function createDownloadRouter({ downloads, fileLimiter, zipLimiter, maxZips = MAX_CONCURRENT_ZIPS, log = console.error }) {
+function createDownloadRouter({
+    downloads, fileLimiter, zipLimiter,
+    maxZips = MAX_CONCURRENT_ZIPS,
+    // Passed in to share one budget across routers; its own max wins over
+    // maxZips then. The default keeps a router on its own budget, as before.
+    zipSlots = createZipSlots(maxZips),
+    log = console.error,
+}) {
     const router = express.Router();
-    let zipsInFlight = 0;
     // Before the limiters, so a refused request costs no one's budget.
     const sameSite = createCrossSiteGuard({ log });
 
@@ -571,17 +602,18 @@ function createDownloadRouter({ downloads, fileLimiter, zipLimiter, maxZips = MA
     // protected=1 is not read here: zips never hold protected files.
     router.get('/download-zip', sameSite, zipLimiter, async (req, res) => {
         res.set('Cache-Control', 'no-store');
-        if (zipsInFlight >= maxZips) {
+        if (!zipSlots.tryTake()) {
             return res.status(429).json({
-                error: `${maxZips} zips are already being prepared or sent. Try again when one has finished.`,
+                error: `${zipSlots.max} zips are already being prepared or sent. Try again when one has finished.`,
             });
         }
-        zipsInFlight++;
         let settled = false;
+        // The only place a slot is released, and only once: sendZip's
+        // onSettled may run more than once, and the budget may be shared.
         const settle = () => {
             if (settled) return;
             settled = true;
-            zipsInFlight--;
+            zipSlots.release();
         };
         let plan;
         try {
@@ -611,6 +643,7 @@ function createDownloadRouter({ downloads, fileLimiter, zipLimiter, maxZips = MA
 module.exports = {
     createDownloads,
     createDownloadRouter,
+    createZipSlots,
     sendAttachment,
     streamBody,
     MAX_ZIP_BYTES,
