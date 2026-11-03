@@ -43,8 +43,10 @@ const MAX_RECORDS = 64;
 const MAX_RECORD_BYTES = 64 * 1024;
 // The tmp root also holds Claude Code's own non-session folders.
 const MAX_TMP_ENTRIES = 1000;
-// Ended sessions only: a live session's folder is looked up directly, so no
-// cap can hide it.
+// Ended sessions only. A live session's folder is looked up directly under
+// its cwd's slug, which no cap limits; only a slug Claude Code builds
+// differently from slugOf(), behind more than MAX_TMP_ENTRIES folders,
+// could hide it.
 const MAX_ENDED_PER_ENTRY = 64;
 const MAX_ENDED_TOTAL = 200;
 const MAX_SESSIONS = 50;
@@ -87,22 +89,30 @@ async function defaultIsAlive(pid) {
     }
 }
 
-// When `pid` started: field 22 (starttime) of /proc/<pid>/stat, as the
-// string Claude Code writes into a record's procStart; null where there is
-// no /proc (macOS, in development) or the process is gone. Field 2 (comm)
-// is parenthesised and may hold spaces or ')', so fields are counted from
-// after the last ')': that text starts at field 3.
+/** Field 22 (starttime) of a /proc/<pid>/stat line, or null. comm (field 2)
+ *  is parenthesised and may hold spaces or ')', so count from the last ')'. */
+function startTimeFromStat(text) {
+    const close = text.lastIndexOf(')');
+    if (close < 0) return null;
+    const start = text.slice(close + 1).trim().split(/\s+/)[22 - 3];
+    return /^\d+$/.test(start || '') ? start : null;
+}
+
+// When `pid` started, in clock ticks since boot, as the string Claude Code
+// writes into a record's procStart; null where there is no /proc (macOS, in
+// development) or the process is gone.
 async function defaultProcStartOf(pid) {
     try {
-        const stat = await fsp.readFile(`/proc/${pid}/stat`, 'utf8');
-        const start = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)[22 - 3];
-        return /^\d+$/.test(start || '') ? start : null;
+        return startTimeFromStat(await fsp.readFile(`/proc/${pid}/stat`, 'utf8'));
     } catch {
         return null;
     }
 }
 
 const str = (v) => (typeof v === 'string' ? v : null);
+// The folder name Claude Code makes from a session's cwd ("/config" ->
+// "-config", as seen on a live install).
+const slugOf = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, '-');
 
 function createScratchpads({
     sessionsDir = defaultSessionsDir(),
@@ -125,11 +135,18 @@ function createScratchpads({
 
     async function readRecord(file, pid) {
         // O_NOFOLLOW, then fstat: the file read is the file checked.
-        const fh = await fs.open(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+        // O_NONBLOCK: a FIFO by that name would otherwise block open()
+        // forever, before fstat could refuse it. A regular file ignores it.
+        const fh = await fs.open(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
         try {
             const st = await fh.stat();
             if (!st.isFile() || st.size > MAX_RECORD_BYTES) return null;
-            const r = JSON.parse(await fh.readFile('utf8'));
+            // One bounded read: a file that grew since fstat is still
+            // never read past the cap.
+            const buf = Buffer.alloc(MAX_RECORD_BYTES + 1);
+            const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+            if (bytesRead > MAX_RECORD_BYTES) return null;
+            const r = JSON.parse(buf.subarray(0, bytesRead).toString('utf8'));
             if (!r || typeof r !== 'object' || r.pid !== pid) return null;
             if (typeof r.sessionId !== 'string' || !UUID.test(r.sessionId) || typeof r.cwd !== 'string') return null;
             return {
@@ -162,6 +179,8 @@ function createScratchpads({
             // Liveness from the file name first: a stale record is never
             // opened, so no number of them can use up MAX_RECORDS.
             const pid = Number(RECORD_NAME.exec(name)[1]);
+            // kill(0, 0) would ask about our own process group, not a PID.
+            if (!Number.isSafeInteger(pid) || pid < 1) continue;
             if (!(await isAlive(pid))) continue;
             read++;
             let r;
@@ -187,7 +206,8 @@ function createScratchpads({
         return byId;
     }
 
-    async function folders(liveIds) {
+    // `live`: id -> cwd of each live session.
+    async function folders(live) {
         const found = new Map();   // id -> { dir, slug, mtime }
         let rootReal;
         let entries;
@@ -213,8 +233,10 @@ function createScratchpads({
                 /* not there */
             }
         }
-        // Live ids: looked up in every entry, uncapped.
-        for (const id of liveIds) {
+        // Live ids: first under their cwd's own slug, which no cap limits;
+        // only if that misses, in every entry MAX_TMP_ENTRIES let through.
+        for (const [id, cwd] of live) {
+            await probe(slugOf(cwd), id);
             for (const slug of entries) {
                 if (found.has(id)) break;
                 await probe(slug, id);
@@ -230,7 +252,7 @@ function createScratchpads({
             } catch {
                 continue;
             }
-            const ids = names.filter((x) => UUID.test(x) && !liveIds.has(x) && !found.has(x)).slice(0, MAX_ENDED_PER_ENTRY);
+            const ids = names.filter((x) => UUID.test(x) && !live.has(x) && !found.has(x)).slice(0, MAX_ENDED_PER_ENTRY);
             for (const id of ids) {
                 if (ended >= MAX_ENDED_TOTAL) break;
                 ended++;
@@ -249,7 +271,7 @@ function createScratchpads({
     async function discover() {
         try {
             const live = await liveRecords();
-            const found = await folders(new Set(live.keys()));
+            const found = await folders(new Map([...live].map(([id, r]) => [id, r.cwd])));
             const sessions = [];
             for (const r of live.values()) {
                 const f = found.get(r.id);
@@ -287,4 +309,4 @@ function createScratchpads({
     return { discover };
 }
 
-module.exports = { createScratchpads, looksLikeClaude, defaultIsAlive, defaultProcStartOf, UUID };
+module.exports = { createScratchpads, looksLikeClaude, defaultIsAlive, defaultProcStartOf, startTimeFromStat, UUID };

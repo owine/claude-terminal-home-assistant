@@ -8,11 +8,12 @@
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { createScratchpads, looksLikeClaude, defaultIsAlive, defaultProcStartOf, UUID } = require('../scratchpad.js');
+const { createScratchpads, looksLikeClaude, defaultIsAlive, defaultProcStartOf, startTimeFromStat, UUID } = require('../scratchpad.js');
 
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scratchpad-')));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -199,24 +200,104 @@ test('dead records are never opened, and any number of them cannot hide a live o
     }
     t.record(5000, { sessionId: A, kind: 'interactive', updatedAt: 2 });
     const opened = [];
-    const spy = { ...fsp, open: (p, ...rest) => { opened.push(path.basename(p)); return fsp.open(p, ...rest); } };
+    const readFiles = [];
+    const spy = {
+        ...fsp,
+        open: (p, ...rest) => { opened.push(path.basename(p)); return fsp.open(p, ...rest); },
+        readFile: (p, ...rest) => { readFiles.push(path.basename(String(p))); return fsp.readFile(p, ...rest); },
+    };
     const { active } = await createScratchpads({ ...t, fs: spy, isAlive: alive(5000), log: quiet }).discover();
     assert.strictEqual(active, A);
     assert.deepStrictEqual(opened, ['5000.json']);
+    assert.ok(readFiles.every((f) => f === '5000.json'), readFiles.join(', '));
 });
 
-test('defaultProcStartOf: field 22 of /proc/<pid>/stat where /proc exists, else null', async () => {
-    const start = await defaultProcStartOf(process.pid);
-    if (fs.existsSync('/proc/self/stat')) {
-        // Computed here another way: comm (field 2) is parenthesised and may
-        // hold spaces, so count fields from the end of it.
-        const stat = fs.readFileSync(`/proc/${process.pid}/stat`, 'utf8');
-        const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-        assert.match(start, /^\d+$/);
-        assert.strictEqual(start, fields[22 - 3]);
-    } else {
-        assert.strictEqual(start, null);
+test('two records of one session: the newer updatedAt wins, whichever is read first', async () => {
+    for (const [older, newer] of [[100, 101], [101, 100]]) {
+        const t = tree();
+        t.record(older, { sessionId: A, updatedAt: 5, status: 'idle' });
+        t.record(newer, { sessionId: A, updatedAt: 9, status: 'busy' });
+        const { sessions } = await createScratchpads({ ...t, isAlive: alive(100, 101), log: quiet }).discover();
+        assert.deepStrictEqual(sessions.map((x) => [x.id, x.status]), [[A, 'busy']], `newer is ${newer}.json`);
     }
+});
+
+test('0.json is never probed: kill(0) would ask about our own process group', async () => {
+    const t = tree();
+    t.record(0, { sessionId: A });
+    const asked = [];
+    const isAlive = async (pid) => { asked.push(pid); return true; };
+    const { sessions } = await createScratchpads({ ...t, isAlive, log: quiet }).discover();
+    assert.deepStrictEqual(sessions, []);
+    assert.deepStrictEqual(asked, []);
+});
+
+test('a FIFO named <pid>.json is refused, not waited on', async (ctx) => {
+    const t = tree();
+    const fifo = path.join(t.sessionsDir, '100.json');
+    try {
+        execFileSync('mkfifo', [fifo]);
+    } catch {
+        ctx.skip('mkfifo is not available');
+        return;
+    }
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), 2000); });
+    try {
+        const won = await Promise.race([
+            createScratchpads({ ...t, isAlive: alive(100), log: quiet }).discover(),
+            timeout,
+        ]);
+        assert.notStrictEqual(won, 'timeout', 'discover() blocked opening the FIFO');
+        assert.deepStrictEqual(won.sessions, []);
+    } finally {
+        clearTimeout(timer);
+        // Should a reader be stuck in open(), a writer arriving frees it, so
+        // a failure here cannot hang the suite. With no reader, ENXIO.
+        try {
+            fs.closeSync(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK));
+        } catch { /* no reader: nothing to free */ }
+    }
+});
+
+test('a session folder (the uuid level) symlinked out of the tmp root is refused', async () => {
+    const t = tree();
+    const outside = path.join(base, `outside${n++}`);
+    fs.mkdirSync(path.join(outside, 'scratchpad'), { recursive: true });
+    fs.mkdirSync(path.join(t.tmpRoot, '-config'), { recursive: true });
+    fs.symlinkSync(outside, path.join(t.tmpRoot, '-config', A));
+    t.record(100, { sessionId: A });
+    const { dirs, sessions } = await createScratchpads({ ...t, isAlive: alive(100), log: quiet }).discover();
+    assert.strictEqual(dirs.size, 0, [...dirs.values()].join(', '));
+    assert.strictEqual(sessions[0].exists, false);
+});
+
+test('a live session\'s folder under its cwd\'s slug is found past MAX_TMP_ENTRIES other folders', async () => {
+    const t = tree();
+    t.record(100, { sessionId: A, cwd: '/config', kind: 'interactive' });
+    const dir = t.pad('-config', A);
+    // Made after it, and named to sort before it, so neither creation order
+    // nor name order (APFS returns names sorted) puts -config first.
+    for (let i = 0; i < 1100; i++) fs.mkdirSync(path.join(t.tmpRoot, `-a${i}`));
+    const { active, dirs } = await createScratchpads({ ...t, isAlive: alive(100), log: quiet }).discover();
+    assert.strictEqual(active, A);
+    assert.strictEqual(dirs.get(A), dir);
+});
+
+test('startTimeFromStat: field 22, whatever comm holds', () => {
+    const tail = (st) => ` S 1 1 1 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 ${st} 1000 50 18446744073709551615 1 1 0 0 0 0 0 0 0 0 0 0 17 3 0 0 0 0 0\n`;
+    assert.strictEqual(startTimeFromStat(`74306 (claude)${tail('54924465')}`), '54924465');
+    assert.strictEqual(startTimeFromStat(`74306 (a) b) c)${tail('54924465')}`), '54924465', 'comm with ") "');
+    assert.strictEqual(startTimeFromStat(`74306 ( ) 1 2 3 4)${tail('54924465')}`), '54924465', 'comm that looks like fields');
+    assert.strictEqual(startTimeFromStat(`74306 (x\ny)${tail('7')}`), '7', 'comm with a newline');
+    assert.strictEqual(startTimeFromStat('74306 (claude) S 1 1'), null, 'truncated');
+    assert.strictEqual(startTimeFromStat('1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22'), null, 'no comm');
+});
+
+test('defaultProcStartOf: digits where /proc exists, else null; null for a dead PID', async () => {
+    const start = await defaultProcStartOf(process.pid);
+    if (fs.existsSync('/proc/self/stat')) assert.match(start, /^\d+$/);
+    else assert.strictEqual(start, null);
     assert.strictEqual(await defaultProcStartOf(2 ** 30), null, 'a dead PID has no start time');
 });
 
