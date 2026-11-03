@@ -316,7 +316,7 @@ async function checkStaleView(browser, url) {
     }
 }
 
-// 6b. The sidebar's two views are a tab set, and must be a whole one: a
+// 6b. The sidebar's three views are a tab set, and must be a whole one: a
 //     tablist holding only its tabs (the » that hides the sidebar sits
 //     beside it, not in it), tabs named without their icons, each naming
 //     the panel it shows (#files-list, labelled by the selected tab), one
@@ -353,15 +353,16 @@ async function checkSidebarTabs(browser, url) {
         })()`).then(JSON.parse);
 
         let v = await tabState();
-        check('the sidebar\'s tablist holds only its two tabs, with » beside it',
-            v, (s) => JSON.stringify(s.roles) === '["tab","tab"]' && !s.hideInTablist && s.label === 'Sidebar view');
-        check('both tabs show #files-list, a tabpanel labelled by the selected tab',
+        check('the sidebar\'s tablist holds only its three tabs, with » beside it',
+            v, (s) => JSON.stringify(s.roles) === '["tab","tab","tab"]' && !s.hideInTablist && s.label === 'Sidebar view');
+        check('every tab shows #files-list, a tabpanel labelled by the selected tab',
             v, (s) => JSON.stringify(s.controls) === '["files-list"]' && s.panelRole === 'tabpanel'
                 && JSON.stringify(s.selected) === '["files"]' && s.panelLabel === 'files');
         check('the tabs are named without their icons',
             { files: await wrapper.getByRole('tab', { name: 'Files', exact: true }).count(),
-                recent: await wrapper.getByRole('tab', { name: 'Recent changes', exact: true }).count() },
-            (n) => n.files === 1 && n.recent === 1);
+                recent: await wrapper.getByRole('tab', { name: 'Recent changes', exact: true }).count(),
+                scratchpad: await wrapper.getByRole('tab', { name: 'Scratchpad', exact: true }).count() },
+            (n) => n.files === 1 && n.recent === 1 && n.scratchpad === 1);
         check('the tab set is one tab stop, the selected tab', JSON.stringify(v.tabStops), '["files"]');
 
         await wrapper.locator('.files-tab[data-tab="files"]').focus();
@@ -370,12 +371,13 @@ async function checkSidebarTabs(browser, url) {
         check('ArrowRight moves focus to the next tab without switching to it',
             { focus: v.focus, selected: v.selected }, (s) => s.focus === 'recent' && JSON.stringify(s.selected) === '["files"]');
         const moves = [];
-        for (const key of ['ArrowRight', 'End', 'Home', 'ArrowLeft']) {
+        for (const key of ['ArrowRight', 'ArrowRight', 'End', 'Home', 'ArrowLeft']) {
             await page.keyboard.press(key);
             moves.push((await tabState()).focus);
         }
         check('Right and Left wrap around, Home and End go to the ends',
-            JSON.stringify(moves), JSON.stringify(['files', 'recent', 'files', 'recent']));
+            JSON.stringify(moves), JSON.stringify(['scratchpad', 'files', 'scratchpad', 'files', 'scratchpad']));
+        await page.keyboard.press('ArrowLeft');
         await page.keyboard.press('Enter');
         check('Enter switches to the focused tab; the tab stop and the panel\'s label follow',
             await waitFor(async () => {
@@ -389,6 +391,219 @@ async function checkSidebarTabs(browser, url) {
             await waitFor(async () => JSON.stringify((await tabState()).selected) === '["files"]'), true);
     } finally {
         await context.close();
+    }
+}
+
+// 6b, continued. The Scratchpad tab. A fake Claude Code session (a record
+//     whose PID is a live process named claude, with that process's start
+//     time, and its scratchpad folder) is made in the container; its
+//     updatedAt is far in the future so it is the active session even if a
+//     real one is running. Read-only: no upload control, and a drop or a
+//     paste is refused. Switching back to Files must still list /config (the
+//     tree roots used to be one shared variable). Single-file download only:
+//     the four runs share the zip limiter. Its own context, so the tab it
+//     saves and the width it stores leave the main run alone.
+const SCRATCH_ID = '5c7a7c40-0000-4000-8000-00000000c7a7';
+const SCRATCH_DIR = `/tmp/claude-0/-config/${SCRATCH_ID}/scratchpad`;
+async function checkScratchpad(browser, url) {
+    // A live process whose argv[0] is claude, so the record passes the reused-
+    // PID check. Not `exec -a claude sleep`: the image's sleep is BusyBox,
+    // which picks its applet from argv[0] and exits ("applet not found").
+    // node ignores argv[0]. The subshell's PID ($!) is kept by exec, and the
+    // process outlives the docker exec (no tty, stdout to /dev/null). Its
+    // start time (/proc/<pid>/stat field 22, set at fork, kept by exec) goes
+    // in the record as procStart, so the stricter check runs too.
+    const [pid, procStart] = dexec(['bash', '-c',
+        '(exec -a claude node -e "setTimeout(() => {}, 600000)") >/dev/null 2>&1 & p=$!; '
+        + 'read -r -a f < "/proc/$p/stat"; echo "$p ${f[21]}"']).trim().split(' ');
+    // From here on everything is undone in the finally, whatever fails:
+    // the process, its record and its folder, and the context if made.
+    let context;
+    try {
+        dexec(['sh', '-c', 'mkdir -p "$1" /data/home/.claude/sessions && printf "# note\\n" > "$1/note.md" '
+            + '&& printf dot > "$1/.dotfile" && printf "TOKEN=1\\n" > "$1/.env" '
+            + '&& printf "%s" "$3" > "/data/home/.claude/sessions/$2.json"', 'sh',
+            SCRATCH_DIR, pid, JSON.stringify({ pid: Number(pid), sessionId: SCRATCH_ID, cwd: '/config',
+                kind: 'interactive', status: 'idle', name: 'ctp-scratch', updatedAt: 4102444800000, procStart })]);
+        context = await browser.newContext({ acceptDownloads: true, serviceWorkers: 'block' });
+        const page = await context.newPage();
+        // Every sessions request, in any frame (the context sees the nested
+        // ingress frame's too). Service workers are blocked, so none is hidden.
+        let sessionAsks = 0;
+        context.on('request', (r) => {
+            if (new URL(r.url()).pathname.endsWith('/api/scratchpad/sessions')) sessionAsks++;
+        });
+        // Both upload endpoints (the sidebar's /api/files/upload, its check=1
+        // preflight included, and the terminal's /upload), faked: counted,
+        // never sent, so a regression costs no real upload.
+        let uploads = 0;
+        await context.route((u) => /\/upload$/.test(u.pathname), (route) => {
+            uploads++;
+            return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"faked"}' });
+        });
+        await page.goto(url, { waitUntil: 'load' });
+        let wrapper = await wrapperFrame(page);
+        await wrapper.locator('#files-btn').click();
+        const row = (name) => wrapper.locator('#files-list .files-row', { hasText: name });
+        const notice = () => wrapper.evaluate(`document.getElementById('files-notice').hidden
+            ? '' : document.getElementById('files-notice-text').textContent`);
+        // The drop and the paste show the same refusal: dismissed first, and
+        // checked gone, so each check sees its own.
+        const dismissNotice = async () => {
+            await wrapper.evaluate(`(() => {
+                const b = document.getElementById('files-notice-close');
+                if (!document.getElementById('files-notice').hidden && !b.hidden) b.click();
+            })()`);
+            return waitFor(async () => (await notice()) === '');
+        };
+        await waitFor(async () => (await row(SIDEBAR_DIR.split('/').pop()).count()) === 1);
+
+        sessionAsks = 0;
+        await wrapper.locator('.files-tab[data-tab="files"]').focus();
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        check('the Scratchpad tab opens the active session\'s scratchpad',
+            await waitFor(async () => (await row('note.md').count()) === 1), true);
+        // Proves the live path, not the newest-folder fallback: the shown
+        // session is the fake one, live (its label is not "ended"). The
+        // title holds the whole label, which the sidebar can cut short.
+        check('the shown session is the fake one, and live, its title the whole label',
+            await wrapper.evaluate(`JSON.stringify({
+                text: document.querySelector('#files-scratch-session option:checked')?.textContent ?? null,
+                title: document.getElementById('files-scratch-session').title,
+            })`).then(JSON.parse),
+            (v) => typeof v.text === 'string' && v.text.startsWith('ctp-scratch · /config · idle') && v.title === v.text);
+        check('the session picker shows, the Upload button does not',
+            { picker: await wrapper.locator('#files-scratch-session').isVisible(), upload: await wrapper.locator('#files-upload-btn').isVisible() },
+            (v) => v.picker && !v.upload);
+        check('Hidden files and Show protected files are both offered',
+            { hidden: await wrapper.locator('#files-hidden-toggle').isVisible(), prot: await wrapper.locator('#files-protected-toggle').isVisible() },
+            (v) => v.hidden && v.prot);
+
+        await row('note.md').click();
+        check('a scratchpad file previews',
+            await waitFor(async () => (await previewText(wrapper)) === '# note\n'), true);
+        // Read after the preview's own request came back, so a second
+        // sessions request sent with the switch would already be counted.
+        check('switching to Scratchpad asks for the sessions once', sessionAsks, 1);
+        const download = await expectDownload(page, () => wrapper.locator('#files-download-btn').click());
+        check('its Download goes to the scratchpad API',
+            download && new URL(download.url()).pathname, (p) => typeof p === 'string' && p.endsWith(`/api/scratchpad/${SCRATCH_ID}/download`));
+        await wrapper.locator('#files-close-btn').click();
+
+        await wrapper.locator('#files-show-hidden').check();
+        check('Hidden files lists the dotfile and .env',
+            await waitFor(async () => (await row('.dotfile').count()) === 1 && (await row('.env').count()) === 1), true);
+        await row('.env').click();
+        check('.env is refused until Show protected files is on',
+            await waitFor(async () => /Show protected files/.test((await previewText(wrapper)) || '')), true);
+        await wrapper.locator('#files-close-btn').click();
+        await wrapper.locator('#files-show-protected').check();
+        await row('.env').click();
+        check('…and previews after',
+            await waitFor(async () => (await previewText(wrapper)) === 'TOKEN=1\n'), true);
+        await wrapper.locator('#files-close-btn').click();
+        await wrapper.locator('#files-show-protected').uncheck();
+
+        // A drop on the sidebar while Scratchpad shows: refused, not uploaded.
+        // A string, not a function: this .mjs file is linted with Node
+        // globals only, so DataTransfer/document/DragEvent must not appear as
+        // code (the existing dropOn helper does the same). Dragover refuses
+        // too: no copy cursor, no outline promising an upload.
+        check('fixture: the notice cleared before the drop', await dismissNotice(), true);
+        const dragged = await wrapper.evaluate(`(() => {
+            const dt = new DataTransfer();
+            dt.items.add(new File(['x'], 'dropped.txt', { type: 'text/plain' }));
+            // The engines ignore dropEffect writes on a constructed DataTransfer
+            // (reads are always 'none'), so an own property records the
+            // handler's, starting at 'copy' so 'none' is the handler's doing.
+            let effect = 'copy';
+            Object.defineProperty(dt, 'dropEffect', { configurable: true, get: () => effect, set: (x) => { effect = x; } });
+            const el = document.getElementById('files-list');
+            const fire = (type) => el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+            fire('dragenter');
+            fire('dragover');
+            const over = { effect: dt.dropEffect, outline: document.getElementById('files-sidebar').classList.contains('drop-active') };
+            fire('drop');
+            return JSON.stringify(over);
+        })()`).then(JSON.parse);
+        check('a drag over the Scratchpad tab offers no drop', dragged, (v) => v.effect === 'none' && !v.outline);
+        check('a drop on the Scratchpad tab is refused with a notice',
+            await waitFor(async () => /Uploads go to \/config/.test(await notice())), true);
+
+        // A file pasted with focus on a scratchpad row: the sidebar's paste,
+        // refused the same way, and stopped there, so the page's terminal
+        // paste handler (document, bubble phase) never takes it either. A
+        // real ClipboardEvent with a DataTransfer, as checkSidebarPaste does.
+        check('fixture: the notice cleared before the paste', await dismissNotice(), true);
+        await wrapper.evaluate('document.querySelector("#files-list .files-row")?.focus()');
+        const pasted = await wrapper.evaluate(`(() => {
+            const el = document.activeElement;
+            const dt = new DataTransfer();
+            dt.items.add(new File(['png'], 'pasted.png', { type: 'image/png' }));
+            let page = false;
+            const seen = () => { page = true; };
+            document.addEventListener('paste', seen);
+            const ev = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+            try { el.dispatchEvent(ev); } finally { document.removeEventListener('paste', seen); }
+            return JSON.stringify({
+                inSidebar: document.getElementById('files-sidebar').contains(el),
+                prevented: ev.defaultPrevented,
+                page,
+            });
+        })()`).then(JSON.parse);
+        check('fixture: the paste comes from a scratchpad row', pasted.inSidebar, true);
+        check('a file pasted on the Scratchpad tab is refused with the same notice, the terminal never sees it',
+            { ...pasted, refused: await waitFor(async () => /Uploads go to \/config/.test(await notice())) },
+            (v) => v.prevented && !v.page && v.refused);
+        check('…and nothing was uploaded, by the drop or the paste',
+            { requests: uploads, inbox: dexec(['sh', '-c', 'ls /config/uploads/dropped.txt 2>/dev/null || true']).trim() },
+            (v) => v.requests === 0 && v.inbox === '');
+        await dismissNotice();
+
+        // Opening the sidebar on Scratchpad lists it afresh, and once: the
+        // open and its refresh used to be two paths that each asked.
+        await wrapper.locator('#files-hide').click();
+        await waitFor(() => wrapper.evaluate('document.getElementById("files-sidebar").classList.contains("collapsed")'));
+        sessionAsks = 0;
+        await wrapper.locator('#files-btn').click();
+        await waitFor(async () => sessionAsks >= 1 && (await row('note.md').count()) === 1);
+        await row('note.md').click();
+        await waitFor(async () => (await previewText(wrapper)) === '# note\n');
+        await wrapper.locator('#files-close-btn').click();
+        check('reopening the sidebar on Scratchpad asks for the sessions once', sessionAsks, 1);
+
+        await wrapper.locator('.files-tab[data-tab="files"]').click();
+        check('back on Files, /config still lists',
+            await waitFor(async () => (await row(SIDEBAR_DIR.split('/').pop()).count()) === 1), true);
+
+        // At the sidebar's narrowest (MIN_WIDTH in files-sidebar.js), the
+        // Scratchpad toolbar must wrap inside it, not widen the page: WebKit
+        // once scrolled the whole page sideways by 233px here.
+        await wrapper.evaluate(`localStorage.setItem('filesSidebar.width', '180');
+            localStorage.setItem('filesSidebar.open', '1');`);
+        await page.reload({ waitUntil: 'load' });
+        wrapper = await wrapperFrame(page);
+        check('fixture: the sidebar is at its minimum width, 180px',
+            await waitFor(() => wrapper.evaluate(
+                'Math.round(document.getElementById("files-sidebar").getBoundingClientRect().width) === 180')), true);
+        await wrapper.locator('.files-tab[data-tab="scratchpad"]').click();
+        check('fixture: at the minimum width the scratchpad lists',
+            await waitFor(async () => (await row('note.md').count()) === 1), true);
+        check('at the minimum width the Scratchpad tab does not scroll the page sideways',
+            await wrapper.evaluate(`JSON.stringify({
+                scrollWidth: document.documentElement.scrollWidth,
+                innerWidth: window.innerWidth,
+                picker: !document.getElementById('files-scratch-session').hidden,
+                options: document.getElementById('files-scratch-session').options.length,
+            })`).then(JSON.parse),
+            (v) => v.picker && v.options >= 1 && v.scrollWidth <= v.innerWidth);
+    } finally {
+        try {
+            if (context) await context.close();
+        } finally {
+            dexec(['sh', '-c', 'kill "$1" 2>/dev/null; rm -f "/data/home/.claude/sessions/$1.json"; rm -rf "/tmp/claude-0/-config/$2"', 'sh', pid, SCRATCH_ID]);
+        }
     }
 }
 
@@ -3748,6 +3963,7 @@ async function run(engine, mode, url) {
 
     await checkStaleView(browser, url);
     await checkSidebarTabs(browser, url);
+    await checkScratchpad(browser, url);
     await checkSidebarWidth(browser, url);
     await checkDownloads(browser, url);
     await checkZipMenu(browser, url);
