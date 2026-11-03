@@ -115,7 +115,7 @@ test('a live session that has not used its scratchpad yet: listed, exists false'
 test('a live session\'s folder is found past the ended-session caps and non-slug folders', async () => {
     const t = tree();
     for (const name of ['bash-edit-diff', 'bundled-skills', 'fdprobe']) fs.mkdirSync(path.join(t.tmpRoot, name));
-    // 300 ended sessions under one slug: more than the per-entry and total caps.
+    // 300 ended sessions under one slug: more than discover() lists.
     for (let i = 0; i < 300; i++) {
         const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
         t.pad('-config', id, null);
@@ -125,6 +125,26 @@ test('a live session\'s folder is found past the ended-session caps and non-slug
     const { active, dirs } = await createScratchpads({ ...t, isAlive: alive(100), log: quiet }).discover();
     assert.strictEqual(active, A);
     assert.strictEqual(dirs.get(A), dir);
+});
+
+test('ended sessions: the newest are listed, whatever order readdir gives, and empty folders take no place', async () => {
+    const t = tree();
+    const ids = [];
+    // 300 ended sessions under one slug, as every session started in /config
+    // shares one. Folder mtimes rise with the index, so the newest 50 are the
+    // last 50 by name and by creation, wherever readdir puts them.
+    for (let i = 0; i < 300; i++) {
+        const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+        const dir = t.pad('-config', id, null);
+        const when = new Date(Date.UTC(2026, 0, 1) + i * 60_000);
+        fs.utimesSync(dir, when, when);
+        ids.push(id);
+    }
+    // uuid folders with no scratchpad inside: nothing to list, and no cap spent.
+    for (let i = 0; i < 300; i++) fs.mkdirSync(path.join(t.tmpRoot, '-config', `ffffffff-0000-4000-8000-${String(i).padStart(12, '0')}`));
+    const { active, sessions } = await createScratchpads({ ...t, isAlive: alive(), log: quiet }).discover();
+    assert.deepStrictEqual(sessions.map((x) => x.id), ids.slice(-50).reverse());
+    assert.strictEqual(active, ids[299], 'the newest folder');
 });
 
 test('symlinks: a scratchpad that is a symlink, or a slug pointing out of the tmp root, is refused', async () => {

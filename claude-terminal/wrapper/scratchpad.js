@@ -47,12 +47,14 @@ const MAX_RECORDS = 64;
 const MAX_RECORD_BYTES = 64 * 1024;
 // The tmp root also holds Claude Code's own non-session folders.
 const MAX_TMP_ENTRIES = 1000;
-// Ended sessions only. A live session's folder is looked up directly under
-// its cwd's slug, which no cap limits; only a slug Claude Code builds
-// differently from slugOf(), behind more than MAX_TMP_ENTRIES folders,
-// could hide it.
-const MAX_ENDED_PER_ENTRY = 64;
-const MAX_ENDED_TOTAL = 200;
+// Ended sessions only: uuid folder names looked at, across all slugs. Each
+// costs one lstat; they are sorted by mtime before anything is capped, so
+// the newest are kept whatever order readdir gives. A live session's folder
+// is looked up directly under its cwd's slug, which no cap limits; only a
+// slug Claude Code builds differently from slugOf(), behind more than
+// MAX_TMP_ENTRIES folders, could hide it.
+const MAX_ENDED_CANDIDATES = 2048;
+const STAT_BATCH = 32;
 const MAX_SESSIONS = 50;
 
 function defaultSessionsDir(env = process.env) {
@@ -229,12 +231,13 @@ function createScratchpads({
             const dir = path.join(rootReal, slug, id, 'scratchpad');
             try {
                 const st = await fs.lstat(dir);
-                if (!st.isDirectory()) return;
+                if (!st.isDirectory()) return false;
                 const real = await fs.realpath(dir);
-                if (!real.startsWith(rootReal + path.sep)) return;
+                if (!real.startsWith(rootReal + path.sep)) return false;
                 found.set(id, { dir: real, slug, mtime: st.mtimeMs });
+                return true;
             } catch {
-                /* not there */
+                return false;   // not there
             }
         }
         // Live ids: first under their cwd's own slug, which no cap limits;
@@ -246,22 +249,42 @@ function createScratchpads({
                 await probe(slug, id);
             }
         }
-        // Ended sessions: capped.
-        let ended = 0;
+        // Ended sessions, newest first. An lstat of every candidate gives its
+        // mtime; only the newest are then probed in full, until MAX_SESSIONS
+        // are found, as discover() can list no more. A uuid folder with no
+        // scratchpad inside drops out at the lstat and takes no place.
+        const candidates = [];
         for (const slug of entries) {
-            if (ended >= MAX_ENDED_TOTAL) break;
+            if (candidates.length >= MAX_ENDED_CANDIDATES) break;
             let names;
             try {
                 names = await fs.readdir(path.join(rootReal, slug));
             } catch {
                 continue;
             }
-            const ids = names.filter((x) => UUID.test(x) && !live.has(x) && !found.has(x)).slice(0, MAX_ENDED_PER_ENTRY);
-            for (const id of ids) {
-                if (ended >= MAX_ENDED_TOTAL) break;
-                ended++;
-                await probe(slug, id);
+            for (const id of names) {
+                if (candidates.length >= MAX_ENDED_CANDIDATES) break;
+                if (UUID.test(id) && !live.has(id) && !found.has(id)) candidates.push({ slug, id });
             }
+        }
+        const dated = [];
+        for (let i = 0; i < candidates.length; i += STAT_BATCH) {
+            const batch = await Promise.all(candidates.slice(i, i + STAT_BATCH).map(async (c) => {
+                try {
+                    const st = await fs.lstat(path.join(rootReal, c.slug, c.id, 'scratchpad'));
+                    return st.isDirectory() ? { ...c, mtime: st.mtimeMs } : null;
+                } catch {
+                    return null;
+                }
+            }));
+            for (const d of batch) if (d) dated.push(d);
+        }
+        dated.sort((a, b) => b.mtime - a.mtime);
+        let ended = 0;
+        for (const d of dated) {
+            if (ended >= MAX_SESSIONS) break;
+            if (found.has(d.id)) continue;   // one id under two slugs: the newer wins
+            if (await probe(d.slug, d.id)) ended++;
         }
         return found;
     }
