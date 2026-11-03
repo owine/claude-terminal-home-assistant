@@ -744,6 +744,9 @@ function sendError(res, err, log = console.error) {
  * already passes the app-wide origin guard; the GETs are read-only and send no
  * CORS headers, so another site can trigger them but cannot read the answer.
  *
+ * `haCheck` and `checkLimiter` are optional together: without them there is
+ * no POST /ha-check. The Scratchpad tab's per-session routers take that form.
+ *
  * No handler can throw out: every failure becomes a JSON error.
  */
 function createFilesRouter({ api, haCheck, readLimiter, checkLimiter, log = console.error }) {
@@ -766,17 +769,20 @@ function createFilesRouter({ api, haCheck, readLimiter, checkLimiter, log = cons
     router.get('/preview', readLimiter, reply((req) => api.preview(queryPath(req), { allowSensitive: allowsProtected(req) })));
     router.get('/recent', readLimiter, reply((req) => api.recent(req.query.hours)));
 
-    router.post('/ha-check', checkLimiter, async (req, res) => {
-        res.set('Cache-Control', 'no-store');
-        try {
-            const pending = haCheck.run();
-            if (!pending) return res.status(409).json({ ok: false, message: 'A check is already running' });
-            res.json(await pending);
-        } catch (err) {
-            log(`HA check error: ${err && err.message}`);
-            res.status(500).json({ ok: false, message: 'Internal error' });
-        }
-    });
+    // Optional: the Scratchpad tab's per-session routers have no HA check.
+    if (haCheck) {
+        router.post('/ha-check', checkLimiter, async (req, res) => {
+            res.set('Cache-Control', 'no-store');
+            try {
+                const pending = haCheck.run();
+                if (!pending) return res.status(409).json({ ok: false, message: 'A check is already running' });
+                res.json(await pending);
+            } catch (err) {
+                log(`HA check error: ${err && err.message}`);
+                res.status(500).json({ ok: false, message: 'Internal error' });
+            }
+        });
+    }
 
     return router;
 }
