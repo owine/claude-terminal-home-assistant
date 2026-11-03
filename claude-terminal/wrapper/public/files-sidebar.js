@@ -78,9 +78,10 @@
      * would leave the add-on. `check` asks for the zip's plan as JSON instead
      * of the zip. `protectedOn` adds protected=1 to single files only: a zip
      * never holds protected files, so the flag would mean nothing there.
+     * `base` is the view's API base (see apiBase), api/files by default.
      */
-    function downloadUrl(p, { zip = false, check = false, protectedOn = false } = {}) {
-        let url = (zip ? 'api/files/download-zip' : 'api/files/download') + '?path=' + encodeURIComponent(p);
+    function downloadUrl(p, { zip = false, check = false, protectedOn = false, base = 'api/files' } = {}) {
+        let url = base + (zip ? '/download-zip' : '/download') + '?path=' + encodeURIComponent(p);
         if (zip && check) url += '&check=1';
         if (!zip && protectedOn) url += '&protected=1';
         return url;
@@ -238,6 +239,51 @@
     }
 
     /**
+     * The API base a view's file URLs start with: api/files for Files and
+     * Recent changes, the session's own api/scratchpad/<id> for Scratchpad.
+     * Relative, like downloadUrl. Uploads and the HA check are always
+     * api/files.
+     */
+    function apiBase(view, sessionId) {
+        return view === 'scratchpad' ? 'api/scratchpad/' + encodeURIComponent(sessionId) : 'api/files';
+    }
+
+    /** Tabs that show a folder tree (and so the Hidden/Protected toggles). */
+    function browsesTree(tab) {
+        return tab === 'files' || tab === 'scratchpad';
+    }
+
+    /** Whether the sidebar's upload controls apply on a tab: not on Scratchpad, which is read-only. */
+    function uploadsAllowed(tab) {
+        return tab !== 'scratchpad';
+    }
+
+    /** Whether api/scratchpad/sessions answered with one (see isListing). */
+    function isSessions(data) {
+        return !!data && typeof data === 'object' && !Array.isArray(data) && Array.isArray(data.sessions);
+    }
+
+    /**
+     * Which session the Scratchpad tab shows: the user's pick while it is
+     * still listed, else the active one. `fellBack` says a pick was dropped,
+     * so the UI can say why the view changed.
+     */
+    function shownSession(answer, picked) {
+        const listed = picked && answer.sessions.some((s) => s.id === picked);
+        if (listed) return { id: picked, fellBack: false };
+        return { id: answer.active || null, fellBack: Boolean(picked) };
+    }
+
+    /** A picker option's text: name · cwd · busy|idle|running|ended, "(active)" on the active one. */
+    function sessionLabel(s, isActive) {
+        const state = s.live ? (s.status || 'running') : 'ended';
+        const parts = [s.label];
+        if (s.cwd && s.cwd !== s.label) parts.push(s.cwd);
+        parts.push(state);
+        return parts.join(' \u00b7 ') + (isActive ? ' (active)' : '');
+    }
+
+    /**
      * Whether a listing's answer (api/files/list or api/files/recent) is
      * one: an object with an entries array. getJson reads a 200 that is not
      * JSON (a proxy's page, say) as {}, which is not.
@@ -268,6 +314,7 @@
         shellQuote, formatSize, formatAgo, clampWidth, relativeTo, downloadUrl,
         uploadUrl, uploadTarget, uploadDestination, uploadErrorText, displayName, uploadSummary, tabKeyTarget,
         isListing, unreadableNote,
+        apiBase, browsesTree, uploadsAllowed, isSessions, shownSession, sessionLabel,
         INBOX, DEFAULT_WIDTH,
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

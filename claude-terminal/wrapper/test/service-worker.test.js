@@ -253,7 +253,12 @@ test('an offline request for an uncached asset fails with 503', async () => {
 
 test('downloads bypass the worker, under the ingress prefix', async () => {
     const sw = await installedWorker();
-    for (const p of ['api/files/download?path=%2Fconfig%2Fa.yaml', 'api/files/download-zip?path=%2Fconfig%2Fblueprints']) {
+    for (const p of [
+        'api/files/download?path=%2Fconfig%2Fa.yaml',
+        'api/files/download-zip?path=%2Fconfig%2Fblueprints',
+        'api/scratchpad/11111111-1111-4111-8111-111111111111/download?path=note.md',
+        'api/scratchpad/11111111-1111-4111-8111-111111111111/download-zip?path=',
+    ]) {
         assert.strictEqual(await sw.request(`${SCOPE}${p}`), null, p);
         assert.strictEqual(await sw.request(`${SCOPE}${p}`, { mode: 'navigate' }), null, `${p} (navigate)`);
     }
@@ -267,7 +272,8 @@ test('other API requests still go through the worker', async () => {
 
 test('only the download endpoints bypass, not look-alike paths', async () => {
     const sw = await installedWorker();
-    for (const p of ['api/files/preview?path=download', 'api/files/downloads', 'api/files/download-zip-x', 'api/files/download/x', 'download']) {
+    for (const p of ['api/files/preview?path=download', 'api/files/downloads', 'api/files/download-zip-x', 'api/files/download/x', 'download',
+        'api/scratchpad/sessions', 'api/scratchpad/download', 'api/scratchpad/x/y/download', 'api/scratchpad/x/preview?path=download']) {
         const res = await sw.request(`${SCOPE}${p}`);
         assert.strictEqual(res.text, `network:${SCOPE}${p}`, p);
     }

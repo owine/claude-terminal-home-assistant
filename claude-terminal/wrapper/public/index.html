@@ -597,8 +597,11 @@
             min-width: 0;
         }
 
+        /* Sized by their names, so all three fit whole at the default
+           width; narrower, each gives way in proportion and ends in an
+           ellipsis (its title has the full name). */
         .files-tab {
-            flex: 1;
+            flex: 1 1 auto;
             background: none;
             border: none;
             border-bottom: 2px solid transparent;
@@ -607,6 +610,9 @@
             cursor: pointer;
             font-size: 12px;
             white-space: nowrap;
+            min-width: 0;          /* three tabs share a narrow sidebar */
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .files-tab[aria-selected="true"] {
@@ -681,6 +687,21 @@
 
         #files-toolbar [hidden] {
             display: none;
+        }
+
+        /* A select is as wide as its longest option, and a flex item will
+           not shrink below that by default: a session's cwd ran it past
+           the sidebar and the window. It takes the toolbar's first row
+           (first in the markup too, so Tab order matches), never wider
+           than the toolbar; its title has the whole label. Paint
+           containment because WebKit still counts the clipped label as
+           overflow, and at 180 px scrolled the page 233 px sideways. */
+        #files-scratch-session {
+            flex: 1 1 100%;
+            min-width: 0;
+            max-width: 100%;
+            text-overflow: ellipsis;
+            contain: paint;
         }
 
         #files-upload-btn {
@@ -1153,7 +1174,7 @@
                 <span aria-hidden="true">&#128206;</span>
             </button>
             <button id="files-btn" class="header-btn" type="button"
-                    title="Files: browse /config, recent changes, check the HA configuration"
+                    title="Files: browse /config, recent changes, Claude's scratchpad, check the HA configuration"
                     aria-label="Files sidebar" aria-controls="files-sidebar" aria-expanded="false">
                 <span aria-hidden="true">&#128450;&#65039;</span>
                 <span class="files-question-badge" aria-hidden="true"></span>
@@ -1192,22 +1213,26 @@
                     <button type="button" class="files-rail-btn" id="files-expand" title="Show the sidebar">&laquo;</button>
                     <button type="button" class="files-rail-btn" data-open-tab="files" title="Files" aria-label="Files">&#128193;<span class="files-question-badge" aria-hidden="true"></span></button>
                     <button type="button" class="files-rail-btn" data-open-tab="recent" title="Recent changes">&#128338;</button>
+                    <button type="button" class="files-rail-btn" data-open-tab="scratchpad" title="Scratchpad" aria-label="Scratchpad">&#128221;</button>
                 </div>
-                <!-- Two views of one panel, #files-list. Only tabs belong in a
+                <!-- Three views of one panel, #files-list. Only tabs belong in a
                      tablist, so the hide button sits beside it. The icons are
-                     aria-hidden: the tabs are named "Files" and "Recent
-                     changes". files-sidebar-ui.js keeps aria-selected, the one
-                     tab stop and the panel's label on the selected tab. -->
+                     aria-hidden: the tabs are named "Files", "Recent changes"
+                     and "Scratchpad". files-sidebar-ui.js keeps aria-selected,
+                     the one tab stop and the panel's label on the selected tab. -->
                 <div id="files-tabs">
                     <div id="files-tablist" role="tablist" aria-label="Sidebar view">
-                        <button type="button" class="files-tab" role="tab" id="files-tab-files" data-tab="files"
+                        <button type="button" class="files-tab" role="tab" id="files-tab-files" data-tab="files" title="Files"
                                 aria-selected="true" aria-controls="files-list" tabindex="0"><span aria-hidden="true">&#128193;</span> Files</button>
-                        <button type="button" class="files-tab" role="tab" id="files-tab-recent" data-tab="recent"
+                        <button type="button" class="files-tab" role="tab" id="files-tab-recent" data-tab="recent" title="Recent changes"
                                 aria-selected="false" aria-controls="files-list" tabindex="-1"><span aria-hidden="true">&#128338;</span> Recent changes</button>
+                        <button type="button" class="files-tab" role="tab" id="files-tab-scratchpad" data-tab="scratchpad" title="Scratchpad"
+                                aria-selected="false" aria-controls="files-list" tabindex="-1"><span aria-hidden="true">&#128221;</span> Scratchpad</button>
                     </div>
                     <button type="button" id="files-hide" title="Hide the sidebar" aria-label="Hide the sidebar">&raquo;</button>
                 </div>
                 <div id="files-toolbar">
+                    <select id="files-scratch-session" aria-label="Scratchpad session" hidden></select>
                     <label id="files-hidden-toggle" title="List names that start with a dot"><input type="checkbox" id="files-show-hidden"> Hidden files</label>
                     <!-- autocomplete="off": Firefox would otherwise restore the
                          tick on a reload. The toggle must start off every time. -->

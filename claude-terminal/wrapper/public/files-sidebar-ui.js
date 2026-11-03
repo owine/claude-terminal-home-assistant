@@ -1,8 +1,10 @@
 // Files sidebar UI: the /config tree, the file preview with Insert path and
 // Download, the protected toggle, the folder ⋯ menu with its zip download
 // and Upload here, uploads (the Upload button, drops, pastes, the collision
-// prompt, progress), the notice line, Recent changes, the HA configuration
-// check, and the sidebar's open state, tabs and resizable width. The pure helpers it uses
+// prompt, progress), the notice line, Recent changes, the read-only
+// Scratchpad tab (a Claude Code session's scratchpad, with its session
+// picker), the HA configuration check, and the sidebar's open state, tabs
+// and resizable width. The pure helpers it uses
 // (quoting, sizes, URLs) are files-sidebar.js, and the upload flow it shares
 // with the terminal (asking, sending, batches, reading drops) is
 // upload-client.js; both load before this.
@@ -56,6 +58,7 @@
         const protectedToggle = document.getElementById('files-protected-toggle');
         const protectedStrip = document.getElementById('files-protected-strip');
         const recentHours = document.getElementById('files-recent-hours');
+        const sessionPicker = document.getElementById('files-scratch-session');
         const refreshBtn = document.getElementById('files-refresh');
         const checkBtn = document.getElementById('ha-check-btn');
         const checkResult = document.getElementById('ha-check-result');
@@ -92,8 +95,23 @@
             try { window.localStorage.setItem(key, String(value)); } catch { /* not persisted */ }
         }
 
-        let currentTab = load(STORE.tab) === 'recent' ? 'recent' : 'files';
-        let rootPath = '/config';
+        const TABS = ['files', 'recent', 'scratchpad'];
+        let currentTab = TABS.includes(load(STORE.tab)) ? load(STORE.tab) : 'files';
+        // /config's real path, as the last Files or Recent listing reported
+        // it: what upload targets and reveal() are worked out against.
+        // Uploads only ever go here, so a scratchpad's root is never kept
+        // (its top level is asked for with an empty path instead).
+        let filesRoot = '/config';
+        // A tree's view: which tab drew it and the API base its URLs use.
+        const FILES_VIEW = { tab: 'files', base: 'api/files' };
+        const entryViews = new WeakMap();   // listing entry -> its view
+        // The Scratchpad tab's session as the user picked it, for this page
+        // load only (session ids do not survive an app restart). Null shows
+        // the active one.
+        let pickedSession = null;
+        // The base the open preview came from, so its Download button (built
+        // at click time) still asks the right root after a tab switch.
+        let previewBase = 'api/files';
         let previewPath = null;
         let previewSensitive = false;   // the open preview is a protected file
         // Bumped by every openPreview and blankPreview, so a reply lands
@@ -199,15 +217,25 @@
         // its own container, which a refresh detaches rather than reuses.
         // Resolves to whether the folder was listed: false when it failed
         // (its error showing in its place) or was dropped as stale.
-        async function renderFolder(folderPath, container, depth, gen) {
+        // `view` says which tree this is (Files or a scratchpad): its
+        // subfolders, previews and zips ask the same API base, and each
+        // entry remembers it (entryViews) for its folder menu.
+        async function renderFolder(folderPath, container, depth, gen, view = FILES_VIEW) {
             const stale = () => gen !== undefined && gen !== viewGen;
             container.replaceChildren(note('Loading…', depth));
             let data;
             try {
-                data = await getJson('api/files/list?path=' + encodeURIComponent(folderPath));
+                data = await getJson(view.base + '/list?path=' + encodeURIComponent(folderPath));
             } catch (err) {
                 if (stale()) return false;
-                container.replaceChildren(note('⚠️ ' + err.message, depth));
+                // A scratchpad's top level answering 404 is the folder gone
+                // between the sessions answer and this one (Claude Code
+                // cleans up after a session): say that, not "No such
+                // scratchpad". Deeper down a 404 is a folder gone, as on Files.
+                const gone = view.tab === 'scratchpad' && depth === 0 && err.status === 404;
+                container.replaceChildren(note(gone
+                    ? 'This session\'s scratchpad is gone. Refresh to see the current sessions.'
+                    : '⚠️ ' + err.message, depth));
                 return false;
             }
             if (stale()) return false;
@@ -215,7 +243,7 @@
                 container.replaceChildren(note(NOT_A_LISTING, depth));
                 return false;
             }
-            if (depth === 0 && data.root) rootPath = data.root;
+            if (depth === 0 && data.root && view.tab === 'files') filesRoot = data.root;
             const entries = data.entries.filter((e) => showHidden.checked || !e.name.startsWith('.'));
             // Names the server could not read are not "(empty)".
             const unreadable = helpers.unreadableNote(data.unreadableNames, 'folder');
@@ -230,6 +258,7 @@
                 // treeitems may sit in one, so the ⋯ could not, and a tree
                 // promises arrow-key navigation this list never had.
                 rowEntries.set(row, entry);
+                entryViews.set(entry, view);
                 if (entry.type === 'dir') {
                     const wrap = document.createElement('div');
                     wrap.className = 'files-row-wrap';
@@ -261,7 +290,7 @@
                     const open = ({ reload = false } = {}) => {
                         expand(true);
                         if (!loading || reload) {
-                            const listing = renderFolder(entry.path, children, depth + 1);
+                            const listing = renderFolder(entry.path, children, depth + 1, undefined, view);
                             loading = listing;
                             const forget = () => { if (loading === listing) loading = null; };
                             listing.then((listed) => { if (!listed) forget(); }, forget);
@@ -275,7 +304,7 @@
                         else expand(false);
                     });
                 } else {
-                    row.addEventListener('click', () => { pickRow(row); openPreview(entry.path, entry.sensitive); });
+                    row.addEventListener('click', () => { pickRow(row); openPreview(entry.path, entry.sensitive, view.base); });
                 }
             }
             if (data.truncated) container.append(note('… more entries not shown', depth));
@@ -298,14 +327,14 @@
                 list.replaceChildren(note(NOT_A_LISTING));
                 return;
             }
-            if (data.root) rootPath = data.root;
+            if (data.root) filesRoot = data.root;
             // Its count covers names of any age, so one could have changed
             // in the period: not "Nothing changed" then.
             const unreadable = helpers.unreadableNote(data.unreadableNames, 'recent');
             list.replaceChildren();
             if (!data.entries.length && !unreadable) list.append(note('Nothing changed in this period'));
             for (const entry of data.entries) {
-                const row = makeRow(entry, 0, helpers.relativeTo(rootPath, entry.path), helpers.formatAgo(entry.mtime));
+                const row = makeRow(entry, 0, helpers.relativeTo(filesRoot, entry.path), helpers.formatAgo(entry.mtime));
                 row.addEventListener('click', () => { pickRow(row); openPreview(entry.path, entry.sensitive); });
                 list.append(row);
             }
@@ -313,8 +342,85 @@
             if (unreadable) list.append(note(unreadable));
         }
 
+        // The Scratchpad tab: ask which sessions there are, show the picked
+        // or active one's scratchpad as a tree. Read-only (no uploads), so
+        // its folder menus offer downloads only. `gen` is checked after the
+        // sessions answer and again inside renderFolder after the listing,
+        // so a tab switch or a new pick during either drops this render.
+        async function renderScratchpad(gen) {
+            list.replaceChildren(note('Loading…'));
+            let data;
+            try {
+                data = await getJson('api/scratchpad/sessions');
+            } catch (err) {
+                if (gen !== viewGen) return;
+                emptySessionPicker();
+                list.replaceChildren(note('⚠️ ' + err.message));
+                return;
+            }
+            if (gen !== viewGen) return;
+            if (!helpers.isSessions(data)) {
+                emptySessionPicker();
+                list.replaceChildren(note(NOT_A_LISTING));
+                return;
+            }
+            const { id, fellBack } = helpers.shownSession(data, pickedSession);
+            if (fellBack) {
+                pickedSession = null;
+                showNotice(id
+                    ? 'That session\'s scratchpad is gone; showing the active one.'
+                    : 'That session\'s scratchpad is gone.');
+            }
+            fillSessionPicker(data, id);
+            const session = data.sessions.find((s) => s.id === id);
+            if (!session) {
+                list.replaceChildren(note('No Claude Code session is running'));
+                return;
+            }
+            if (!session.exists) {
+                list.replaceChildren(note('This session hasn\'t used its scratchpad yet'));
+                return;
+            }
+            await renderFolder('', list, 0, gen, { tab: 'scratchpad', base: helpers.apiBase('scratchpad', id) });
+        }
+
+        // One option per session, the shown one selected. Enabled whenever
+        // it has an option, even a lone one: a disabled select leaves the
+        // Tab order and screen readers skip it, and it names whose
+        // scratchpad this is. Its title has the whole label, which the
+        // sidebar's width can cut short.
+        function fillSessionPicker(data, shownId) {
+            sessionPicker.replaceChildren(...data.sessions.map((s) => {
+                const option = document.createElement('option');
+                option.value = s.id;
+                option.textContent = helpers.sessionLabel(s, s.id === data.active);
+                option.selected = s.id === shownId;
+                return option;
+            }));
+            sessionPicker.title = sessionPicker.selectedOptions[0]?.textContent || '';
+            setPickerDisabled(!data.sessions.length);
+        }
+
+        // When the sessions answer failed: no options left over from an
+        // earlier one, which would offer sessions that may be gone. Not
+        // done as a render starts: disabling the picker would take focus
+        // off it on every pick.
+        function emptySessionPicker() {
+            sessionPicker.replaceChildren();
+            sessionPicker.title = '';
+            setPickerDisabled(true);
+        }
+
+        // A disabled select cannot keep focus, which would drop to the
+        // page: the tab takes it, as in placeProtectedToggle.
+        function setPickerDisabled(off) {
+            const hadFocus = document.activeElement === sessionPicker;
+            sessionPicker.disabled = off;
+            if (off && hadFocus) tabs.find((t) => t.dataset.tab === currentTab)?.focus();
+        }
+
         // The selected tab: aria-selected, the tablist's one tab stop, and
-        // the name of the panel (#files-list) both tabs show.
+        // the name of the panel (#files-list) every tab shows.
         function syncTabs() {
             for (const t of tabs) {
                 const on = t.dataset.tab === currentTab;
@@ -324,20 +430,28 @@
             list.setAttribute('aria-labelledby', 'files-tab-' + currentTab);
         }
 
+        // Which toolbar controls a tab shows. The one place these rules
+        // live: refresh() and the restore at the end of init both call it.
+        function syncToolbar() {
+            hiddenToggle.hidden = !helpers.browsesTree(currentTab);
+            placeProtectedToggle();
+            recentHours.hidden = currentTab !== 'recent';
+            sessionPicker.hidden = currentTab !== 'scratchpad';
+            uploadBtn.hidden = !helpers.uploadsAllowed(currentTab);
+        }
+
+        // rootRender is the Files tree's top level only: reveal() awaits it
+        // before walking down to an upload, and an upload is always in /config.
         function refresh() {
             closeMenu();
             syncTabs();
-            hiddenToggle.hidden = currentTab !== 'files';
-            placeProtectedToggle();
-            recentHours.hidden = currentTab !== 'recent';
+            syncToolbar();
             selectedRow = null;
             const gen = ++viewGen;
-            if (currentTab === 'files') {
-                rootRender = renderFolder(rootPath, list, 0, gen);
-            } else {
-                rootRender = null;
-                renderRecent(gen);
-            }
+            rootRender = null;
+            if (currentTab === 'files') rootRender = renderFolder(filesRoot, list, 0, gen);
+            else if (currentTab === 'scratchpad') renderScratchpad(gen);
+            else renderRecent(gen);
         }
 
         // kind: '' (news), 'busy' (try again shortly) or 'error'.
@@ -435,7 +549,11 @@
         // started, whenever its answer comes. A refusal always shows, so
         // no reason is lost; only the good news ("Downloading …") of an
         // older zip gives way to a newer one's (showNoticeIf).
+        //
+        // The zip comes from the tree the folder was listed in (entryViews):
+        // a scratchpad folder from its session's API, not /config's.
         async function downloadZip(entry) {
+            const { base } = entryViews.get(entry) || FILES_VIEW;
             if (entry.sensitive) return;   // never offered; the server refuses it too
             if (zipsPreparing.has(entry.path)) return;
             zipsPreparing.add(entry.path);
@@ -443,7 +561,7 @@
             const gen = showProgress('Preparing ' + zipName + '…');
             let plan;
             try {
-                plan = await getJson(helpers.downloadUrl(entry.path, { zip: true, check: true }));
+                plan = await getJson(helpers.downloadUrl(entry.path, { zip: true, check: true, base }));
             } catch (err) {
                 showNotice(...zipRefusal(err, zipName));
                 return;
@@ -456,7 +574,7 @@
                 showNotice('⚠️ ' + zipName + ': the app gave an unexpected answer. Try again.', 'error');
                 return;
             }
-            startDownload(helpers.downloadUrl(entry.path, { zip: true }));
+            startDownload(helpers.downloadUrl(entry.path, { zip: true, base }));
             const unreadable = helpers.unreadableNote(plan.unreadableNames, 'zip');
             showNoticeIf(gen, 'Downloading ' + (plan.name || zipName) + ': ' + plan.files
                 + (plan.files === 1 ? ' file, ' : ' files, ') + helpers.formatSize(plan.bytes)
@@ -479,15 +597,20 @@
                     : 'Download this folder as a .zip; protected files are left out',
                 run: () => downloadZip(entry),
             }];
-            const target = helpers.uploadTarget(entry, rootPath);
-            if (target) {
-                actions.push({
-                    label: 'Upload here',
-                    disabled: target.disabled,
-                    hint: target.hint,
-                    title: target.title,
-                    run: () => pickFiles(entry.path),
-                });
+            // Uploads go to /config only, so only a folder the Files tree
+            // listed gets Upload here; a scratchpad folder, or one whose
+            // tree is unknown, does not.
+            if (entryViews.get(entry)?.tab === 'files') {
+                const target = helpers.uploadTarget(entry, filesRoot);
+                if (target) {
+                    actions.push({
+                        label: 'Upload here',
+                        disabled: target.disabled,
+                        hint: target.hint,
+                        title: target.title,
+                        run: () => pickFiles(entry.path),
+                    });
+                }
             }
             return actions;
         }
@@ -678,6 +801,11 @@
             }
         }
 
+        // Where focus goes when the control it was on is gone: Upload, or
+        // Refresh on the Scratchpad tab, where Upload is hidden and so
+        // cannot take it.
+        const focusFallback = () => (uploadBtn.hidden ? refreshBtn : uploadBtn);
+
         function askCollision(text, replaceable) {
             return new Promise((resolve) => {
                 const returnTo = document.activeElement;
@@ -699,11 +827,12 @@
                     // Back where it came from; from nowhere (the page
                     // body), from something gone since (a row the tree
                     // drew again), or from something hidden since, where
-                    // focus() does not take, to Upload rather than the page.
+                    // focus() does not take, to focusFallback() rather than
+                    // the page.
                     if (hadFocus) {
-                        const back = returnTo && returnTo !== document.body && returnTo.isConnected ? returnTo : uploadBtn;
+                        const back = returnTo && returnTo !== document.body && returnTo.isConnected ? returnTo : focusFallback();
                         back.focus({ preventScroll: true });
-                        if (document.activeElement !== back) uploadBtn.focus({ preventScroll: true });
+                        if (document.activeElement !== back) focusFallback().focus({ preventScroll: true });
                     }
                     resolve(choice);
                 };
@@ -739,7 +868,7 @@
         // new. Resolves to its row, or null when it cannot be shown (a
         // dotfolder with Hidden files off, say).
         async function reveal(filePath) {
-            const rel = helpers.relativeTo(rootPath, filePath);
+            const rel = helpers.relativeTo(filesRoot, filePath);
             if (rel === filePath) return null;   // not below the root
             if (currentTab !== 'files') switchTab('files');
             if (rootRender) await rootRender;
@@ -751,7 +880,7 @@
                 await relist();
                 return rowFor(filePath);
             }
-            let dir = rootPath;
+            let dir = filesRoot;
             for (let i = 0; i < folders.length; i++) {
                 dir += '/' + folders[i];
                 let row = rowFor(dir);
@@ -785,7 +914,10 @@
         async function finishBatch(outcome) {
             const { lines, kind } = helpers.uploadSummary(outcome);
             const last = outcome.results[outcome.results.length - 1];
-            if (!last) {
+            // No upload to show, or the user is reading a scratchpad:
+            // revealing the file would switch them to Files, and the preview
+            // would cover what they are reading. The line says where it went.
+            if (!last || currentTab === 'scratchpad') {
                 showNotice(lines.join('\n'), kind);
                 return;
             }
@@ -816,9 +948,10 @@
 
         // The notice's dismiss button goes while a batch runs: dismissing
         // cannot cancel an upload (not offered yet), and an × beside
-        // "Uploading …" reads as one. Focus on it moves to Upload.
+        // "Uploading …" reads as one. Focus on it moves to Upload (or
+        // Refresh, see focusFallback).
         function setUploading(on) {
-            if (on && document.activeElement === noticeClose) uploadBtn.focus({ preventScroll: true });
+            if (on && document.activeElement === noticeClose) focusFallback().focus({ preventScroll: true });
             noticeClose.hidden = on;
         }
 
@@ -858,9 +991,12 @@
             return uploadChain;
         }
 
-        async function openPreview(filePath, sensitive) {
+        // `base` is the API the file came from (api/files, or a session's
+        // scratchpad), kept as previewBase for the Download button.
+        async function openPreview(filePath, sensitive, base = 'api/files') {
             const gen = ++previewGen;
             previewPath = filePath;
+            previewBase = base;
             previewSensitive = Boolean(sensitive);
             // Enabled once the preview loads: a refused preview (a
             // protected file with the toggle off) means a refused download.
@@ -871,7 +1007,7 @@
             preview.classList.add('active');
             syncQuestionBadge();
             try {
-                const data = await getJson('api/files/preview?path=' + encodeURIComponent(filePath)
+                const data = await getJson(base + '/preview?path=' + encodeURIComponent(filePath)
                     + (showProtected.checked ? '&protected=1' : ''));
                 if (gen !== previewGen) return;   // opened again, or blanked, meanwhile
                 // The server says what it actually opened; the listing
@@ -944,13 +1080,18 @@
         // sidebar does.
         let questionFocusOwedFrom = null;
 
-        function setOpen(open, { persist = true } = {}) {
+        // `reload`: the tab changed while the sidebar was down. Opening
+        // lists the view the first time, and on Scratchpad every time: a
+        // scratchpad changes fast, and one listed before the sidebar went
+        // down is likely out of date.
+        function setOpen(open, { persist = true, reload = false } = {}) {
+            const opening = open && sidebar.classList.contains('collapsed');
             if (!open) closeMenu();
             questionFocusOwedFrom = null;
             sidebar.classList.toggle('collapsed', !open);
             filesBtn.setAttribute('aria-expanded', String(open));
             if (persist) save(STORE.open, open ? '1' : '0');
-            if (open && !list.childElementCount) refresh();
+            if (open && (reload || !list.childElementCount || (opening && currentTab === 'scratchpad'))) refresh();
             syncQuestionBadge();
             // Opened with a question waiting: that is what the user came
             // for. Not with the preview over it (reached from the keyboard
@@ -964,7 +1105,7 @@
         }
 
         function switchTab(tab) {
-            if (tab !== 'files' && tab !== 'recent') return;
+            if (!TABS.includes(tab)) return;
             currentTab = tab;
             save(STORE.tab, tab);
             refresh();
@@ -973,14 +1114,15 @@
         filesBtn.addEventListener('click', () => setOpen(sidebar.classList.contains('collapsed')));
         document.getElementById('files-hide').addEventListener('click', () => setOpen(false));
         document.getElementById('files-expand').addEventListener('click', () => setOpen(true));
+        // setOpen lists the tab, once: a refresh here as well would fetch
+        // a Scratchpad view twice.
         document.querySelectorAll('[data-open-tab]').forEach((btn) => btn.addEventListener('click', () => {
-            const wasEmpty = !list.childElementCount;
-            if (currentTab !== btn.dataset.openTab) {
+            const changed = currentTab !== btn.dataset.openTab;
+            if (changed) {
                 currentTab = btn.dataset.openTab;
                 save(STORE.tab, currentTab);
-                if (!wasEmpty) refresh();
             }
-            setOpen(true);
+            setOpen(true, { reload: changed });
         }));
         tabs.forEach((tab) => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
         // Arrow keys, Home and End move focus between the tabs; Enter or
@@ -1013,13 +1155,13 @@
             }
             placeProtectedToggle();
         }
-        // Off, it is a Files-tab control like Hidden files. On, it shows
-        // on every tab, as the amber strip does, so it can always be
-        // switched off from where the strip is showing. Hiding it while
-        // it has focus would drop focus to the page, so the active tab
-        // takes it.
+        // Off, it is a tree control like Hidden files, on Files and
+        // Scratchpad. On, it shows on every tab, as the amber strip does,
+        // so it can always be switched off from where the strip is showing.
+        // Hiding it while it has focus would drop focus to the page, so the
+        // active tab takes it.
         function placeProtectedToggle() {
-            const hide = currentTab !== 'files' && !showProtected.checked;
+            const hide = !helpers.browsesTree(currentTab) && !showProtected.checked;
             const hadFocus = protectedToggle.contains(document.activeElement);
             protectedToggle.hidden = hide;
             if (hide && hadFocus) tabs.find((t) => t.dataset.tab === currentTab)?.focus();
@@ -1028,6 +1170,12 @@
         window.addEventListener('pageshow', (e) => { if (e.persisted) setProtected(false); });
         showProtected.addEventListener('change', () => setProtected(showProtected.checked));
         recentHours.addEventListener('change', refresh);
+        // A new pick redraws the tab: refresh() bumps viewGen, so a render
+        // of the previous session still in flight is dropped.
+        sessionPicker.addEventListener('change', () => {
+            pickedSession = sessionPicker.value || null;
+            refresh();
+        });
         refreshBtn.addEventListener('click', refresh);
 
         // Insert path: types the quoted path at the prompt, no Enter,
@@ -1152,6 +1300,15 @@
                 if (!carriesFiles(e)) return;
                 e.preventDefault();
                 e.stopPropagation();
+                // The read-only Scratchpad tab refuses, as the preview does:
+                // the cursor says so, and no outline or folder lights up to
+                // promise an upload. The drop handler refuses too, should a
+                // drop come anyway.
+                if (!helpers.uploadsAllowed(currentTab)) {
+                    e.dataTransfer.dropEffect = 'none';
+                    endDropHover();
+                    return;
+                }
                 e.dataTransfer.dropEffect = 'copy';
                 sidebar.classList.add('drop-active');
                 highlightDrop(dropWrapOf(e));
@@ -1168,6 +1325,14 @@
             e.stopPropagation();
             const wrap = dropWrapOf(e);
             endDropHover();
+            // Scratchpad is read-only: a drop there, on a folder row or
+            // not, would otherwise land in /config's inbox, a place the
+            // user is not looking at. Dragover already refuses it; this is
+            // for a drop that comes anyway.
+            if (!helpers.uploadsAllowed(currentTab)) {
+                showNotice('⚠️ Uploads go to /config: switch to Files.', 'error');
+                return;
+            }
             // Read now: a drop's data is gone once its event is over. A
             // dropped folder arrives as a File too; it is left out, and
             // named in the batch's line.
@@ -1183,7 +1348,7 @@
         // here for a folder, the inbox for anything else, or refused in the
         // notice. A drop's folder row, a paste's selected row.
         function uploadAimedAt(entry, how, files, folders = []) {
-            const { dest, refused } = helpers.uploadDestination(entry, rootPath, how);
+            const { dest, refused } = helpers.uploadDestination(entry, filesRoot, how);
             if (refused) {
                 showNotice('⚠️ Not uploaded: ' + refused, 'error');
                 return;
@@ -1228,6 +1393,12 @@
                 showNotice('⚠️ Not uploaded: close the preview first, then paste.', 'error');
                 return;
             }
+            // As for a drop: never from the read-only Scratchpad tab into
+            // /config. Stopped above, so the terminal does not take it either.
+            if (!helpers.uploadsAllowed(currentTab)) {
+                showNotice('⚠️ Uploads go to /config: switch to Files.', 'error');
+                return;
+            }
             if (menuOwner) {
                 const entry = menuEntry;
                 closeMenu({ focusOwner: true });
@@ -1261,11 +1432,13 @@
 
         // previewPath is read at click time: a blanked preview has none,
         // and a protected file never goes out with the toggle off (by
-        // construction its preview is blanked then; checked anyway).
+        // construction its preview is blanked then; checked anyway). So is
+        // previewBase, the root the preview came from: the tab may have
+        // changed behind the preview since.
         downloadBtn.addEventListener('click', () => {
             if (!previewPath || downloadBtn.disabled) return;
             if (previewSensitive && !showProtected.checked) return;
-            startDownload(helpers.downloadUrl(previewPath, { protectedOn: showProtected.checked }));
+            startDownload(helpers.downloadUrl(previewPath, { protectedOn: showProtected.checked, base: previewBase }));
         });
         document.getElementById('files-close-btn').addEventListener('click', () => closePreview());
         preview.addEventListener('click', (e) => { if (e.target === preview) closePreview(); });
@@ -1367,9 +1540,7 @@
         // covers the terminal, which is not what someone opening the
         // add-on expects to see.
         syncTabs();
-        hiddenToggle.hidden = currentTab !== 'files';
-        placeProtectedToggle();
-        recentHours.hidden = currentTab !== 'recent';
+        syncToolbar();
         if (load(STORE.open) === '1' && !PHONE.matches) setOpen(true, { persist: false });
     }
 

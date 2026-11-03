@@ -350,7 +350,7 @@ The terminal starts directly in your `/config` directory, giving you immediate a
 - **Auto-Launching**: Claude starts automatically when you open the terminal (configurable)
 - **Claude AI**: Access Claude's AI capabilities for programming, troubleshooting and more
 - **File Uploads from the Terminal**: Paste (Ctrl+V), drop or pick (📎) any file, and its path is typed at the prompt for Claude
-- **Files Sidebar**: Browse, preview and download files in `/config` (folders as a zip), see recently changed files, and run Home Assistant's configuration check
+- **Files Sidebar**: Browse, preview and download files in `/config` (folders as a zip), see recently changed files, browse Claude Code's scratchpad, and run Home Assistant's configuration check
 - **Direct Config Access**: Terminal starts in `/config` for immediate access to all Home Assistant files
 - **Simple Setup**: Uses OAuth for easy authentication
 - **Home Assistant Integration**: Access directly from your dashboard
@@ -537,6 +537,14 @@ entirely when closed.
   `backups`, databases and logs. So are build and dependency folders
   (`node_modules`, `venv`, `.venv`, `__pycache__`, ESPHome's `.esphome/build`,
   `.pio`), which would otherwise crowd out real edits.
+- **Scratchpad** shows the scratchpad folder of the Claude Code session that is
+  running (Claude keeps drafts and generated files there), with a **Scratchpad
+  session** picker for any other session, including ones that have ended. It
+  is read-only: preview, **Insert path**, **Copy path**, **Download** and
+  **Download as zip** work as on the Files tab, uploads do not (there is no
+  **Upload** button, and a drop or paste is refused with a notice pointing you
+  to Files). Scratchpads live in `/tmp`, so they are gone after the app
+  restarts.
 - **✓ Check HA configuration** runs `ha core check` and shows the result, so
   you can validate an edit before restarting Home Assistant.
 

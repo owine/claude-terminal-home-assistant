@@ -13,6 +13,7 @@
  * - Read-only /config browser and HA config check for the Files sidebar (/api/files)
  * - File and folder (zip) downloads from /config for the Files sidebar
  * - File uploads into /config for the Files sidebar (inbox or a chosen folder)
+ * - Read-only Claude Code scratchpad browser for the Files sidebar (/api/scratchpad)
  * - ARM-compatible (no native dependencies)
  */
 
@@ -35,7 +36,8 @@ const {
 const { uploadFilename, isAllowedImageMime, IMAGE_UPLOAD_LIMITS } = require('./upload-naming');
 const { loginNotifierFromEnv } = require('./login-notifier');
 const { createFilesApi, createFilesRouter, createHaCheck } = require('./files-api');
-const { createDownloads, createDownloadRouter } = require('./files-download');
+const { createDownloads, createDownloadRouter, createZipSlots } = require('./files-download');
+const { createScratchpads, createScratchpadRouter } = require('./scratchpad');
 const { createUploads, createUploadRouter, uploadMaxBytes, uploadRequestTimeoutMs } = require('./files-upload');
 const { createPartRecord } = require('./upload-parts');
 
@@ -170,6 +172,9 @@ app.use('/api/files', createFilesRouter({
     readLimiter: filesLimiter,
     checkLimiter: haCheckLimiter,
 }));
+// One zip budget for every download router: the Files tab's and each
+// Scratchpad session's (files-download.js, createZipSlots).
+const zipSlots = createZipSlots();
 // Downloads (files-download.js): the same api instance, so the same root,
 // resolve() and tiers as above. Still among the API routes: before the
 // terminal proxy and static files.
@@ -177,6 +182,7 @@ app.use('/api/files', createDownloadRouter({
     downloads: createDownloads({ api: filesApi }),
     fileLimiter: filesLimiter,
     zipLimiter,
+    zipSlots,
 }));
 // Uploads (files-upload.js): the same api instance again. The part record
 // lives in /data, beside the add-on's other state; UPLOAD_PARTS_FILE is a test
@@ -192,6 +198,17 @@ app.use('/api/files', createUploadRouter({
     uploads: createUploads({ api: filesApi, record: partRecord, maxBytes: uploadLimit }),
     uploadLimiter: filesUploadLimiter,
     checkLimiter: filesLimiter,
+}));
+// Scratchpad tab (scratchpad.js): Claude Code sessions' scratchpad folders,
+// read-only. SCRATCH_SESSIONS_DIR and SCRATCH_TMP_ROOT are test seams.
+app.use('/api/scratchpad', createScratchpadRouter({
+    scratchpads: createScratchpads({
+        sessionsDir: process.env.SCRATCH_SESSIONS_DIR || undefined,
+        tmpRoot: process.env.SCRATCH_TMP_ROOT || undefined,
+    }),
+    filesLimiter,
+    zipLimiter,
+    zipSlots,
 }));
 
 // Proxy endpoint for ttyd terminal

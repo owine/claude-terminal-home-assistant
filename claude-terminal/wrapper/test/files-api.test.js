@@ -804,6 +804,13 @@ test('routes: the rate limiter applies', async () => {
     });
 });
 
+test('routes: without haCheck there is no /ha-check, and list still works', async () => {
+    await withServer({ haCheck: undefined, checkLimiter: undefined }, async (url) => {
+        assert.strictEqual((await fetch(`${url}/files/ha-check`, { method: 'POST' })).status, 404);
+        assert.strictEqual((await fetch(`${url}/files/list`)).status, 200);
+    });
+});
+
 // --- protected=1: the "Show protected files" toggle ---
 
 test('allowSensitive lifts the sensitive tier for preview, and nothing else', async () => {

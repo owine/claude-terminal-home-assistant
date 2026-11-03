@@ -12,7 +12,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { once } = require('node:events');
 const express = require('express');
-const { createDownloads } = require('../files-download.js');
+const { createDownloads, createDownloadRouter, createZipSlots } = require('../files-download.js');
+const { createRateLimiter } = require('../http-guards.js');
 const {
     root, write, LARGE, BLUEPRINT_NAMES, api, downloads, withServer, q, aborted,
     sleep, openFds, until, rawRequest, unzip, within, noStrays,
@@ -541,4 +542,106 @@ test('sendZip: takes { log, onSettled }, and settles once, after the transfer', 
         await new Promise((r) => server.close(r));
         fs.rmSync(victim, { force: true });
     }
+});
+
+// --- one zip budget across routers (the Scratchpad tab mounts one per session) ---
+
+// A downloads stand-in whose zips stay open until released, so slots can be
+// held without streaming anything real.
+function heldZips() {
+    const waiting = [];
+    return {
+        downloads: {
+            planZip: async () => ({ name: 'x.zip', files: [], bytes: 0, unreadableNames: 0 }),
+            sendZip: (plan, req, res, { onSettled }) => new Promise((resolve) => {
+                waiting.push(() => { res.end('z'); onSettled(); resolve(); });
+            }),
+        },
+        releaseAll: () => { while (waiting.length) waiting.shift()(); },
+        count: () => waiting.length,
+    };
+}
+
+async function withRouters(routers, fn) {
+    const app = express();
+    routers.forEach((r, i) => app.use(`/r${i}`, r));
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+        await fn(`http://127.0.0.1:${server.address().port}`);
+    } finally {
+        server.closeAllConnections();
+        await new Promise((r) => server.close(r));
+    }
+}
+
+test('zip slots: two routers sharing one budget refuse a third zip across both (429)', async () => {
+    const held = heldZips();
+    const zipSlots = createZipSlots(2);
+    const make = () => createDownloadRouter({
+        downloads: held.downloads,
+        fileLimiter: createRateLimiter({ max: 1000 }),
+        zipLimiter: createRateLimiter({ max: 1000 }),
+        zipSlots,
+        log: () => {},
+    });
+    await withRouters([make(), make()], async (url) => {
+        const a = fetch(`${url}/r0/download-zip?path=x`);
+        const b = fetch(`${url}/r1/download-zip?path=x`);
+        a.catch(() => {});
+        b.catch(() => {});
+        try {
+            assert.ok(await until(() => held.count() === 2, 2000), 'positive control: two zips held');
+            const third = await fetch(`${url}/r0/download-zip?path=x`);
+            assert.strictEqual(third.status, 429);
+            assert.match((await third.json()).error, /2 zips are already being prepared or sent/);
+        } finally {
+            held.releaseAll();
+        }
+        await (await a).arrayBuffer();
+        await (await b).arrayBuffer();
+        const after = fetch(`${url}/r1/download-zip?path=x`);
+        after.catch(() => {});
+        try {
+            assert.ok(await until(() => held.count() === 1, 2000), 'a slot came back');
+        } finally {
+            held.releaseAll();
+        }
+        const res = await after;
+        assert.strictEqual(res.status, 200);
+        await res.arrayBuffer();
+    });
+});
+
+test('zip slots: a zip whose onSettled fires twice releases one slot, not two', async () => {
+    const zipSlots = createZipSlots(2);
+    const twice = {
+        planZip: async () => ({ name: 'x.zip', files: [], bytes: 0, unreadableNames: 0 }),
+        sendZip: async (plan, req, res, { onSettled }) => { res.end('z'); onSettled(); onSettled(); },
+    };
+    assert.ok(zipSlots.tryTake(), 'hold one slot from outside');
+    const router = createDownloadRouter({
+        downloads: twice,
+        fileLimiter: createRateLimiter({ max: 1000 }),
+        zipLimiter: createRateLimiter({ max: 1000 }),
+        zipSlots,
+        log: () => {},
+    });
+    await withRouters([router], async (url) => {
+        await (await fetch(`${url}/r0/download-zip?path=x`)).arrayBuffer();
+    });
+    // Correct: the held slot is still taken, so exactly one more fits.
+    assert.strictEqual(zipSlots.tryTake(), true);
+    assert.strictEqual(zipSlots.tryTake(), false, 'a double release freed the outside slot');
+});
+
+test('zip slots: createZipSlots takes and releases, and never goes below zero', () => {
+    const s = createZipSlots(1);
+    assert.strictEqual(s.max, 1);
+    assert.strictEqual(s.tryTake(), true);
+    assert.strictEqual(s.tryTake(), false);
+    s.release();
+    s.release();
+    assert.strictEqual(s.tryTake(), true);
+    assert.strictEqual(s.tryTake(), false);
 });
