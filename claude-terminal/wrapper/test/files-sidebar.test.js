@@ -24,6 +24,12 @@ const {
     tabKeyTarget,
     isListing,
     unreadableNote,
+    apiBase,
+    browsesTree,
+    uploadsAllowed,
+    isSessions,
+    shownSession,
+    sessionLabel,
 } = require('../public/files-sidebar.js');
 
 test('plain paths are typed as-is', () => {
@@ -297,4 +303,49 @@ test('unreadableNote: what each view says about names it could not read, nothing
             assert.strictEqual(unreadableNote(n, kind), '', kind + ' ' + String(n));
         }
     }
+});
+
+const SID = '11111111-1111-4111-8111-111111111111';
+
+test('apiBase: api/files for Files and Recent, the session\'s own base for Scratchpad', () => {
+    assert.strictEqual(apiBase('files'), 'api/files');
+    assert.strictEqual(apiBase('recent'), 'api/files');
+    assert.strictEqual(apiBase('scratchpad', SID), `api/scratchpad/${SID}`);
+    assert.strictEqual(apiBase('scratchpad', 'a/b?c'), 'api/scratchpad/a%2Fb%3Fc');
+});
+
+test('downloadUrl: takes a base, api/files by default', () => {
+    assert.strictEqual(downloadUrl('/config/a b'), 'api/files/download?path=%2Fconfig%2Fa%20b');
+    assert.strictEqual(downloadUrl('/tmp/x', { base: `api/scratchpad/${SID}`, zip: true, check: true }),
+        `api/scratchpad/${SID}/download-zip?path=%2Ftmp%2Fx&check=1`);
+});
+
+test('browsesTree and uploadsAllowed', () => {
+    assert.deepStrictEqual(['files', 'recent', 'scratchpad'].map(browsesTree), [true, false, true]);
+    assert.deepStrictEqual(['files', 'recent', 'scratchpad'].map(uploadsAllowed), [true, true, false]);
+});
+
+test('isSessions: an object with a sessions array, and nothing else', () => {
+    assert.ok(isSessions({ active: null, sessions: [] }));
+    for (const bad of [null, {}, { sessions: {} }, [], 'x']) assert.ok(!isSessions(bad), JSON.stringify(bad));
+});
+
+test('shownSession: the pick while it is listed, else the active one (saying it fell back)', () => {
+    const answer = { active: 'a', sessions: [{ id: 'a' }, { id: 'b' }] };
+    assert.deepStrictEqual(shownSession(answer, null), { id: 'a', fellBack: false });
+    assert.deepStrictEqual(shownSession(answer, 'b'), { id: 'b', fellBack: false });
+    assert.deepStrictEqual(shownSession(answer, 'gone'), { id: 'a', fellBack: true });
+    assert.deepStrictEqual(shownSession({ active: null, sessions: [] }, null), { id: null, fellBack: false });
+});
+
+test('sessionLabel: name · cwd · state, the active one marked, no repeated slug', () => {
+    assert.strictEqual(sessionLabel({ label: 'main', cwd: '/config', live: true, status: 'busy' }, true), 'main · /config · busy (active)');
+    assert.strictEqual(sessionLabel({ label: 'x', cwd: '/config', live: true, status: null }, false), 'x · /config · running');
+    assert.strictEqual(sessionLabel({ label: '-config', cwd: '-config', live: false }, false), '-config · ended');
+});
+
+test('tabKeyTarget: three tabs wrap too', () => {
+    assert.strictEqual(tabKeyTarget('ArrowRight', 2, 3), 0);
+    assert.strictEqual(tabKeyTarget('ArrowLeft', 0, 3), 2);
+    assert.strictEqual(tabKeyTarget('End', 0, 3), 2);
 });
