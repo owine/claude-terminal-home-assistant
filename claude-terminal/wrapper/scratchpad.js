@@ -12,6 +12,15 @@
  *   (pid, sessionId, cwd, kind, status, name, updatedAt), removed on a clean
  *   exit. Beside it sits `<pid>.<hash>.key`, a peer token: only names
  *   matching RECORD_NAME are ever opened.
+ * - A killed session (an app restart or update) leaves its record behind,
+ *   and /data keeps it forever. Two checks drop such stale records: the PID
+ *   in the file name must be a running claude before the record is even
+ *   opened, and the record's procStart must equal that process's start time
+ *   in /proc/<pid>/stat (field 22, clock ticks since boot). That rules out a
+ *   reused PID even when the new process is also a claude. pidDomain is
+ *   deliberately not used: PID namespace inode numbers are recycled across
+ *   container starts, so a stale record and a live one were seen carrying
+ *   the same value on a live install.
  * - Its scratchpad is `${CLAUDE_CODE_TMPDIR:-/tmp}/claude-<uid>/<cwd slug>/<sessionId>/scratchpad`,
  *   made on first use. /tmp is not persistent, so every folder is gone after
  *   an app restart.
@@ -27,6 +36,9 @@ const path = require('node:path');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RECORD_NAME = /^(\d+)\.json$/;
+// Names looked at, dead ones included: a folder of stale records is bounded
+// work. MAX_RECORDS then caps the live ones read.
+const MAX_RECORD_NAMES = 4096;
 const MAX_RECORDS = 64;
 const MAX_RECORD_BYTES = 64 * 1024;
 // The tmp root also holds Claude Code's own non-session folders.
@@ -75,12 +87,28 @@ async function defaultIsAlive(pid) {
     }
 }
 
+// When `pid` started: field 22 (starttime) of /proc/<pid>/stat, as the
+// string Claude Code writes into a record's procStart; null where there is
+// no /proc (macOS, in development) or the process is gone. Field 2 (comm)
+// is parenthesised and may hold spaces or ')', so fields are counted from
+// after the last ')': that text starts at field 3.
+async function defaultProcStartOf(pid) {
+    try {
+        const stat = await fsp.readFile(`/proc/${pid}/stat`, 'utf8');
+        const start = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)[22 - 3];
+        return /^\d+$/.test(start || '') ? start : null;
+    } catch {
+        return null;
+    }
+}
+
 const str = (v) => (typeof v === 'string' ? v : null);
 
 function createScratchpads({
     sessionsDir = defaultSessionsDir(),
     tmpRoot = defaultTmpRoot(),
     isAlive = defaultIsAlive,
+    procStartOf = defaultProcStartOf,
     fs = fsp,
     log = console.error,
 } = {}) {
@@ -112,6 +140,7 @@ function createScratchpads({
                 kind: str(r.kind),
                 status: str(r.status),
                 updatedAt: Number.isFinite(r.updatedAt) ? r.updatedAt : 0,
+                procStart: str(r.procStart),
             };
         } finally {
             await fh.close();
@@ -127,8 +156,14 @@ function createScratchpads({
             return new Map();
         }
         const byId = new Map();
-        for (const name of names.filter((x) => RECORD_NAME.test(x)).slice(0, MAX_RECORDS)) {
+        let read = 0;
+        for (const name of names.filter((x) => RECORD_NAME.test(x)).slice(0, MAX_RECORD_NAMES)) {
+            if (read >= MAX_RECORDS) break;
+            // Liveness from the file name first: a stale record is never
+            // opened, so no number of them can use up MAX_RECORDS.
             const pid = Number(RECORD_NAME.exec(name)[1]);
+            if (!(await isAlive(pid))) continue;
+            read++;
             let r;
             try {
                 r = await readRecord(path.join(sessionsDir, name), pid);
@@ -137,7 +172,15 @@ function createScratchpads({
                 logOnce('a session record', err);
                 continue;
             }
-            if (!r || !(await isAlive(pid))) continue;
+            if (!r) continue;
+            // A PID reused since the record was written, by a claude or not.
+            // Fail-open: a procStart that is not digits (macOS writes a
+            // date) or no start time of our own reading checks nothing, so
+            // a changed field cannot end every session.
+            if (r.procStart !== null && /^\d+$/.test(r.procStart)) {
+                const start = await procStartOf(pid);
+                if (start !== null && start !== r.procStart) continue;
+            }
             const prev = byId.get(r.id);
             if (!prev || r.updatedAt > prev.updatedAt) byId.set(r.id, r);
         }
@@ -244,4 +287,4 @@ function createScratchpads({
     return { discover };
 }
 
-module.exports = { createScratchpads, looksLikeClaude, defaultIsAlive, UUID };
+module.exports = { createScratchpads, looksLikeClaude, defaultIsAlive, defaultProcStartOf, UUID };

@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { createScratchpads, looksLikeClaude, defaultIsAlive, UUID } = require('../scratchpad.js');
+const { createScratchpads, looksLikeClaude, defaultIsAlive, defaultProcStartOf, UUID } = require('../scratchpad.js');
 
 const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scratchpad-')));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -168,6 +168,56 @@ test('unreadable or missing folders degrade; discover() never rejects', async ()
     assert.deepStrictEqual(r.sessions, []);
     assert.strictEqual(logged.length, new Set(logged).size, 'each failure is logged once');
     assert.ok(logged.length >= 1);
+});
+
+test('a record whose procStart is not its process\'s start time (a reused PID) is not live', async () => {
+    const t = tree();
+    t.record(100, { sessionId: A, kind: 'interactive', updatedAt: 9, procStart: '111' });
+    t.record(101, { sessionId: B, kind: 'interactive', updatedAt: 5, procStart: '333' });
+    t.record(102, { sessionId: C, kind: 'interactive', updatedAt: 1 });   // no procStart: accepted
+    const starts = { 100: '222', 101: '333', 102: '444' };
+    const s = createScratchpads({ ...t, isAlive: alive(100, 101, 102), procStartOf: async (pid) => starts[pid] ?? null, log: quiet });
+    const { active, sessions } = await s.discover();
+    assert.deepStrictEqual(sessions.map((x) => x.id), [B, C]);
+    assert.strictEqual(active, B);
+});
+
+test('procStart is not checked when it is not digits, or where the start time cannot be read', async () => {
+    const t = tree();
+    t.record(100, { sessionId: A, updatedAt: 9, procStart: 'Mon Nov  2 13:50:25 2026' });   // macOS shape
+    t.record(101, { sessionId: B, updatedAt: 5, procStart: '111' });
+    let r = await createScratchpads({ ...t, isAlive: alive(100, 101), procStartOf: async () => null, log: quiet }).discover();
+    assert.deepStrictEqual(r.sessions.map((x) => x.id), [A, B], 'no start time: both accepted');
+    r = await createScratchpads({ ...t, isAlive: alive(100, 101), procStartOf: async () => '222', log: quiet }).discover();
+    assert.deepStrictEqual(r.sessions.map((x) => x.id), [A], 'the date-shaped one is not checked');
+});
+
+test('dead records are never opened, and any number of them cannot hide a live one', async () => {
+    const t = tree();
+    for (let pid = 1000; pid < 1100; pid++) {
+        t.record(pid, { sessionId: `00000000-0000-4000-8000-${String(pid).padStart(12, '0')}`, updatedAt: 1 });
+    }
+    t.record(5000, { sessionId: A, kind: 'interactive', updatedAt: 2 });
+    const opened = [];
+    const spy = { ...fsp, open: (p, ...rest) => { opened.push(path.basename(p)); return fsp.open(p, ...rest); } };
+    const { active } = await createScratchpads({ ...t, fs: spy, isAlive: alive(5000), log: quiet }).discover();
+    assert.strictEqual(active, A);
+    assert.deepStrictEqual(opened, ['5000.json']);
+});
+
+test('defaultProcStartOf: field 22 of /proc/<pid>/stat where /proc exists, else null', async () => {
+    const start = await defaultProcStartOf(process.pid);
+    if (fs.existsSync('/proc/self/stat')) {
+        // Computed here another way: comm (field 2) is parenthesised and may
+        // hold spaces, so count fields from the end of it.
+        const stat = fs.readFileSync(`/proc/${process.pid}/stat`, 'utf8');
+        const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+        assert.match(start, /^\d+$/);
+        assert.strictEqual(start, fields[22 - 3]);
+    } else {
+        assert.strictEqual(start, null);
+    }
+    assert.strictEqual(await defaultProcStartOf(2 ** 30), null, 'a dead PID has no start time');
 });
 
 test('looksLikeClaude: an argument whose basename is claude', () => {
