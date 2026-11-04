@@ -99,3 +99,27 @@ jobs:
               body: `${summary}\n\n${body}`,
             });
             core.info(`Summary: ${summary}`);
+      # Only the pin files and the script: this job needs no other source.
+      - name: Checkout pin files
+        if: steps.draft.outputs.id != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            .github/scripts/bundled-versions.cjs
+            claude-terminal/Dockerfile
+            claude-terminal/ha-mcp/pyproject.toml
+      # Renovate folds most Claude Code and ha-mcp bumps into one generic
+      # "update all non-major dependencies" line, so every release states its
+      # pinned versions here instead. Runs after the summary step and re-reads
+      # the body, so it appends to the summarized draft. See the script header.
+      - name: Add bundled versions
+        if: steps.draft.outputs.id != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        with:
+          script: |
+            const { run } = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/bundled-versions.cjs`);
+            await run({ github, context, core, root: process.env.GITHUB_WORKSPACE });
