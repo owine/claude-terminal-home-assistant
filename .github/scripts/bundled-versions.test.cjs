@@ -66,7 +66,7 @@ test('footer renders a table with the Claude Code footnote', () => {
   ]);
   assert.equal(
     footer,
-    [MARKER, '### Bundled versions', '', '| Component | Version |', '|---|---|', '| Claude Code | 2.1.311 ¹ |', '| ttyd | 1.7.7 |', '', '¹ Self-updates.'].join('\n'),
+    [MARKER, '## Bundled versions', '', '| Component | Version |', '|---|---|', '| Claude Code | 2.1.311 ¹ |', '| ttyd | 1.7.7 |', '', '¹ Self-updates.'].join('\n'),
   );
 });
 
