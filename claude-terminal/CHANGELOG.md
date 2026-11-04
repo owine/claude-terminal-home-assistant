@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.1.0](https://github.com/owine/claude-terminal-home-assistant/compare/v3.0.0...v3.1.0) (2026-11-04)
+
+**1 feature · 3 dependency updates**
+
+### ✨ Features
+
+- show Claude Code's scratchpad in the Files sidebar ([#522](https://github.com/owine/claude-terminal-home-assistant/issues/522))
+
+### 📦 Dependencies
+
+- update all non-major dependencies ([#526](https://github.com/owine/claude-terminal-home-assistant/issues/526))
+- update dependency globals to v17.14.0 ([#524](https://github.com/owine/claude-terminal-home-assistant/issues/524))
+- update dependency claude-code to v2.1.311 ([#518](https://github.com/owine/claude-terminal-home-assistant/issues/518), [#521](https://github.com/owine/claude-terminal-home-assistant/issues/521))
+
 ## [3.0.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.12.0...v3.0.0) (2026-10-30)
 
 **1 breaking change · 2 features · 3 bug fixes · 5 dependency updates**
