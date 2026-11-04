@@ -14,6 +14,22 @@
 - update dependency globals to v17.14.0 ([#524](https://github.com/owine/claude-terminal-home-assistant/issues/524))
 - update dependency claude-code to v2.1.311 ([#518](https://github.com/owine/claude-terminal-home-assistant/issues/518), [#521](https://github.com/owine/claude-terminal-home-assistant/issues/521))
 
+<!-- bundled-versions -->
+### Bundled versions
+
+| Component | Version |
+|---|---|
+| Claude Code | 2.1.311 ¹ |
+| ha-mcp | 9.1.0 |
+| ttyd | 1.7.7 |
+| tmux | 3.7c |
+| Node.js | 24.22.1 |
+| GitHub CLI | 2.103.3 |
+| Home Assistant CLI | 5.6.0 |
+| uv | 0.13.7 |
+
+¹ Claude Code updates itself on a running install; this is the version the image starts with.
+
 ## [3.0.0](https://github.com/owine/claude-terminal-home-assistant/compare/v2.12.0...v3.0.0) (2026-10-30)
 
 **1 breaking change · 2 features · 3 bug fixes · 5 dependency updates**
