@@ -128,7 +128,9 @@ jobs:
       # Dockerfile and pyproject, so a pin edited out of its pattern fails here
       # rather than silently dropping out of the release notes.
       - name: Release-notes script tests
-        run: node --test .github/scripts/
+        # A quoted glob, not the directory: Node 24 loads a directory argument as
+        # a module (MODULE_NOT_FOUND) instead of searching it for tests.
+        run: node --test '.github/scripts/*.test.cjs'
 
   build:
     name: Test build ${{ matrix.arch }}

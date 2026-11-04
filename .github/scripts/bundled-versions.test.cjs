@@ -1,4 +1,4 @@
-// Tests for bundled-versions.cjs. Run with: node --test .github/scripts/
+// Tests for bundled-versions.cjs. Run with: node --test '.github/scripts/*.test.cjs'
 
 'use strict';
 

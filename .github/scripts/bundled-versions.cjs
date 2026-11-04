@@ -14,7 +14,7 @@
 // promote (publish.yml) copies the published body into CHANGELOG.md, so the
 // footer reaches Home Assistant's update dialog too.
 //
-// Tested by bundled-versions.test.cjs (node --test, Unit tests job).
+// Tested by bundled-versions.test.cjs (Unit tests job).
 
 'use strict';
 
