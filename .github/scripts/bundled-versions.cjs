@@ -74,7 +74,10 @@ function renderFooter(versions) {
   });
   return [
     MARKER,
-    '### Bundled versions',
+    // Same level as release-drafter's categories, so it is not read as part
+    // of the last one. promote demotes every heading once, giving ### in
+    // CHANGELOG.md, again level with the categories.
+    '## Bundled versions',
     '',
     '| Component | Version |',
     '|---|---|',
