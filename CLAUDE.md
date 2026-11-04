@@ -243,6 +243,11 @@ its changelog, or a version whose image isn't pullable yet.
 it then skips the CHANGELOG too. The CHANGELOG entry is the **release body as published**, so
 edit the draft's notes before publishing, not the file afterwards.
 
+- **Every draft ends with a "Bundled versions" table** (Claude Code, ha-mcp, ttyd, tmux,
+  Node.js, gh, ha-cli, uv), written by `.github/scripts/bundled-versions.cjs` from the pins
+  on `main`. It exists because Renovate folds most of those bumps into one generic
+  `update all non-major dependencies` line. A pin edited out of its pattern fails the
+  `Unit tests` job; to list another component, add it to `COMPONENTS` there.
 - **A draft always exists.** If only hidden types merged since the last release it reads
   `_No user-facing changes._` — don't publish that one.
 - **Never publish with `GITHUB_TOKEN`** (no `publish: true` in release-drafter): a release

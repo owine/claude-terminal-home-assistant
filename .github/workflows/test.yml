@@ -124,6 +124,12 @@ jobs:
           npm ci
           npm test
 
+      # release-drafter.yml's bundled-versions footer. Also parses the real
+      # Dockerfile and pyproject, so a pin edited out of its pattern fails here
+      # rather than silently dropping out of the release notes.
+      - name: Release-notes script tests
+        run: node --test .github/scripts/
+
   build:
     name: Test build ${{ matrix.arch }}
     needs: init
