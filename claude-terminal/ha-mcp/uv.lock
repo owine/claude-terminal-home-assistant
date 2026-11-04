@@ -344,11 +344,12 @@ wheels = [
 
 [[package]]
 name = "ha-mcp"
-version = "9.0.0"
+version = "9.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "authlib" },
+    { name = "certifi" },
     { name = "cryptography" },
     { name = "cyclopts" },
     { name = "exceptiongroup" },
@@ -385,9 +386,9 @@ dependencies = [
     { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ae/82/3a37b9e2d767c53507ffb83b6eb4051cd8b0f46b2b07694b692f32634db1/ha_mcp-9.0.0.tar.gz", hash = "sha256:2cebe82e85fe9c1352b041ee22bdee7706596cd62479b37f50138d39b07348c0", size = 3526009, upload-time = "2026-10-28T16:31:18.853Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/70/c47a7103bedb764de8459f0aaf575cd5f16a2c5c351b8ab00c09130044ea/ha_mcp-9.1.0.tar.gz", hash = "sha256:e8269d0da07d00c1dbc8797a43639333271c6336b683c90d7c8cde2adc92e7c4", size = 3616924, upload-time = "2026-11-04T07:24:08.715Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e8/b2/61a1b8ed1589c58bfff1f0059cc2b2e55a2a6cb9e19b2174f9ff6b2b001c/ha_mcp-9.0.0-py3-none-any.whl", hash = "sha256:eacc7e8ce2797e095983977d550cc2111b28fb30a0e4d1a8784c9e6f63c55ee8", size = 3956329, upload-time = "2026-10-28T16:31:16.763Z" },
+    { url = "https://files.pythonhosted.org/packages/94/46/702f81d135aa7a7d2c4475e2e81ed368ef3e0eb52e8c15a539594bca9d4e/ha_mcp-9.1.0-py3-none-any.whl", hash = "sha256:5b4484717d20f3b5cceb2d845649c4b5e65aa5e2fa01c46fe9ea5019557a8181", size = 4059162, upload-time = "2026-11-04T07:24:06.601Z" },
 ]
 
 [[package]]
@@ -399,7 +400,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ha-mcp", specifier = "==9.0.0" }]
+requires-dist = [{ name = "ha-mcp", specifier = "==9.1.0" }]
 
 [[package]]
 name = "httpcore"
