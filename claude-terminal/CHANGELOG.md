@@ -1,5 +1,46 @@
 # Changelog
 
+## [3.2.0](https://github.com/owine/claude-terminal-home-assistant/compare/v3.1.1...v3.2.0) (2026-11-06)
+
+**1 feature · 1 bug fix**
+
+### 🔒 Lock a published port to your reverse proxy
+
+**Using port 7680 behind your own reverse proxy?** Since 3.1.1, an *unpublished* port admits only Home Assistant ingress. A *published* one still admits anyone who can reach it, whatever login your proxy adds: devices on your LAN, and every other app on the machine.
+
+The new **Reverse proxy token** option (`proxy_token`) closes that gap:
+
+1. Set it to a random value, for example `openssl rand -hex 32`.
+2. Have your proxy send it in an `X-Claude-Terminal-Token` header.
+
+Every connection except ingress must then carry it; anything else gets `403`. A reverse proxy running as another app can use the token instead of publishing the port. The token is never logged, and it isn't passed to the terminal or Claude.
+
+Setup for Traefik, nginx and Caddy is in the docs under **Locking the Port to Your Reverse Proxy**. The option is empty by default, so nothing changes until you set it.
+
+### ✨ Features
+
+- add proxy_token to lock port 7680 to your reverse proxy ([#539](https://github.com/owine/claude-terminal-home-assistant/issues/539))
+
+### 🐛 Bug Fixes
+
+- read the port with bashio::app.port, not the deprecated alias ([#538](https://github.com/owine/claude-terminal-home-assistant/issues/538))
+
+<!-- bundled-versions -->
+### Bundled versions
+
+| Component | Version |
+|---|---|
+| Claude Code | 2.1.311 ¹ |
+| ha-mcp | 9.1.0 |
+| ttyd | 1.7.7 |
+| tmux | 3.7c |
+| Node.js | 24.22.1 |
+| GitHub CLI | 2.103.3 |
+| Home Assistant CLI | 5.6.0 |
+| uv | 0.13.7 |
+
+¹ Claude Code updates itself on a running install; this is the version the image starts with.
+
 ## [3.1.1](https://github.com/owine/claude-terminal-home-assistant/compare/v3.1.0...v3.1.1) (2026-11-06)
 
 **5 bug fixes · 1 dependency update**
