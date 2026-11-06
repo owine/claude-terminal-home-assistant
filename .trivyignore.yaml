@@ -18,15 +18,28 @@
 
 vulnerabilities:
   # usr/bin/tempio needs no entries: the Dockerfile deletes it (nothing runs it).
-  # usr/bin/gh (GitHub CLI) needs no entries: gh 2.103.2 scans clean (2026-10-28).
+  # --- usr/bin/gh (GitHub CLI) ---
+  # golang.org/x/net/html denial-of-service compiled into the gh binary.
+  # GH_CLI_VERSION is pinned to 2.103.3, the latest release (built on x/net
+  # 0.60.0); the fix is x/net 0.62.0, so there is nothing to bump to. Needs an
+  # upstream gh rebuild on x/net >= 0.62.0. gh scanned clean until this CVE
+  # entered the Trivy DB (2026-11-06); re-check and prune when gh is bumped.
+  - id: CVE-2026-78661
+    paths:
+      - "usr/bin/gh"
 
   # --- usr/bin/ha (Home Assistant CLI) ---
   # Go stdlib, x/net and x/text CVEs compiled into the ha-cli binary. HA_CLI_VERSION
   # is pinned to 5.6.0, the latest release (2026-10-20), built on go1.26.9 with
   # x/net 0.55.0 and x/text 0.37.0, so there is nothing to bump to. Needs an
-  # upstream ha-cli rebuild on go >= 1.26.10 with x/net >= 0.60.0 and
-  # x/text >= 0.41.0. (go1.26.9 retired CVE-2026-78667 and -97031 here.)
+  # upstream ha-cli rebuild on go >= 1.26.10 with x/net >= 0.62.0 and
+  # x/text >= 0.41.0. (go1.26.9 retired CVE-2026-78667 and -97031 here;
+  # CVE-2026-78661, x/net/html DoS, entered the Trivy DB on 2026-11-06 and
+  # needs x/net >= 0.62.0.)
   - id: CVE-2026-46600
+    paths:
+      - "usr/bin/ha"
+  - id: CVE-2026-78661
     paths:
       - "usr/bin/ha"
   - id: CVE-2026-56851
