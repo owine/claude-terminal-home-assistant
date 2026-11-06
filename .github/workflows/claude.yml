@@ -37,6 +37,10 @@ jobs:
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-26.04
+    # SECURITY — these permissions are read-only on purpose. The job holds
+    # CLAUDE_CODE_OAUTH_TOKEN and id-token: write, so on a fork PR it must not
+    # also be able to push code or write comments with the workflow token. Do
+    # not add contents: write / pull-requests: write here.
     permissions:
       contents: read
       pull-requests: read
@@ -51,6 +55,19 @@ jobs:
 
       - name: Run Claude Code
         id: claude
+        # SECURITY — fork-PR safety rests on two properties of this action,
+        # verified at the pinned SHA (2026-11-06 audit):
+        #   1. it runs only for an actor with repo write access
+        #      (permissions.ts); do NOT set allowed_non_write_users, which
+        #      bypasses that check, or a fork author could trigger a run.
+        #   2. after checking out a PR head it restores .claude/, .mcp.json,
+        #      .claude.json, CLAUDE.md etc. from the reviewed base branch
+        #      (restore-config.ts) before launching, so PR-controlled hooks and
+        #      MCP servers do not execute.
+        # Keep any base-branch .claude/ hooks self-contained (call the tool
+        # binary directly; no `npm run`/Makefile indirection a PR could edit).
+        # Re-check both if this action is bumped to a version that changes the
+        # base-restore behaviour.
         uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
