@@ -47,7 +47,14 @@ RUN echo "apk refresh: ${APK_REFRESH:-none}" \
     ttyd=1.7.7-r0 \
     vim=9.2.1202-r0 \
     wget=1.25.0-r3 \
-    yq-go=4.53.3-r2
+    yq-go=4.53.3-r2 \
+    && rm -f /usr/bin/tempio
+
+# The rm above drops tempio, the base image's config-templating binary: nothing
+# in this app or the base image's s6/bashio scripts runs it, and its Go build
+# carried 24 suppressed CVEs in .trivyignore.yaml. Its bytes stay in the base
+# layer, but it is gone from the filesystem the app and Trivy see (Trivy
+# applies the whiteout). The smoke test asserts it stays gone.
 
 # Install Claude Code CLI with version pinning and integrity checking
 # Downloads specific version with SHA256 verification from manifest
