@@ -1196,6 +1196,15 @@ setup_ha_mcp() {
 
 # Main execution
 main() {
+    # Every step runs from /, not /config. The image's WORKDIR is /config and
+    # s6 starts this script there, but other apps and Samba users can write
+    # /config, and much of what runs below as root resolves files from its
+    # current directory: `python3 -m venv` imported a planted venv.py, and pip
+    # took an option package spec that names a file there as that local file.
+    # A step that wants /config names it: init_commands, the tmux session,
+    # and the ha-mcp registration (setup-ha-mcp.sh).
+    cd /
+
     bashio::log.info "Initializing Claude Terminal app..."
 
     init_environment

@@ -23,15 +23,19 @@ cat > "$stubs/claude" <<EOF
 #!/bin/sh
 for arg in "\$@"; do printf '%s\n' "\$arg"; done >> "$stubs/claude.log"
 echo --- >> "$stubs/claude.log"
+pwd >> "$stubs/claude.cwd"
 EOF
 chmod +x "$stubs/claude"
 
 fake_bin=$(new_tmpdir)/ha-mcp
 : > "$fake_bin" && chmod +x "$fake_bin"
 
+project_dir=$(cd "$(new_tmpdir)" && pwd -P)
+
 register() {
-    rm -f "$stubs/claude.log"
-    ( PATH="$stubs:$PATH"; HA_MCP_BIN="$fake_bin"; SUPERVISOR_TOKEN=live-token; configure_ha_mcp_server ) 2>/dev/null
+    rm -f "$stubs/claude.log" "$stubs/claude.cwd"
+    ( cd /; PATH="$stubs:$PATH"; HA_MCP_BIN="$fake_bin"; SUPERVISOR_TOKEN=live-token
+      HA_MCP_PROJECT_DIR="$project_dir"; configure_ha_mcp_server ) 2>/dev/null
 }
 registered() { cat "$stubs/claude.log" 2>/dev/null; }
 
@@ -46,6 +50,12 @@ added=$(registered)
 assert_contains "the server is registered with claude mcp add" "$added" "add"
 assert_contains "pointing at the image's ha-mcp binary" "$added" "$fake_bin"
 assert_contains "with the Supervisor's Core API URL" "$added" "HOMEASSISTANT_URL=http://supervisor/core"
+
+# Registered in the local scope, which ~/.claude.json keys by the directory
+# claude runs in: that must be the session's project, not wherever run.sh is
+# (it boots from /), for the server to show up in the session.
+assert_eq "both claude calls run in the project directory, not the caller's" \
+    "$(printf '%s\n%s' "$project_dir" "$project_dir")" "$(cat "$stubs/claude.cwd" 2>/dev/null)"
 
 # The live token stays out of ~/.claude.json (and so out of every backup):
 # claude expands ${SUPERVISOR_TOKEN} from its own environment at launch.

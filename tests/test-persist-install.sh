@@ -96,12 +96,15 @@ apk_calls() { grep -c . "$1/apk.log" 2>/dev/null || echo 0; }
 
 # Stub python3. `-c` answers the version probe; `-m venv DIR` builds a minimal
 # venv (pyvenv.cfg + an empty activate script) and exits with <venv status>.
+# Every call's arguments go to <dir>/python3.log; a leading -I is skipped.
 #   make_python_stub <dir> <venv status>
 make_python_stub() {
     local dir="$1" venv_status="$2"
     mkdir -p "$dir"
     cat > "$dir/python3" <<EOF
 #!/bin/sh
+echo "\$*" >> "$dir/python3.log"
+[ "\$1" = -I ] && shift
 case "\$1" in
     -c) echo 3.14 ;;
     -m)
@@ -179,6 +182,19 @@ reset_install_fixtures
 make_existing_venv
 run_install "$stubs" install_python_packages requests
 assert_eq "a successful install into an existing venv exits 0" "0" "$INSTALL_STATUS"
+
+# Every interpreter call is isolated (-I), so the cwd is not on sys.path. The
+# terminal starts in /config, which other apps and Samba users can write, and
+# `python3 -m venv` run there imported a planted /config/venv.py as root.
+reset_install_fixtures
+stubs=$(new_tmpdir)
+make_python_stub "$stubs" 0
+make_stub "$stubs/pip" 0
+run_install "$stubs" install_python_packages requests
+assert_contains "the venv is created by an isolated interpreter" \
+    "$(cat "$stubs/python3.log")" "-I -m venv $PERSIST_PYTHON/venv"
+assert_eq "no interpreter call runs without -I" "0" \
+    "$(grep -cv '^-I ' "$stubs/python3.log")"
 
 # ---------------------------------------------------------------------------
 # install_system_packages - install and record
