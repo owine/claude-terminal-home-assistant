@@ -45,6 +45,55 @@ tmux_query() {
     printf '%s\n' "$value"
 }
 
+# osc52_probe <home> <selection> - on the shipped config, copy a line in
+# copy-mode (what a mouse drag does), then have programs in two new windows
+# write <selection> with OSC 52, and ask for the clipboard with an OSC 52 read.
+# Prints the read's reply, as cat -v shows it, then the top buffer's content.
+osc52_probe() {
+    local home="$1" selection="$2" sock probe out
+    sock=$(new_tmpdir)
+    probe=$(new_tmpdir)
+    out="$probe/reply"
+    # Raw, and a read gives up after a second without input (min 0 time 10;
+    # no timeout(1) on macOS): dd stops at the first read that times out.
+    cat > "$probe/read" <<'EOF'
+#!/bin/sh
+stty raw -echo min 0 time 10
+printf '\033]52;c;?\007'
+dd bs=128 count=8 of="$1" 2>/dev/null
+stty sane
+EOF
+    # Each probe gets its own server: HOME and the socket directory are set
+    # per command, so nothing leaks into the suite's environment.
+    local t=(env -u TMUX HOME="$home" TMUX_TMPDIR="$sock" tmux)
+    "${t[@]}" -f "$CONF" new-session -d -s probe -x 80 -y 20 "echo copied-by-admin; sleep 30" 2>/dev/null || return 0
+    sleep 0.5
+    "${t[@]}" copy-mode -t probe
+    "${t[@]}" send-keys -t probe -X history-top
+    "${t[@]}" send-keys -t probe -X select-line
+    "${t[@]}" send-keys -t probe -X copy-selection-and-cancel
+    "${t[@]}" new-window -d -t probe "sh '$probe/read' '$out'"
+    sleep 2
+    "${t[@]}" new-window -d -t probe "printf '\033]52;c;%s\007' '$(printf '%s' "$selection" | base64)'; sleep 1"
+    sleep 1
+    cat -v "$out" 2>/dev/null
+    printf '|'
+    "${t[@]}" show-buffer 2>/dev/null
+    "${t[@]}" kill-server 2>/dev/null
+}
+
+printf '\n%s\n' "OSC 52: applications may write the clipboard, never read it"
+
+home=$(new_tmpdir)
+assert_eq "set-clipboard is on, so writes reach tmux and the wrapper" "on" "$(tmux_query "$home" set-clipboard)"
+assert_eq "get-clipboard is off" "off" "$(tmux_query "$home" get-clipboard)"
+
+# The default (get-clipboard buffer) answered a read with the line the admin
+# had just copied: ESC]52;c;Y29waWVkLWJ5LWFkbWluCg==BEL.
+result=$(osc52_probe "$home" written-by-pane)
+assert_eq "a pane's OSC 52 read gets no reply, the admin's copy stays private" "" "${result%%|*}"
+assert_eq "and a pane's OSC 52 write still becomes the top buffer" "written-by-pane" "${result#*|}"
+
 printf '\n%s\n' "user overrides in ~/.tmux.local.conf"
 
 home=$(new_tmpdir)
