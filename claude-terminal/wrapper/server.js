@@ -29,6 +29,7 @@ const {
     createRateLimiter,
     createOriginGuard,
     createUpgradeGuard,
+    createPeerGuard,
     createRequestDeadline,
     errorResponseFor,
     INVALID_FILE_TYPE,
@@ -114,6 +115,12 @@ const upload = multer({
         }
     }
 });
+
+// First of all: who may connect. Unpublished, 7680 is still reachable from
+// every container on the hassio network; only the ingress proxy and loopback
+// are admitted then. See createPeerGuard (http-guards.js).
+const peerGuard = createPeerGuard();
+app.use(peerGuard.middleware);
 
 // CSRF protection for state-changing requests (POST). See http-guards.js.
 app.use(createOriginGuard());
@@ -219,7 +226,12 @@ const terminalProxy = createProxyMiddleware({
     // localhost may resolve to ::1 first.
     target: `http://127.0.0.1:${TTYD_PORT}`,
     changeOrigin: true,
-    ws: true, // Enable WebSocket proxying
+    // Not `ws: true`. That makes the middleware subscribe its own 'upgrade'
+    // listener on the server the first time an HTTP request comes through
+    // /terminal, and Node runs every 'upgrade' listener: it proxied the
+    // handshakes the guards below had already refused. Upgrades reach ttyd
+    // only through terminalProxy.upgrade(), called by that listener.
+    ws: false,
     // Explicitly strip /terminal prefix for WebSocket upgrades
     // While v3 strips mount points for HTTP, WebSocket upgrades need explicit rewrite
     pathRewrite: {
@@ -271,12 +283,16 @@ const server = http.createServer(app);
 // that stops arriving (files-upload.js).
 server.requestTimeout = uploadRequestTimeoutMs(uploadLimit);
 
-// http-proxy-middleware does not auto-bind WS upgrades; without this the terminal won't connect.
-// Upgrades bypass Express entirely, so the origin check has to happen here: the
-// POST guard above never sees them, and browsers apply no CORS to WebSockets.
+// The one way a WebSocket reaches ttyd (the proxy is `ws: false`, above).
+// Upgrades bypass Express entirely, so both guards have to run here: the
+// middleware above never sees them, and browsers apply no CORS to WebSockets.
+// Keep this the server's only 'upgrade' listener - a second one runs whatever
+// this one refused.
 const upgradeGuard = createUpgradeGuard();
 server.on('upgrade', (req, socket, head) => {
-    if (upgradeGuard(req, socket)) terminalProxy.upgrade(req, socket, head);
+    if (peerGuard.upgrade(req, socket) && upgradeGuard(req, socket)) {
+        terminalProxy.upgrade(req, socket, head);
+    }
 });
 
 server.listen(PORT, '0.0.0.0', () => {
@@ -286,6 +302,9 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`ttyd terminal on port: ${TTYD_PORT}`);
     console.log(`Terminal proxy available at /terminal/`);
     console.log(`WebSocket upgrade handler registered`);
+    console.log(process.env.WRAPPER_DIRECT_PORT === '1'
+        ? 'Port 7680 is published: any peer may connect'
+        : 'Port 7680 is unpublished: only ingress and loopback may connect');
 });
 
 // Post Claude's login link as an HA notification. start() never rejects; the

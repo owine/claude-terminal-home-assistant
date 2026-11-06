@@ -25,6 +25,13 @@ config.yaml: yq -o=json '.options' claude-terminal/config.yaml > options.json.
 Without it the stub serves {}, so each bashio::config call returns the
 fallback that run.sh passes it.
 
+GET /addons/self/info reports 7680 as published on host port 7680, since
+every documented run maps it (-p 7680:7680): run.sh reads that to tell the
+wrapper it may admit clients other than ingress (WRAPPER_DIRECT_PORT), and a
+client of a published port reaches the container from the Docker bridge, not
+loopback. --unpublished reports it as Home Assistant does with the Network
+tab blank, where only loopback inside the container gets in.
+
 Any other endpoint answers 404 and is logged, so a new Supervisor dependency
 in the startup path shows up in the stub's output rather than as a mystery.
 Standard library only, so it runs on a bare CI runner.
@@ -36,9 +43,10 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 OPTIONS_PATH = "/addons/self/options/config"
+INFO_PATH = "/addons/self/info"
 
 
-def make_handler(options):
+def make_handler(options, info):
     class Handler(BaseHTTPRequestHandler):
         def _reply(self, status, body):
             payload = json.dumps(body).encode()
@@ -51,6 +59,8 @@ def make_handler(options):
         def do_GET(self):
             if self.path == OPTIONS_PATH:
                 self._reply(200, {"result": "ok", "data": options})
+            elif self.path == INFO_PATH:
+                self._reply(200, {"result": "ok", "data": info})
             else:
                 self.log_message("not stubbed: GET %s", self.path)
                 self._reply(404, {"result": "error", "message": "not stubbed"})
@@ -68,6 +78,11 @@ def main():
     # Loopback by default: a wider bind serves whatever --options holds to the network.
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--options", help="JSON file holding the add-on options object")
+    parser.add_argument(
+        "--unpublished",
+        action="store_true",
+        help="report 7680 as unpublished (no host port), as with the Network tab blank",
+    )
     args = parser.parse_args()
 
     options = {}
@@ -77,7 +92,8 @@ def main():
         if not isinstance(options, dict):
             sys.exit(f"{args.options}: expected a JSON object, got {type(options).__name__}")
 
-    server = ThreadingHTTPServer((args.bind, args.port), make_handler(options))
+    info = {"network": {"7680/tcp": None if args.unpublished else 7680}}
+    server = ThreadingHTTPServer((args.bind, args.port), make_handler(options, info))
     print(f"stub supervisor on {args.bind}:{args.port}, {len(options)} options", flush=True)
     server.serve_forever()
 

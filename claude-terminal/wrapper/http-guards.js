@@ -325,6 +325,76 @@ function createUpgradeGuard({ log = console.warn, now = monotonic } = {}) {
 }
 
 /**
+ * Who may connect at all, by the connection's peer address.
+ *
+ * The wrapper listens on 0.0.0.0, so with 7680 unpublished it is still
+ * reachable from every container on the hassio network (172.30.32.0/23):
+ * every other app, and with no Origin header a client passes checkOrigin and
+ * reaches the root terminal and the Files API. Unpublished, the only peers
+ * the app is meant to have are the Supervisor's ingress proxy (172.30.32.2,
+ * fixed by the Supervisor; the Home Assistant developer docs ask ingress apps
+ * to admit only it) and the container's own loopback (run.sh's health poll).
+ *
+ * `directPort` (WRAPPER_DIRECT_PORT=1, set by run.sh when the Network tab gives
+ * 7680 a host port) admits every peer: publishing the port is the user's
+ * opt-in to "anyone who can reach it", and other apps could reach it through
+ * the host's address then anyway. A reverse proxy app reaching this one over
+ * the hassio network needs the port published for the same reason.
+ *
+ * Returns `{ allowed, middleware, upgrade }`. `middleware` goes first in
+ * Express; `upgrade(req, socket)` goes first in the http server's 'upgrade'
+ * listener, where it answers 403 and returns false for a refused peer. Its
+ * log is capped (createRefusalLog), shared by both. Never throws.
+ */
+const INGRESS_PROXY = '172.30.32.2';
+const PEER_REFUSED = 'Only Home Assistant ingress may connect while port 7680 is unpublished';
+
+function peerAddress(address) {
+    // An IPv4 peer of a dual-stack socket reads ::ffff:a.b.c.d.
+    return String(address || '').replace(/^::ffff:/i, '');
+}
+
+function createPeerGuard({
+    directPort = process.env.WRAPPER_DIRECT_PORT === '1',
+    log = console.warn,
+    now = monotonic,
+} = {}) {
+    const report = createRefusalLog({ log, now });
+
+    const allowed = (remoteAddress) => {
+        if (directPort) return true;
+        const peer = peerAddress(remoteAddress);
+        return peer === INGRESS_PROXY || peer === '::1' || /^127\.\d+\.\d+\.\d+$/.test(peer);
+    };
+
+    const refused = (remoteAddress, what) => {
+        report(`Refused ${what} from ${JSON.stringify(peerAddress(remoteAddress))}: not the ingress proxy, and port 7680 is unpublished`);
+    };
+
+    return {
+        allowed,
+        middleware: (req, res, next) => {
+            const remote = req.socket?.remoteAddress;
+            if (allowed(remote)) return next();
+            refused(remote, 'request');
+            return refuse(req, res, 403, { error: PEER_REFUSED });
+        },
+        upgrade: (req, socket) => {
+            const remote = socket?.remoteAddress ?? req.socket?.remoteAddress;
+            if (allowed(remote)) return true;
+            refused(remote, 'WebSocket');
+            try {
+                socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+            } catch {
+                // An unwritable socket is closed either way.
+                socket.destroy?.();
+            }
+            return false;
+        },
+    };
+}
+
+/**
  * Bounds of one route's own on the time its request body may take, inside the
  * server-wide server.requestTimeout. Node has no per-route timeout, and
  * server.js raises the server's to 30 minutes or more for the Files uploads,
@@ -394,6 +464,7 @@ module.exports = {
     createOriginGuard,
     createCrossSiteGuard,
     createUpgradeGuard,
+    createPeerGuard,
     createRequestDeadline,
     errorResponseFor,
     INVALID_FILE_TYPE,

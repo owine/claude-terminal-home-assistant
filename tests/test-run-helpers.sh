@@ -713,4 +713,29 @@ assert_status "gives up by its deadline even when every attempt stalls" 0 test "
 
 unset -f curl sleep
 
+# ---------------------------------------------------------------------------
+# wrapper_port_published
+# ---------------------------------------------------------------------------
+# Decides WRAPPER_DIRECT_PORT, which opens the wrapper to every peer. Only an
+# actual host port may do that; a failed lookup must count as unpublished.
+printf '\n%s\n' "wrapper_port_published"
+
+# shellcheck disable=SC2329  # invoked by wrapper_port_published
+bashio::addon.port() { [ "$1" = 7680 ] && printf '%s' "$ADDON_PORT_STUB"; }
+ADDON_PORT_STUB=7680
+assert_status "a host port counts as published" 0 wrapper_port_published 7680
+ADDON_PORT_STUB=8443
+assert_status "a different host port counts as published" 0 wrapper_port_published 7680
+ADDON_PORT_STUB=""
+assert_status "no host port is unpublished" 1 wrapper_port_published 7680
+ADDON_PORT_STUB=null
+assert_status "a literal null is unpublished" 1 wrapper_port_published 7680
+
+# A Supervisor that cannot be reached must leave the port closed to peers.
+# shellcheck disable=SC2329  # invoked by wrapper_port_published
+bashio::addon.port() { return 1; }
+assert_status "a failed lookup is unpublished" 1 wrapper_port_published 7680
+unset -f bashio::addon.port
+unset ADDON_PORT_STUB
+
 finish_suite
