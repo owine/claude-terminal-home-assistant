@@ -45,12 +45,24 @@ configure_ha_mcp_server() {
     # in health-check.sh) would otherwise hang the add-on here forever with no
     # terminal ever coming up. These are local config file edits; 30s is ample.
     #
-    # Both run in /config, explicitly: run.sh's main() moved boot to /, and with
-    # no --scope these edit the *local* scope, which ~/.claude.json keys by the
-    # current directory - /config is the project the session opens by default.
-    # HA_MCP_PROJECT_DIR is a test seam.
-    local project_dir="${HA_MCP_PROJECT_DIR:-/config}"
-    (cd "$project_dir" && timeout 30 claude mcp remove home-assistant) 2>/dev/null || true
+    #
+    # The server lives in the *user* scope, so every session loads it whatever
+    # working_directory it starts in. Earlier versions registered it with no
+    # --scope, which is the local scope: ~/.claude.json keys that by the
+    # directory claude ran in, /config, and a session started anywhere else -
+    # a subdirectory of /config or a git repo inside it included - never loaded
+    # it. That entry is removed here, by scope: with both present, a bare
+    # `claude mcp remove` refuses to choose. jq looks first, so a boot with
+    # nothing to migrate spends no claude call on it. The user-scope remove
+    # must stay too: `claude mcp add` will not replace an existing entry.
+    # HA_MCP_LEGACY_DIR is a test seam.
+    local legacy_dir="${HA_MCP_LEGACY_DIR:-/config}"
+    if jq -e --arg dir "$legacy_dir" '.projects[$dir].mcpServers["home-assistant"]' \
+        "$HOME/.claude.json" >/dev/null 2>&1; then
+        bashio::log.info "Moving ha-mcp from ${legacy_dir}'s local scope to the user scope"
+        (cd "$legacy_dir" && timeout 30 claude mcp remove --scope local home-assistant) >/dev/null 2>&1 || true
+    fi
+    timeout 30 claude mcp remove --scope user home-assistant >/dev/null 2>&1 || true
 
     # Add ha-mcp as MCP server using pre-installed binary
     # Environment variables:
@@ -81,20 +93,20 @@ configure_ha_mcp_server() {
     # reconnected from /mcp. Neither answer is useful here; the image pins
     # ha-mcp and Renovate bumps it.
     # shellcheck disable=SC2016  # the literal ${SUPERVISOR_TOKEN} is the point
-    if (cd "$project_dir" && timeout 30 claude mcp add home-assistant \
+    if timeout 30 claude mcp add --scope user home-assistant \
         --env "HOMEASSISTANT_URL=http://supervisor/core" \
         --env 'HOMEASSISTANT_TOKEN=${SUPERVISOR_TOKEN}' \
         --env "ENABLE_SKILLS=true" \
         --env "ENABLE_SKILLS_AS_TOOLS=true" \
         --env "HA_MCP_DISABLE_UPDATE_CHECK=true" \
         --env "FASTMCP_CHECK_FOR_UPDATES=off" \
-        -- "$HA_MCP_BIN"); then
+        -- "$HA_MCP_BIN"; then
         bashio::log.info "ha-mcp configured successfully!"
         bashio::log.info "Claude Code now has access to Home Assistant via MCP"
         bashio::log.info "Available tools: entity control, automations, scripts, history, and more"
     else
         bashio::log.warning "Failed to configure ha-mcp - continuing without MCP integration"
-        bashio::log.warning "You can manually run: claude mcp add home-assistant --env HOMEASSISTANT_URL=http://supervisor/core --env 'HOMEASSISTANT_TOKEN=\${SUPERVISOR_TOKEN}' -- ${HA_MCP_BIN}"
+        bashio::log.warning "You can manually run: claude mcp add --scope user home-assistant --env HOMEASSISTANT_URL=http://supervisor/core --env 'HOMEASSISTANT_TOKEN=\${SUPERVISOR_TOKEN}' -- ${HA_MCP_BIN}"
     fi
 }
 
