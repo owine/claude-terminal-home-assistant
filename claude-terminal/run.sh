@@ -301,28 +301,39 @@ prune_claude_versions() {
 # CLAUDE_CONFIG_DIR (unset here), falling back to HOME:
 #   ~/.claude/.credentials.json   OAuth credentials
 #   ~/.claude.json                account and settings
-# Earlier versions of this function copied legacy sources wholesale into
-# /data/.config/claude (ANTHROPIC_CONFIG_DIR), which Claude Code never reads
-# for either file, so the migration restored nobody's login. That directory is
-# now itself a source, recovering whatever was stranded there.
+# Earlier versions of this add-on kept the login in other locations; this
+# copies it into HOME once, on the first boot that runs this code, and then
+# closes the window for good.
 #
-# Two guarantees:
+# Why the window closes, and never reopens (SECURITY):
+#   Two of the sources below, /config/claude-config and /tmp/claude-config, are
+#   writable by other add-ons and by Samba users. An earlier version re-checked
+#   every source on every boot, migrating any that "appeared later" — so after
+#   the admin ran /logout (which deletes the HOME credential), a login a
+#   different writer had planted in /config/claude-config would be copied into
+#   HOME on the next boot, and the terminal would come up logged in as that
+#   account, sending the admin's sessions to it. Migration is therefore a
+#   one-time event: once this has run a clean pass, `.legacy-auth-complete`
+#   marks it done and the function returns immediately ever after, whatever
+#   later appears in a legacy location. Found in the 2026-11-06 security audit.
+#
+# Two further guarantees, within that single pass:
 #   - A live login is never overwritten. Each file is copied only if HOME has
-#     none; a user who has logged in since keeps that login.
-#   - Each source is handled once, tracked by a marker listing source paths.
-#     Without it, a /logout (which deletes the credential) would be undone on
-#     the next boot by the stale legacy copy. A source is marked even when its
-#     files were skipped for an existing login: it has been dealt with. It is
-#     not marked when it holds neither file, so one that gains a credential
-#     later is still picked up.
-#
-# The marker is new at this path, so sources the old function already
-# "migrated" get one more pass. With copy-if-absent that can only fill a gap:
-# it restores users who were silently logged out by the old target.
+#     none; an admin who has logged in keeps that login (copy_auth_file_if_absent).
+#   - A copy failure leaves the window OPEN, so a transient error (a full disk,
+#     say) is retried on the next boot rather than lost. The window closes only
+#     after a pass with no failure. A /config writer cannot force a failure:
+#     the destination is HOME, which they cannot touch.
 migrate_legacy_auth_files() {
     local home="$1"
-    local migrated=false
-    local marker="$home/.claude/.legacy-auth-migrated"
+    local complete="$home/.claude/.legacy-auth-complete"
+
+    # The window is closed: never migrate again, so a planted credential in a
+    # world-writable legacy location is ignored. This is the whole fix.
+    if [ -e "$complete" ]; then
+        bashio::log.info "Legacy auth migration already completed; skipping"
+        return 0
+    fi
 
     bashio::log.info "Checking for existing authentication files to migrate..."
 
@@ -339,6 +350,7 @@ migrate_legacy_auth_files() {
     )
 
     local legacy_path cred_src account_src
+    local migrated=false failed=false
     for legacy_path in "${legacy_locations[@]}"; do
         [ -d "$legacy_path" ] || continue
 
@@ -358,29 +370,30 @@ migrate_legacy_auth_files() {
             continue
         fi
 
-        if grep -qxF -- "$legacy_path" "$marker" 2>/dev/null; then
-            bashio::log.debug "Already migrated, skipping: $legacy_path"
-            continue
-        fi
-
         bashio::log.info "Migrating auth files from: $legacy_path"
         if copy_auth_file_if_absent "$cred_src" "$home/.claude/.credentials.json" &&
            copy_auth_file_if_absent "$account_src" "$home/.claude.json"; then
-            # Record the source only after success, so a failed copy is
-            # retried on the next boot rather than skipped.
-            mkdir -p "$(dirname "$marker")"
-            printf '%s\n' "$legacy_path" >> "$marker"
-            chmod 600 "$marker" 2>/dev/null || true
             migrated=true
             bashio::log.info "Migration completed from: $legacy_path (it can now be deleted)"
         else
+            failed=true
             bashio::log.warning "Failed to migrate from: $legacy_path"
         fi
     done
 
-    if [ "$migrated" = false ]; then
-        bashio::log.info "No existing authentication files found to migrate"
+    if [ "$failed" = true ]; then
+        # Leave the window open: do not write the marker, so the next boot
+        # retries. Copies that did succeed are no-ops then (dest exists).
+        bashio::log.warning "A legacy source failed to copy; will retry on the next start"
+        return 0
     fi
+
+    # A clean pass (including a pass that found nothing): close the window.
+    [ "$migrated" = false ] && bashio::log.info "No existing authentication files found to migrate"
+    mkdir -p "$(dirname "$complete")"
+    : > "$complete"
+    chmod 600 "$complete" 2>/dev/null || true
+    bashio::log.info "Legacy auth migration window closed; it will not run again"
 }
 
 # copy_auth_file_if_absent <source or ""> <destination>

@@ -11,11 +11,15 @@
 # Claude Code does not look in - so it restored nobody's login. It now maps
 # the two files into HOME, and treats that old target as one more source.
 #
-# Two guarantees shape every case below:
+# Guarantees shaping every case below:
 #   - a live login is never overwritten: files are copied only where none
 #     exists yet
-#   - a migration happens once per source: after /logout deletes the
-#     credential, the next boot must not bring a stale one back
+#   - migration is a one-time window: the first clean pass closes it
+#     (.legacy-auth-complete) and the function never runs again. SECURITY:
+#     /config/claude-config and /tmp/claude-config are writable by other
+#     add-ons and Samba users, so a login planted there after the window closes
+#     must be ignored - otherwise, once /logout empties HOME, the next boot
+#     would adopt the planted account. (2026-11-06 audit.)
 #
 # LEGACY_AUTH_PREFIX is a test seam, empty in production, mirroring
 # CLAUDE_BIN_PREFIX in health-check.sh: the legacy paths are absolute and
@@ -146,15 +150,16 @@ migrate "$prefix" "$home"
 assert_eq "the legacy source is left in place for the user to remove" \
     "original-token" "$(cat "$prefix/config/claude-config/.credentials.json" 2>/dev/null)"
 
-# The marker records which sources were handled, not that a migration ever
-# ran, so a source that only appears later is still picked up.
+# SECURITY: the window closes after the first pass, so a source that appears
+# later is ignored. Before the fix this was "still picked up" - the exact hole
+# a /config writer used to plant a login.
 read -r prefix home <<< "$(new_fixture)"
-migrate "$prefix" "$home"
+migrate "$prefix" "$home"        # first boot: migrates, then closes the window
 mkdir -p "$prefix/tmp/claude-config"
 printf '{"later":1}\n' > "$prefix/tmp/claude-config/.claude.json"
 migrate "$prefix" "$home"
-assert_eq "a legacy source that appears later is still migrated" \
-    '{"later":1}' "$(cat "$home/.claude.json" 2>/dev/null)"
+assert_status "a legacy source that appears after the window closed is ignored" 1 \
+    test -e "$home/.claude.json"
 
 # ---------------------------------------------------------------------------
 # Nothing to do
@@ -168,17 +173,38 @@ out=$(LEGACY_AUTH_PREFIX="$prefix" migrate_legacy_auth_files "$home" 2>&1 >/dev/
 assert_contains "an empty system reports nothing to migrate" \
     "$out" "No existing authentication files found"
 
-# A source with nothing Claude Code reads is not a migration, so it must not
-# be marked as one - otherwise a credential dropped there later is ignored.
+# SECURITY: the first boot closes the window even when it finds nothing. A
+# credential a /config writer drops afterwards must be ignored - otherwise,
+# after the admin's /logout empties HOME, the next boot would adopt the planted
+# login. This is the attack the audit describes.
 prefix=$(new_tmpdir)
 home="$prefix/data/home"
 mkdir -p "$home" "$prefix/config/claude-config"
-printf 'junk\n' > "$prefix/config/claude-config/unrelated.txt"
+migrate "$prefix" "$home"        # first boot: nothing to migrate, window closes
+printf 'planted-by-another-app\n' > "$prefix/config/claude-config/.credentials.json"
 migrate "$prefix" "$home"
-printf 'arrived-later\n' > "$prefix/config/claude-config/.credentials.json"
+assert_status "a credential planted after the window closed is not adopted" 1 \
+    test -e "$home/.claude/.credentials.json"
+
+# The full scenario, end to end: the admin is logged in on the boot that closes
+# the window, then runs /logout, then another add-on plants a login in the
+# world-writable /config/claude-config. The planted login must not be adopted.
+read -r prefix home <<< "$(new_fixture nested)"
+mkdir -p "$home/.claude"
+printf 'admin-login\n' > "$home/.claude/.credentials.json"
+migrate "$prefix" "$home"                                            # window closes
+rm "$home/.claude/.credentials.json"                                 # admin /logout
+printf 'attacker-login\n' > "$prefix/config/claude-config/.claude/.credentials.json"
+migrate "$prefix" "$home"                                            # next boot
+assert_status "a login planted after /logout is not adopted" 1 \
+    test -e "$home/.claude/.credentials.json"
+
+# And the window-closed marker is itself private (it lives beside the
+# credentials and is written 600).
+read -r prefix home <<< "$(new_fixture)"
 migrate "$prefix" "$home"
-assert_eq "a source holding no credential is not recorded as migrated" \
-    "arrived-later" "$(cred "$home")"
+assert_eq "the completion marker is not group- or world-readable" \
+    "rw-------" "$(mode_of "$home/.claude/.legacy-auth-complete")"
 
 # ---------------------------------------------------------------------------
 # secure_claude_credentials
