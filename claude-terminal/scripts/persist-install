@@ -30,8 +30,13 @@ PERSIST_MIGRATED="${PERSIST_MIGRATED:-$PERSIST_ROOT/.legacy-migrated}"
 SYSTEM_BIN_DIRS="${SYSTEM_BIN_DIRS:-/usr/bin /usr/sbin /bin /sbin}"
 
 # Echo the Python minor version (e.g. "3.14") the system interpreter reports.
+#
+# Every python3 call here is isolated (-I): without it the current directory
+# goes first on sys.path, and the terminal starts in /config, which other apps
+# and Samba users can write. `python3 -m venv` there imported a planted
+# /config/venv.py, as root.
 system_python_minor() {
-    python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null
+    python3 -I -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null
 }
 
 # Echo the Python minor version recorded in a venv's pyvenv.cfg (empty if absent).
@@ -356,7 +361,7 @@ install_python_packages() {
         fi
 
         mkdir -p "$PERSIST_PYTHON"
-        if ! python3 -m venv "$PERSIST_PYTHON/venv"; then
+        if ! python3 -I -m venv "$PERSIST_PYTHON/venv"; then
             echo "❌ Failed to create virtual environment"
             exit 1
         fi

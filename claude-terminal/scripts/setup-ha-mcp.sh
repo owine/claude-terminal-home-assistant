@@ -44,7 +44,13 @@ configure_ha_mcp_server() {
     # 100% CPU on a VM whose virtual CPU masks AVX - see check_cpu_capabilities
     # in health-check.sh) would otherwise hang the add-on here forever with no
     # terminal ever coming up. These are local config file edits; 30s is ample.
-    timeout 30 claude mcp remove home-assistant 2>/dev/null || true
+    #
+    # Both run in /config, explicitly: run.sh's main() moved boot to /, and with
+    # no --scope these edit the *local* scope, which ~/.claude.json keys by the
+    # current directory - /config is the project the session opens by default.
+    # HA_MCP_PROJECT_DIR is a test seam.
+    local project_dir="${HA_MCP_PROJECT_DIR:-/config}"
+    (cd "$project_dir" && timeout 30 claude mcp remove home-assistant) 2>/dev/null || true
 
     # Add ha-mcp as MCP server using pre-installed binary
     # Environment variables:
@@ -75,14 +81,14 @@ configure_ha_mcp_server() {
     # reconnected from /mcp. Neither answer is useful here; the image pins
     # ha-mcp and Renovate bumps it.
     # shellcheck disable=SC2016  # the literal ${SUPERVISOR_TOKEN} is the point
-    if timeout 30 claude mcp add home-assistant \
+    if (cd "$project_dir" && timeout 30 claude mcp add home-assistant \
         --env "HOMEASSISTANT_URL=http://supervisor/core" \
         --env 'HOMEASSISTANT_TOKEN=${SUPERVISOR_TOKEN}' \
         --env "ENABLE_SKILLS=true" \
         --env "ENABLE_SKILLS_AS_TOOLS=true" \
         --env "HA_MCP_DISABLE_UPDATE_CHECK=true" \
         --env "FASTMCP_CHECK_FOR_UPDATES=off" \
-        -- "$HA_MCP_BIN"; then
+        -- "$HA_MCP_BIN"); then
         bashio::log.info "ha-mcp configured successfully!"
         bashio::log.info "Claude Code now has access to Home Assistant via MCP"
         bashio::log.info "Available tools: entity control, automations, scripts, history, and more"

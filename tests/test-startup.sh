@@ -25,7 +25,8 @@ set +e
 printf '\n%s\n' "main: step order"
 
 order_file=$(new_tmpdir)/order
-record() { printf '%s\n' "$1" >> "$order_file"; }
+cwd_file=$(new_tmpdir)/cwd
+record() { printf '%s\n' "$1" >> "$order_file"; printf '%s %s\n' "$1" "$PWD" >> "$cwd_file"; }
 
 # Replace every step main() calls with a recorder. The real ones touch /data,
 # the Supervisor and the network - run_init_commands would run whatever an
@@ -37,8 +38,10 @@ for step in $steps; do
     eval "$step() { record $step; }"
 done
 
-rm -f "$order_file"
-main 2>/dev/null
+rm -f "$order_file" "$cwd_file"
+# In a subshell, started somewhere else: main() changes directory, and s6
+# starts it in the image's WORKDIR, /config.
+(cd "$(new_tmpdir)" && main 2>/dev/null)
 position() { grep -nx "$1" "$order_file" | cut -d: -f1; }
 
 # A step main() calls that is not in the list above runs for real. Catch one
@@ -67,6 +70,11 @@ for slow in setup_persistent_packages init_docker setup_ha_mcp; do
     assert_status "the wrapper is serving before $slow" 0 test "${wrapper:-999}" -lt "$(position "$slow")"
 done
 assert_eq "the terminal still starts last" "start_web_terminal" "$(tail -1 "$order_file")"
+# /config is writable by other apps and Samba users, and boot runs as root:
+# python3 -m venv imported a planted venv.py from it, and pip read a package
+# spec that named a file there as that file. Every step starts from /.
+assert_eq "every step runs from /, not the directory main() started in" "" \
+    "$(grep -v ' /$' "$cwd_file")"
 # The wrapper reads UPLOAD_MAX_MB when it starts, and the inbox is swept while
 # no upload can be in flight.
 for early in export_upload_max_mb prune_upload_inbox; do
