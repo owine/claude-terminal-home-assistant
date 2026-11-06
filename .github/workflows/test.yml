@@ -221,6 +221,18 @@ jobs:
 
           echo "Smoke test passed"
 
+      # tests/test-tmux-conf.sh again, on the image's own tmux. The Unit tests
+      # job runs it on the runner's (Ubuntu 26.04: tmux 3.6), which has no
+      # get-clipboard, so the OSC 52 read checks skip there. Here a tmux
+      # without it fails the suite.
+      - name: tmux config tests on the image's tmux
+        if: needs.init.outputs.code == 'true'
+        env:
+          IMAGE: ${{ matrix.image }}:test
+        run: |
+          docker run --rm --entrypoint bash -e CI=true -e CTP_REQUIRE_GET_CLIPBOARD=1 \
+            -v "$PWD:/repo:ro" -w /repo "$IMAGE" tests/run-tests.sh tmux
+
       - name: Show container logs
         if: always() && needs.init.outputs.code == 'true'
         run: |
