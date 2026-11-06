@@ -337,20 +337,89 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.engine }}
 
-      # --with-deps installs apt packages, which live outside the cached path and
-      # so must run either way; it is fast when the packages are already present.
-      # Only the browser download is skipped on a cache hit.
+      # Chromium: no apt at all, so no `--with-deps`. Playwright always adds a
+      # `tools` group to it (`targets.add("tools")` is unconditional, no flag
+      # skips it), and on this runner image the only packages that group
+      # actually downloads are nine CJK/Thai/xfonts fallback fonts: every
+      # Chromium runtime lib is already installed. Those ~21 MB come from
+      # azure.archive.ubuntu.com, which has served them at 38 kB/s (9 min 14 s
+      # in run 42268095471, against ~11 s normally). The fonts are never
+      # present, so the download happened even on a browser-cache hit. If a
+      # future image drops a Chromium lib, launch fails loudly with
+      # Playwright's missing-libraries list; add that package explicitly then,
+      # don't restore `--with-deps`. `matrix.os` comes from home-assistant/builder
+      # and may move from 24.04 to 26.04; this holds on both. On a cache hit
+      # there is nothing to do. The timeout bounds the CDN download (~10 s).
       - name: Install browser
+        if: matrix.engine == 'chromium' && steps.browser-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 5
+        run: /tmp/pw/node_modules/.bin/playwright install chromium
+
+      # WebKit does need its deps: 181 packages, 114 MB, almost all real runtime
+      # libs (gtk-4, gstreamer, flite, ...) the image lacks. The same mirror took
+      # 50 min 32 s for them in run 42255396887 (33 kB/s) and 6 min 38 s in
+      # 42266133719, against ~7 s normally. So the .debs are kept in a cache of
+      # their own and apt only fetches what changed. apt itself still runs, and
+      # `apt-get update` still hits the mirror; package lists have always come
+      # back in ~1 s. The archive dir is outside $HOME because apt downloads as
+      # `_apt`, which cannot traverse /home/runner, and only `*.deb` is cached,
+      # leaving apt's `_apt`-owned `partial/` and root's `lock` out of the tar.
+      - name: Point apt at the archive cache
+        id: apt-archives
+        if: matrix.engine == 'webkit'
+        run: |
+          set -euo pipefail
+          dir=/var/cache/ctp-apt-archives
+          sudo install -d -o "$(id -u)" -g "$(id -g)" "$dir"
+          printf 'Dir::Cache::Archives "%s/";\nAPT::Keep-Downloaded-Packages "true";\n' "$dir" \
+            | sudo tee /etc/apt/apt.conf.d/99ctp-archive-cache
+          {
+            echo "dir=$dir"
+            echo "key-prefix=apt-webkit-${RUNNER_OS}-${ImageOS:-unknown}-"
+            echo "image-version=${ImageVersion:-unknown}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Keyed on the runner image, which fixes what is already installed, and
+      # on Playwright, which fixes the package list. The prefix restore means a
+      # new image or Playwright still starts from the previous entry's .debs and
+      # fetches only the difference.
+      - name: Restore apt archives
+        id: apt-cache
+        if: matrix.engine == 'webkit'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/ctp-apt-archives/*.deb
+          key: ${{ steps.apt-archives.outputs.key-prefix }}${{ steps.apt-archives.outputs.image-version }}-${{ steps.playwright.outputs.version }}
+          restore-keys: |
+            ${{ steps.apt-archives.outputs.key-prefix }}
+
+      # Normally ~30 s with all 114 MB downloaded; the timeout is the backstop
+      # for a deb-cache miss on a slow mirror, failing the job in minutes, not
+      # an hour.
+      - name: Install browser
+        if: matrix.engine == 'webkit'
+        timeout-minutes: 10
         env:
-          ENGINE: ${{ matrix.engine }}
           CACHE_HIT: ${{ steps.browser-cache.outputs.cache-hit }}
+          ARCHIVES: ${{ steps.apt-archives.outputs.dir }}
         run: |
           set -euo pipefail
           if [ "$CACHE_HIT" = "true" ]; then
-            /tmp/pw/node_modules/.bin/playwright install-deps "$ENGINE"
+            /tmp/pw/node_modules/.bin/playwright install-deps webkit
           else
-            /tmp/pw/node_modules/.bin/playwright install --with-deps "$ENGINE"
+            /tmp/pw/node_modules/.bin/playwright install --with-deps webkit
           fi
+          # Drop .debs no longer in the package lists, so an entry restored by
+          # prefix does not carry superseded versions forward forever.
+          sudo apt-get autoclean -qq
+          echo "apt archive cache: $(find "$ARCHIVES" -maxdepth 1 -name '*.deb' | wc -l) debs, $(sudo du -sh "$ARCHIVES" | cut -f1)"
+
+      - name: Save apt archives
+        if: matrix.engine == 'webkit' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/ctp-apt-archives/*.deb
+          key: ${{ steps.apt-cache.outputs.cache-primary-key }}
 
       - name: Integration test (browser to tmux wiring)
         env:
