@@ -81,6 +81,13 @@ options:
   #   waiting, and dismiss it once the login succeeds. Skipped when
   #   claude_code_oauth_token is set.
   login_notification: true
+  # proxy_token: A secret your own reverse proxy sends in the
+  #   X-Claude-Terminal-Token header. With it set, every connection that is not
+  #   Home Assistant ingress must carry it, whether 7680 is published or not:
+  #   the LAN and other apps are refused, the proxy gets in. Masked in the UI,
+  #   never logged, and given to the wrapper process only. Empty (default)
+  #   keeps the old rule: published admits anyone, unpublished ingress only.
+  proxy_token: ""
   # tmux_mouse_mode: Enable mouse support in tmux
   #   When true (default): the wheel scrolls tmux history and a drag selects and
   #     copies. To select with the terminal's own selection instead, hold Shift
@@ -131,6 +138,7 @@ schema:
   working_directory: str?
   claude_code_oauth_token: password?
   login_notification: bool?
+  proxy_token: password?
   tmux_mouse_mode: bool?
   persist_npm_cache: bool?
   image_retention_days: int(0,)?

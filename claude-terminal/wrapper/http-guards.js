@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 /**
  * Request guards for the wrapper service.
  *
@@ -338,50 +340,103 @@ function createUpgradeGuard({ log = console.warn, now = monotonic } = {}) {
  * `directPort` (WRAPPER_DIRECT_PORT=1, set by run.sh when the Network tab gives
  * 7680 a host port) admits every peer: publishing the port is the user's
  * opt-in to "anyone who can reach it", and other apps could reach it through
- * the host's address then anyway. A reverse proxy app reaching this one over
- * the hassio network needs the port published for the same reason.
+ * the host's address then anyway.
  *
- * Returns `{ allowed, middleware, upgrade }`. `middleware` goes first in
+ * `proxyToken` (WRAPPER_PROXY_TOKEN, the proxy_token option) narrows both
+ * modes: a peer other than ingress and loopback is admitted only when its
+ * request carries the token in X-Claude-Terminal-Token, published or not. The
+ * Supervisor cannot bind a published port to one interface, so a user whose
+ * own reverse proxy (with its own login) reaches 7680 had no way to keep the
+ * LAN and the other apps out; the proxy adds the header, nothing else knows
+ * it. Unpublished, it lets a reverse proxy app on the hassio network in
+ * without publishing the port at all. The header is removed from an admitted
+ * request, so nothing behind the wrapper (ttyd) ever sees it.
+ *
+ * Returns `{ allowed, mode, middleware, upgrade }`. `middleware` goes first in
  * Express; `upgrade(req, socket)` goes first in the http server's 'upgrade'
  * listener, where it answers 403 and returns false for a refused peer. Its
  * log is capped (createRefusalLog), shared by both. Never throws.
  */
 const INGRESS_PROXY = '172.30.32.2';
-const PEER_REFUSED = 'Only Home Assistant ingress may connect while port 7680 is unpublished';
+const PROXY_TOKEN_HEADER = 'x-claude-terminal-token';
 
 function peerAddress(address) {
     // An IPv4 peer of a dual-stack socket reads ::ffff:a.b.c.d.
     return String(address || '').replace(/^::ffff:/i, '');
 }
 
+// Hashing first gives timingSafeEqual the equal lengths it requires, and hides
+// the token's length from the timing as well.
+function tokenMatches(sent, expected) {
+    if (typeof sent !== 'string' || sent === '') return false;
+    const digest = (value) => crypto.createHash('sha256').update(value).digest();
+    return crypto.timingSafeEqual(digest(sent), digest(expected));
+}
+
 function createPeerGuard({
     directPort = process.env.WRAPPER_DIRECT_PORT === '1',
+    proxyToken = process.env.WRAPPER_PROXY_TOKEN || '',
     log = console.warn,
     now = monotonic,
 } = {}) {
     const report = createRefusalLog({ log, now });
 
-    const allowed = (remoteAddress) => {
-        if (directPort) return true;
+    const local = (remoteAddress) => {
         const peer = peerAddress(remoteAddress);
         return peer === INGRESS_PROXY || peer === '::1' || /^127\.\d+\.\d+\.\d+$/.test(peer);
     };
 
+    // allowed(remoteAddress, headers?): headers is a request's lower-cased
+    // header object, as Node gives it.
+    const allowed = (remoteAddress, headers = {}) => {
+        if (local(remoteAddress)) return true;
+        if (proxyToken) return tokenMatches(headers[PROXY_TOKEN_HEADER], proxyToken);
+        return directPort;
+    };
+
+    const why = proxyToken
+        ? 'no valid X-Claude-Terminal-Token, and proxy_token is set'
+        : 'not the ingress proxy, and port 7680 is unpublished';
+    const answer = proxyToken
+        ? 'Only Home Assistant ingress, or a proxy sending the proxy_token, may connect'
+        : 'Only Home Assistant ingress may connect while port 7680 is unpublished';
+
     const refused = (remoteAddress, what) => {
-        report(`Refused ${what} from ${JSON.stringify(peerAddress(remoteAddress))}: not the ingress proxy, and port 7680 is unpublished`);
+        report(`Refused ${what} from ${JSON.stringify(peerAddress(remoteAddress))}: ${why}`);
+    };
+
+    // A pure function of the settings, for the startup log line.
+    let mode;
+    if (proxyToken) {
+        mode = `proxy_token is set: peers other than ingress and loopback must send it (port 7680 ${directPort ? 'published' : 'unpublished'})`;
+    } else if (directPort) {
+        mode = 'Port 7680 is published: any peer may connect';
+    } else {
+        mode = 'Port 7680 is unpublished: only ingress and loopback may connect';
+    }
+
+    const admit = (req) => {
+        if (req.headers) delete req.headers[PROXY_TOKEN_HEADER];
     };
 
     return {
         allowed,
+        mode,
         middleware: (req, res, next) => {
             const remote = req.socket?.remoteAddress;
-            if (allowed(remote)) return next();
+            if (allowed(remote, req.headers)) {
+                admit(req);
+                return next();
+            }
             refused(remote, 'request');
-            return refuse(req, res, 403, { error: PEER_REFUSED });
+            return refuse(req, res, 403, { error: answer });
         },
         upgrade: (req, socket) => {
             const remote = socket?.remoteAddress ?? req.socket?.remoteAddress;
-            if (allowed(remote)) return true;
+            if (allowed(remote, req?.headers)) {
+                admit(req);
+                return true;
+            }
             refused(remote, 'WebSocket');
             try {
                 socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');

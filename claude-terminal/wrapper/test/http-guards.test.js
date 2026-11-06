@@ -28,6 +28,7 @@ function makeReq({ method = 'GET', headers = {}, ip = '10.0.0.1' } = {}) {
         method,
         ip,
         socket: { remoteAddress: ip },
+        headers: lower,
         get(name) { return lower[name.toLowerCase()]; },
     };
 }
@@ -553,6 +554,101 @@ test('directPort follows WRAPPER_DIRECT_PORT=1 by default, and nothing else', ()
         if (saved === undefined) delete process.env.WRAPPER_DIRECT_PORT;
         else process.env.WRAPPER_DIRECT_PORT = saved;
     }
+});
+
+// proxy_token: the Supervisor cannot bind a published port to one interface,
+// so a user's own reverse proxy (with its own login) reaching 7680 left the
+// LAN and every other app with an unauthenticated root shell. With the token
+// set, a peer other than ingress and loopback needs it, published or not.
+const TOKEN = 'b7c1f0e2d4a6c8e0b2d4f6a8c0e2d4f6';
+
+function tokenReq(remoteAddress, token) {
+    return peerReq(remoteAddress, token === undefined ? {} : { 'x-claude-terminal-token': token });
+}
+
+function tokenUpgrade(guard, remoteAddress, token) {
+    const socket = makeSocket();
+    socket.remoteAddress = remoteAddress;
+    const req = makeUpgradeReq(token === undefined ? {} : { 'X-Claude-Terminal-Token': token });
+    return { allowed: guard.upgrade(req, socket), socket, req };
+}
+
+test('proxy_token, published: a peer without the token is refused, request and WebSocket', () => {
+    const guard = createPeerGuard({ ...silent, directPort: true, proxyToken: TOKEN });
+    for (const peer of [OTHER_APP, '172.30.32.1', '192.168.1.20']) {
+        const result = run(guard.middleware, tokenReq(peer));
+        assert.strictEqual(result.allowed, false, peer);
+        assert.strictEqual(result.status, 403, peer);
+        assert.match(result.body.error, /proxy_token/);
+        const { allowed, socket } = tokenUpgrade(guard, peer);
+        assert.strictEqual(allowed, false, peer);
+        assert.match(socket.written, /^HTTP\/1\.1 403 Forbidden\r\n/);
+    }
+});
+
+test('proxy_token: a wrong, empty, near-miss or repeated token is refused', () => {
+    const guard = createPeerGuard({ ...silent, directPort: true, proxyToken: TOKEN });
+    for (const token of ['', 'wrong', TOKEN.slice(0, -1), `${TOKEN}x`, ` ${TOKEN}`, TOKEN.toUpperCase(), `${TOKEN}, ${TOKEN}`]) {
+        assert.strictEqual(run(guard.middleware, tokenReq('192.168.1.20', token)).allowed, false, JSON.stringify(token));
+        assert.strictEqual(tokenUpgrade(guard, '192.168.1.20', token).allowed, false, JSON.stringify(token));
+    }
+});
+
+test('proxy_token: a peer sending the token is admitted, request and WebSocket, published or not', () => {
+    for (const directPort of [true, false]) {
+        const guard = createPeerGuard({ ...silent, directPort, proxyToken: TOKEN });
+        assert.strictEqual(run(guard.middleware, tokenReq('192.168.1.20', TOKEN)).allowed, true, String(directPort));
+        assert.strictEqual(tokenUpgrade(guard, OTHER_APP, TOKEN).allowed, true, String(directPort));
+    }
+});
+
+test('proxy_token: ingress and loopback need no token', () => {
+    const guard = createPeerGuard({ ...silent, directPort: true, proxyToken: TOKEN });
+    for (const peer of ['172.30.32.2', '127.0.0.1', '::1', '::ffff:172.30.32.2']) {
+        assert.strictEqual(run(guard.middleware, tokenReq(peer)).allowed, true, peer);
+        assert.strictEqual(tokenUpgrade(guard, peer).allowed, true, peer);
+    }
+});
+
+test('proxy_token: the token header is removed from an admitted request, so ttyd never sees it', () => {
+    const guard = createPeerGuard({ ...silent, directPort: true, proxyToken: TOKEN });
+    const req = tokenReq('192.168.1.20', TOKEN);
+    run(guard.middleware, req);
+    assert.strictEqual('x-claude-terminal-token' in req.headers, false);
+    const upgraded = tokenUpgrade(guard, '192.168.1.20', TOKEN);
+    assert.strictEqual('x-claude-terminal-token' in upgraded.req.headers, false);
+});
+
+test('proxy_token: refusals say why, and never log the token sent', () => {
+    const lines = [];
+    const guard = createPeerGuard({ directPort: true, proxyToken: TOKEN, log: (l) => lines.push(l), now: () => 0 });
+    run(guard.middleware, tokenReq('192.168.1.20', 'guess-1234'));
+    assert.match(lines[0], /^Refused request from "192\.168\.1\.20": no valid X-Claude-Terminal-Token/);
+    assert.doesNotMatch(lines.join('\n'), /guess-1234|b7c1f0e2/);
+});
+
+test('proxyToken follows WRAPPER_PROXY_TOKEN by default; empty leaves the old behaviour', () => {
+    const saved = process.env.WRAPPER_PROXY_TOKEN;
+    try {
+        process.env.WRAPPER_PROXY_TOKEN = TOKEN;
+        const guard = createPeerGuard({ ...silent, directPort: true });
+        assert.strictEqual(guard.allowed(OTHER_APP, {}), false);
+        assert.strictEqual(guard.allowed(OTHER_APP, { 'x-claude-terminal-token': TOKEN }), true);
+        process.env.WRAPPER_PROXY_TOKEN = '';
+        assert.strictEqual(createPeerGuard({ ...silent, directPort: true }).allowed(OTHER_APP, {}), true);
+        assert.strictEqual(createPeerGuard({ ...silent, directPort: false }).allowed(OTHER_APP, {}), false);
+    } finally {
+        if (saved === undefined) delete process.env.WRAPPER_PROXY_TOKEN;
+        else process.env.WRAPPER_PROXY_TOKEN = saved;
+    }
+});
+
+test('mode names what the startup log should say', () => {
+    assert.match(createPeerGuard({ ...silent, directPort: true }).mode, /published: any peer may connect/);
+    assert.match(createPeerGuard({ ...silent, directPort: false }).mode, /unpublished: only ingress and loopback/);
+    const tokened = createPeerGuard({ ...silent, directPort: true, proxyToken: TOKEN }).mode;
+    assert.match(tokened, /proxy_token is set.*port 7680 published/);
+    assert.doesNotMatch(tokened, new RegExp(TOKEN));
 });
 
 test('logs a refused peer with its address, capped like the other guards', () => {

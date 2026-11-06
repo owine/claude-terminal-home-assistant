@@ -56,6 +56,14 @@ configuration:
       While a browser login is waiting, post Claude's login link as a Home
       Assistant notification (it reaches the Companion app too), and dismiss
       it once the login succeeds. Skipped when a token is set.
+  proxy_token:
+    name: Reverse proxy token
+    description: >-
+      For a reverse proxy with its own login in front of port 7680. Have the
+      proxy send this value in an X-Claude-Terminal-Token header; every other
+      connection except ingress is then refused, LAN and other apps included.
+      Use a random value of 32+ characters. Never logged. Empty keeps the
+      port open to anyone who can reach it.
   tmux_mouse_mode:
     name: Mouse mode
     description: >-
@@ -115,3 +123,4 @@ network:
     Web UI. WARNING: UNAUTHENTICATED - anyone who can reach this port gets a
     root terminal, other apps included. Leave blank to use ingress only
     (recommended); blank, the app refuses every connection but ingress.
+    Behind your own reverse proxy, also set proxy_token.

@@ -210,6 +210,7 @@ mapping cannot be disabled without forking the app.
 | `enable_ha_mcp` | `true` | Enable Home Assistant MCP server integration |
 | `working_directory` | `""` | Directory the terminal session starts in. Empty means `/config`, which is where it already started. A path that does not exist logs a warning and falls back to `/config` |
 | `claude_code_oauth_token` | `""` | Token from `claude setup-token`, for logging in without the browser OAuth flow. Masked in the UI and never logged. See Authentication below |
+| `proxy_token` | `""` | A secret your reverse proxy sends in the `X-Claude-Terminal-Token` header. With it set, every connection but Home Assistant ingress must carry it, whether port 7680 is published or not. Masked in the UI and never logged. See Locking the Port to Your Reverse Proxy below |
 | `login_notification` | `true` | Post Claude's login link as a Home Assistant notification while a browser login is waiting, and dismiss it once the login succeeds. See Authentication below |
 | `tmux_mouse_mode` | `true` | Mouse reporting: the wheel scrolls and a drag selects. Set `false` to disable it entirely (the wheel then sends arrow keys to full-screen apps). Flip it live with **Prefix + m**. **Changed in 2.7.3** — this defaulted to `false` before, so if you never set it, the mouse became active on upgrade |
 | `persist_npm_cache` | `false` | Keep the npm cache in persistent `/data` storage. Default (`false`) puts it in ephemeral `/tmp` so it stays out of HA backups; set `true` only if you want the cache to survive restarts |
@@ -440,20 +441,79 @@ The PWA works with any of these access methods:
 > That is why the port is **not published by default**. To turn it on, open the
 > app's **Configuration → Network** section, set **7680** as the host port,
 > and save. Only do this on a network you trust, or put an authenticating
-> reverse proxy in front of it — never forward this port to the internet.
+> reverse proxy in front of it **and set `proxy_token`** (below), since
+> otherwise anything that skips the proxy reaches the port directly. Never
+> forward this port to the internet.
 >
 > While the port is unpublished, the app refuses every connection that does
 > not come through Home Assistant ingress — including other apps on the same
 > machine, which could otherwise reach it over Home Assistant's internal
 > network. A reverse proxy running as another app (Nginx Proxy Manager, for
-> example) therefore needs the port published too, even when it reaches this
-> app by its internal hostname; the app log says
-> `Refused request from "172.30.33.x"` when it is being turned away.
+> example) is turned away too, even when it reaches this app by its internal
+> hostname; the app log says `Refused request from "172.30.33.x"`. Give it
+> `proxy_token` (below) rather than publishing the port.
 >
 > **Upgrading from 2.8.5 or earlier?** The port used to be published by
 > default. If you reach the app at `http://your-ha-ip:7680` (including a PWA
 > installed from that URL) and it stops loading after the upgrade, re-add the
 > port as above — your setup still works, it just has to be asked for now.
+
+#### Locking the Port to Your Reverse Proxy
+
+A reverse proxy with its own login (Authelia, Authentik, Cloudflare Access,
+basic auth, …) protects only the requests that go through it. With port 7680
+published, anything that connects to the port directly skips the proxy: other
+devices on your LAN and every other app on the machine. Home Assistant cannot
+publish a port to one interface only, so the app has to tell your proxy apart
+itself:
+
+1. Generate a long random value, for example with `openssl rand -hex 32`.
+2. Put it in the app's `proxy_token` option and restart the app. The log then
+   says `proxy_token is set: the web UI admits Home Assistant ingress, and any
+   client that sends the token`.
+3. Have your proxy add it to every request it forwards, in an
+   `X-Claude-Terminal-Token` header. Your browser never sees it.
+
+Ingress keeps working without the token. Anything else without it gets `403`,
+and the log shows `Refused request from "…": no valid X-Claude-Terminal-Token`.
+The header is removed before the request goes any further.
+
+**Traefik** (dynamic configuration), with the header middleware after your
+authentication middleware:
+
+```yaml
+http:
+  middlewares:
+    claude-terminal-token:
+      headers:
+        customRequestHeaders:
+          X-Claude-Terminal-Token: "<your proxy_token>"
+  routers:
+    claude-terminal:
+      rule: Host(`claude.example.com`)
+      middlewares:
+        - authelia@docker          # your authentication middleware
+        - claude-terminal-token
+      service: claude-terminal
+  services:
+    claude-terminal:
+      loadBalancer:
+        servers:
+          - url: http://your-ha-ip:7680
+```
+
+**nginx:** `proxy_set_header X-Claude-Terminal-Token "<your proxy_token>";`
+in the `location` that proxies to port 7680, next to the usual WebSocket
+`Upgrade`/`Connection` headers.
+
+**Caddy:** `reverse_proxy your-ha-ip:7680 { header_up X-Claude-Terminal-Token "<your proxy_token>" }`.
+
+A proxy running as another app can use the same header while 7680 stays
+unpublished: point it at the app's internal hostname, port 7680.
+
+The token travels in the clear between the proxy and the app unless that hop
+is HTTPS, so treat the network between them as trusted. Anyone holding the
+token, or able to read that traffic, has the same access as the proxy.
 
 #### Offline Support
 

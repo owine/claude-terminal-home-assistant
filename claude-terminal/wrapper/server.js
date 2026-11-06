@@ -118,7 +118,8 @@ const upload = multer({
 
 // First of all: who may connect. Unpublished, 7680 is still reachable from
 // every container on the hassio network; only the ingress proxy and loopback
-// are admitted then. See createPeerGuard (http-guards.js).
+// are admitted then, and with proxy_token set, in either mode, a peer that
+// sends it. See createPeerGuard (http-guards.js).
 const peerGuard = createPeerGuard();
 app.use(peerGuard.middleware);
 
@@ -302,9 +303,7 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`ttyd terminal on port: ${TTYD_PORT}`);
     console.log(`Terminal proxy available at /terminal/`);
     console.log(`WebSocket upgrade handler registered`);
-    console.log(process.env.WRAPPER_DIRECT_PORT === '1'
-        ? 'Port 7680 is published: any peer may connect'
-        : 'Port 7680 is unpublished: only ingress and loopback may connect');
+    console.log(peerGuard.mode);
 });
 
 // Post Claude's login link as an HA notification. start() never rejects; the
