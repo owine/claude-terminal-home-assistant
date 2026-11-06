@@ -465,7 +465,9 @@ setup_persistent_packages() {
 
 # Auto-install packages from app configuration
 auto_install_packages() {
-    local options="/data/options.json"
+    # ADDON_OPTIONS_FILE and PERSIST_INSTALL are test seams.
+    local options="${ADDON_OPTIONS_FILE:-/data/options.json}"
+    local persist_install="${PERSIST_INSTALL:-/usr/local/bin/persist-install}"
     local apk_count=0
     local pip_count=0
 
@@ -490,23 +492,27 @@ auto_install_packages() {
 
         if [ "${#apk_packages[@]}" -gt 0 ]; then
             bashio::log.info "Auto-installing ${#apk_packages[@]} system package(s) from config: ${apk_packages[*]}"
-            /usr/local/bin/persist-install --no-record "${apk_packages[@]}" ||
+            "$persist_install" --no-record "${apk_packages[@]}" ||
                 bashio::log.warning "Not every configured system package installed"
         fi
     fi
 
-    # Install Python packages if configured
+    # Install Python packages if configured. Read into an array and passed
+    # quoted, as the apk ones are: unquoted, each spec was also a filename
+    # pattern, expanded against the current directory, so `requests[socks]`
+    # became `requestss` when a file of that name was there, and a spec like
+    # `somepkg==1.*` matched a planted archive and installed it.
     if [ "$pip_count" -gt 0 ] 2>/dev/null; then
-        bashio::log.info "Auto-installing ${pip_count} Python package(s) from config..."
+        local pip_packages=()
+        local pkg
+        while IFS= read -r pkg; do
+            [ -n "$pkg" ] && pip_packages+=("$pkg")
+        done < <(jq -r '.persistent_pip_packages[]' "$options" 2>/dev/null)
 
-        local all_packages
-        all_packages=$(jq -r '.persistent_pip_packages[]' "$options" 2>/dev/null | tr '\n' ' ') || true
-
-        if [ -n "$all_packages" ]; then
-            bashio::log.info "  Installing: $all_packages"
-            # Intentional word splitting: each package is a separate argument
-            # shellcheck disable=SC2086
-            /usr/local/bin/persist-install --python $all_packages || bashio::log.warning "Failed to install Python packages"
+        if [ "${#pip_packages[@]}" -gt 0 ]; then
+            bashio::log.info "Auto-installing ${#pip_packages[@]} Python package(s) from config: ${pip_packages[*]}"
+            "$persist_install" --python "${pip_packages[@]}" ||
+                bashio::log.warning "Failed to install Python packages"
         fi
     fi
 }
