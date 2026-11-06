@@ -986,11 +986,29 @@ wrapper_port_published() {
     local host_port
     host_port=$(bashio::app.port "$1") || host_port=""
     if [ -n "$host_port" ] && [ "$host_port" != "null" ]; then
-        bashio::log.info "Port $1 is published on host port ${host_port}: the web UI admits any client that can reach it"
+        bashio::log.info "Port $1 is published on host port ${host_port}"
         return 0
     fi
-    bashio::log.info "Port $1 is unpublished: the web UI admits only Home Assistant ingress"
+    bashio::log.info "Port $1 is unpublished"
     return 1
+}
+
+# wrapper_proxy_token - print the proxy_token option ("" when unset).
+#
+# With it set, the wrapper admits a peer other than ingress and loopback only
+# when the request carries it in X-Claude-Terminal-Token (createPeerGuard,
+# http-guards.js), published or not: the one way to keep the LAN and the other
+# apps off a port the user's own reverse proxy needs. Its value is printed for
+# the caller and never logged; a short one is warned about, since the header is
+# all that stands between the network and a root shell.
+wrapper_proxy_token() {
+    local token
+    token=$(bashio::config 'proxy_token' '')
+    [ "$token" = "null" ] && token=""
+    if [ -n "$token" ] && [ "${#token}" -lt 32 ]; then
+        bashio::log.warning "proxy_token is only ${#token} characters: use a random one of 32 or more, e.g. openssl rand -hex 32"
+    fi
+    printf '%s' "$token"
 }
 
 # Start wrapper service (UI, terminal proxy, image uploads, clipboard delivery)
@@ -1014,10 +1032,22 @@ start_wrapper_service() {
     # Unpublished, the wrapper admits only the ingress proxy and loopback
     # (createPeerGuard, http-guards.js): it listens on 0.0.0.0, where every
     # other container on the hassio network can reach it.
+    local published=false
     if wrapper_port_published "${wrapper_port}"; then
         export WRAPPER_DIRECT_PORT=1
+        published=true
     else
         export WRAPPER_DIRECT_PORT=0
+    fi
+    # Not exported: run_wrapper hands it to node alone, so the tmux sessions,
+    # ttyd and Claude, all started from this shell later, never inherit it.
+    wrapper_proxy_token_value=$(wrapper_proxy_token)
+    if [ -n "$wrapper_proxy_token_value" ]; then
+        bashio::log.info "proxy_token is set: the web UI admits Home Assistant ingress, and any client that sends the token"
+    elif [ "$published" = true ]; then
+        bashio::log.info "The web UI admits any client that can reach port ${wrapper_port}; set proxy_token to admit only your reverse proxy"
+    else
+        bashio::log.info "The web UI admits only Home Assistant ingress"
     fi
 
     # Check if server.js exists
@@ -1064,7 +1094,7 @@ start_wrapper_service() {
 # printf '%b' would turn `\n` and `\u001b` back into the real thing - a
 # forged log line from a file's name.
 run_wrapper() {
-    node "$1" 2>&1 | while IFS= read -r line; do
+    WRAPPER_PROXY_TOKEN="${wrapper_proxy_token_value:-}" node "$1" 2>&1 | while IFS= read -r line; do
         log_output_line "[Wrapper] " "$line"
     done
 }

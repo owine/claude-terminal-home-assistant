@@ -695,6 +695,21 @@ assert_not_contains "no escape byte reaches the log" "$out" "$(printf '\033')"
 assert_not_contains "no other control byte reaches the log" "$out" "$(printf '\001')"
 unset -f node
 
+# proxy_token reaches the node process, and only it: start_wrapper_service keeps
+# it in an unexported variable, because the tmux sessions, ttyd and Claude are
+# all started from this shell afterwards and would inherit an export.
+# shellcheck disable=SC2329  # invoked by run_wrapper
+node() { sh -c 'printf "token=%s\n" "${WRAPPER_PROXY_TOKEN:-}"'; }
+wrapper_proxy_token_value=abc123SECRET
+out=$(run_wrapper server.js 2>&1)
+assert_contains "the node process gets proxy_token" "$out" "token=abc123SECRET"
+assert_eq "the shell's own environment does not" "" "$(sh -c 'printf "%s" "${WRAPPER_PROXY_TOKEN:-}"')"
+unset wrapper_proxy_token_value
+out=$(run_wrapper server.js 2>&1)
+assert_contains "unset, node gets an empty one" "$out" "token="
+assert_not_contains "and nothing left over" "$out" "abc123"
+unset -f node
+
 # ---------------------------------------------------------------------------
 # wait_for_http
 # ---------------------------------------------------------------------------
@@ -781,5 +796,33 @@ assert_eq "no script calls a deprecated bashio::addon function" "" \
     "$(grep -nE 'bashio::addons?[.:( ]|bashio::addons?$' "$REPO_ROOT"/claude-terminal/run.sh \
         "$REPO_ROOT"/claude-terminal/scripts/*.sh "$REPO_ROOT"/claude-terminal/scripts/persist-install \
         | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')"
+
+# ---------------------------------------------------------------------------
+# wrapper_proxy_token
+# ---------------------------------------------------------------------------
+# The header value that admits the user's reverse proxy. It is a credential to
+# a root shell: printed for the caller, never logged.
+printf '\n%s\n' "wrapper_proxy_token"
+
+reset_config
+assert_eq "unset is empty" "" "$(wrapper_proxy_token 2>/dev/null)"
+
+reset_config
+set_config proxy_token "null"
+assert_eq "the string null is empty" "" "$(wrapper_proxy_token 2>/dev/null)"
+
+long=0123456789abcdef0123456789abcdefTESTSECRET
+reset_config
+set_config proxy_token "$long"
+assert_eq "a set token is printed verbatim" "$long" "$(wrapper_proxy_token 2>/dev/null)"
+assert_eq "and a long one logs nothing" "" "$(wrapper_proxy_token 2>&1 >/dev/null)"
+
+reset_config
+set_config proxy_token "hunter2SECRET"
+logged=$(wrapper_proxy_token 2>&1 >/dev/null)
+assert_contains "a short token is warned about" "$logged" "only 13 characters"
+assert_not_contains "without logging it" "$logged" "SECRET"
+assert_eq "and still used" "hunter2SECRET" "$(wrapper_proxy_token 2>/dev/null)"
+unset long logged
 
 finish_suite
