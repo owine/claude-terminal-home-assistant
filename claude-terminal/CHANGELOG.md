@@ -1,5 +1,37 @@
 # Changelog
 
+## [3.2.1](https://github.com/owine/claude-terminal-home-assistant/compare/v3.2.0...v3.2.1) (2026-11-06)
+
+**2 bug fixes**
+
+### 🔒 Security
+
+This release fixes two more issues from the same review as 3.1.1, both reachable through the normal terminal (ingress included) and independent of whether port 7680 is published.
+
+- **A process on the terminal, or a copied file name, could make your next paste run a command.** Text placed on your clipboard — by an `OSC 52` write from any program on the terminal (or a host at the far end of an ssh session), or by the Files sidebar's "Copy path" on a file another app wrote into `/config` — could carry an escape sequence that breaks out of bracketed paste. The wrapper now strips control characters (everything below a space except tab and newline) from everything it places on the clipboard (#542).
+- **Another app could plant the terminal's Claude login.** After you ran `/logout`, a login written by a different add-on or Samba user into a legacy location under `/config` was copied in on the next start, so the terminal could come up signed in to someone else's account. Credential migration is now a one-time step that closes permanently after the first start and never runs again (#543).
+
+### 🐛 Bug Fixes
+
+- close the legacy-auth migration window after the first boot ([#543](https://github.com/owine/claude-terminal-home-assistant/issues/543))
+- strip control bytes from clipboard writes to stop paste injection ([#542](https://github.com/owine/claude-terminal-home-assistant/issues/542))
+
+<!-- bundled-versions -->
+### Bundled versions
+
+| Component | Version |
+|---|---|
+| Claude Code | 2.1.311 ¹ |
+| ha-mcp | 9.1.0 |
+| ttyd | 1.7.7 |
+| tmux | 3.7c |
+| Node.js | 24.22.1 |
+| GitHub CLI | 2.103.3 |
+| Home Assistant CLI | 5.6.0 |
+| uv | 0.13.7 |
+
+¹ Claude Code updates itself on a running install; this is the version the image starts with.
+
 ## [3.2.0](https://github.com/owine/claude-terminal-home-assistant/compare/v3.1.1...v3.2.0) (2026-11-06)
 
 **1 feature · 1 bug fix**
