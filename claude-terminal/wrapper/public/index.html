@@ -1653,7 +1653,16 @@
         // testing it needs the add-on reached over the LAN by IP. Accepted and
         // documented (see DOCS.md "Clipboard (OSC 52)"). If you change this
         // chain, re-check it over http://<host-ip>:7680, not localhost.
-        async function tryClipboardWrite(text) {
+        async function tryClipboardWrite(rawText) {
+            // Strip control bytes before anything reaches the system clipboard:
+            // pasted clipboard text is interpreted by the terminal, and an ESC
+            // or CR in it can break out of bracketed paste and run commands.
+            // decodeOsc52 already sanitizes the OSC 52 path; this covers every
+            // caller of this helper. sanitizeForClipboard is a no-op on text
+            // with no control bytes, so a normal copy is unchanged.
+            const text = (window.TerminalClipboard && window.TerminalClipboard.sanitizeForClipboard)
+                ? window.TerminalClipboard.sanitizeForClipboard(rawText)
+                : rawText;
             // 1. Async Clipboard API — needs HTTPS (ingress) and often a gesture.
             // On an insecure origin navigator.clipboard is undefined, so this
             // throws synchronously and consumes no user activation.
@@ -1926,8 +1935,16 @@
             uploadToTerminal(files, folders);
         });
 
-        // Helper to copy text to clipboard
-        async function copyToClipboard(text) {
+        // Helper to copy text to clipboard. Used for the Files sidebar's "Copy
+        // path", whose text is a raw /config file name — a name another app may
+        // have planted with control bytes in it. Sanitize before the clipboard,
+        // for the same reason as tryClipboardWrite: pasted control bytes can
+        // break out of bracketed paste. (The "insert path" button is already
+        // safe: it shell-quotes, turning control bytes into literal \xNN text.)
+        async function copyToClipboard(rawText) {
+            const text = (window.TerminalClipboard && window.TerminalClipboard.sanitizeForClipboard)
+                ? window.TerminalClipboard.sanitizeForClipboard(rawText)
+                : rawText;
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 try {
                     await navigator.clipboard.writeText(text);
@@ -2445,9 +2462,14 @@
             }
         });
 
-        // Copy transcript to clipboard
+        // Copy transcript to clipboard. Speech text should hold no control
+        // bytes, but every clipboard write is sanitized so the rule has no
+        // exceptions to reason about.
         voiceCopyBtn.addEventListener('click', async () => {
-            const text = voiceTranscript.textContent.trim();
+            const raw = voiceTranscript.textContent.trim();
+            const text = (window.TerminalClipboard && window.TerminalClipboard.sanitizeForClipboard)
+                ? window.TerminalClipboard.sanitizeForClipboard(raw)
+                : raw;
 
             if (!text) {
                 voiceStatus.textContent = '❌ No text to copy';

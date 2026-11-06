@@ -35,6 +35,31 @@
         return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     }
 
+    // Strip control bytes from text on its way to the system clipboard, keeping
+    // only tab and newline. The threat: clipboard content is later PASTED into
+    // the terminal, and a terminal interprets control bytes. An ESC (0x1b)
+    // begins a control sequence, so clipboard text holding ESC ] 201 ~ can end
+    // bracketed-paste mode mid-paste, and a following CR (0x0d) submits — the
+    // tail of the pasted text then runs as a command the admin never typed.
+    // The bytes come from wherever the clipboard was loaded: an OSC 52 write
+    // issued by any process on the PTY (or a host at the far end of ssh), or a
+    // /config file name a different app planted and the admin copied.
+    //
+    // Removed: C0 (0x00-0x1f) except TAB (0x09) and LF (0x0a), DEL (0x7f), and
+    // C1 (0x80-0x9f). CR is dropped rather than kept, so a CRLF pair survives
+    // as LF and multi-line text stays multi-line; LF itself is kept because a
+    // multi-line copy is legitimate, and inside bracketed paste a newline is
+    // delivered as data, not as a submit. This matches how tmux and xterm
+    // sanitize clipboard data, and leaves all printable text, including every
+    // non-ASCII character, untouched.
+    // eslint-disable-next-line no-control-regex
+    const CLIPBOARD_CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
+
+    function sanitizeForClipboard(text) {
+        if (typeof text !== 'string') return text;
+        return text.replace(CLIPBOARD_CONTROL, '');
+    }
+
     // Decode an OSC 52 payload of the form `<selection>;<base64 | '?'>`.
     // Returns { kind: 'write', text } | { kind: 'read' } | { kind: 'oversize' }
     //       | { kind: 'invalid' }
@@ -64,13 +89,18 @@
         if (!BASE64.test(payload)) return { kind: 'invalid' };
 
         try {
-            return { kind: 'write', text: new TextDecoder().decode(b64ToBytes(payload)) };
+            // Control bytes are stripped here, at the decode source, so the
+            // write a caller receives is already safe to place on the clipboard
+            // without the caller having to remember to sanitize. The clipboard
+            // write helpers in index.html sanitize again, as defence in depth.
+            const text = sanitizeForClipboard(new TextDecoder().decode(b64ToBytes(payload)));
+            return { kind: 'write', text };
         } catch {
             return { kind: 'invalid' };
         }
     }
 
-    const api = { decodeOsc52 };
+    const api = { decodeOsc52, sanitizeForClipboard };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.TerminalClipboard = api;
 })(typeof self !== 'undefined' ? self : this);
