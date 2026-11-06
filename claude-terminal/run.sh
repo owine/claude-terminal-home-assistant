@@ -984,7 +984,7 @@ prune_upload_inbox() {
 # which is what an install that never published the port expects.
 wrapper_port_published() {
     local host_port
-    host_port=$(bashio::addon.port "$1") || host_port=""
+    host_port=$(bashio::app.port "$1") || host_port=""
     if [ -n "$host_port" ] && [ "$host_port" != "null" ]; then
         bashio::log.info "Port $1 is published on host port ${host_port}: the web UI admits any client that can reach it"
         return 0

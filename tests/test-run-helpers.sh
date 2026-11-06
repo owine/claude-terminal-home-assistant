@@ -757,21 +757,29 @@ unset -f curl sleep
 printf '\n%s\n' "wrapper_port_published"
 
 # shellcheck disable=SC2329  # invoked by wrapper_port_published
-bashio::addon.port() { [ "$1" = 7680 ] && printf '%s' "$ADDON_PORT_STUB"; }
-ADDON_PORT_STUB=7680
+bashio::app.port() { [ "$1" = 7680 ] && printf '%s' "$APP_PORT_STUB"; }
+APP_PORT_STUB=7680
 assert_status "a host port counts as published" 0 wrapper_port_published 7680
-ADDON_PORT_STUB=8443
+APP_PORT_STUB=8443
 assert_status "a different host port counts as published" 0 wrapper_port_published 7680
-ADDON_PORT_STUB=""
+APP_PORT_STUB=""
 assert_status "no host port is unpublished" 1 wrapper_port_published 7680
-ADDON_PORT_STUB=null
+APP_PORT_STUB=null
 assert_status "a literal null is unpublished" 1 wrapper_port_published 7680
 
 # A Supervisor that cannot be reached must leave the port closed to peers.
 # shellcheck disable=SC2329  # invoked by wrapper_port_published
-bashio::addon.port() { return 1; }
+bashio::app.port() { return 1; }
 assert_status "a failed lookup is unpublished" 1 wrapper_port_published 7680
-unset -f bashio::addon.port
-unset ADDON_PORT_STUB
+unset -f bashio::app.port
+unset APP_PORT_STUB
+
+# bashio renamed bashio::addon* to bashio::app*. The old names still
+# work, through aliases that log "is deprecated" on every boot, and will go
+# away. Comments may name them; code may not.
+assert_eq "no script calls a deprecated bashio::addon function" "" \
+    "$(grep -nE 'bashio::addons?[.:( ]|bashio::addons?$' "$REPO_ROOT"/claude-terminal/run.sh \
+        "$REPO_ROOT"/claude-terminal/scripts/*.sh "$REPO_ROOT"/claude-terminal/scripts/persist-install \
+        | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')"
 
 finish_suite
