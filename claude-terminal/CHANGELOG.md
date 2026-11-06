@@ -1,5 +1,51 @@
 # Changelog
 
+## [3.1.1](https://github.com/owine/claude-terminal-home-assistant/compare/v3.1.0...v3.1.1) (2026-11-06)
+
+**5 bug fixes · 1 dependency update**
+
+### 🔒 Security
+
+This release fixes four issues found in a security review. **Please update soon**, especially if you leave port 7680 blank in the Network tab, which is the default.
+
+- **Other apps could open the terminal.** With port 7680 unpublished, the web terminal was still reachable from every other app on Home Assistant's internal network. A client that sent no `Origin` header could open the root terminal and use the Files API. While 7680 is unpublished, the app now accepts only Home Assistant's ingress proxy and its own loopback (#530).
+- **A file placed in `/config` could run as root at startup.** Startup now runs from `/`, and `persist-install` runs Python isolated from the current directory (#531).
+- **`persistent_pip_packages` entries were matched as file names in `/config`**, so a planted file could change what pip installed. They are now passed exactly as written (#532).
+- **Programs in the terminal could read your last copied text through tmux**, as could a host at the far end of an ssh session. tmux now refuses clipboard reads. Copying out of the terminal still works (#533).
+- The image no longer ships `tempio`, an unused binary from the Home Assistant base image that security scanners flagged (#536).
+
+### ⚠️ Behaviour change
+
+If a reverse proxy that runs as another Home Assistant app, such as Nginx Proxy Manager, reaches this app over the internal network, **publish port 7680** in the app's Network tab. Otherwise the proxy gets `403`, and the app log shows `Refused request from "172.30.33.x"`. Opening the terminal from the sidebar (ingress) is not affected.
+
+### 🐛 Bug Fixes
+
+- register ha-mcp in the user scope, so every session loads it ([#537](https://github.com/owine/claude-terminal-home-assistant/issues/537))
+- run boot from / and isolate persist-install's python3 ([#531](https://github.com/owine/claude-terminal-home-assistant/issues/531))
+- stop tmux answering OSC 52 clipboard reads ([#533](https://github.com/owine/claude-terminal-home-assistant/issues/533))
+- pass persistent_pip_packages to persist-install verbatim ([#532](https://github.com/owine/claude-terminal-home-assistant/issues/532))
+- **wrapper:** admit only ingress and loopback while 7680 is unpublished ([#530](https://github.com/owine/claude-terminal-home-assistant/issues/530))
+
+### 📦 Dependencies
+
+- update ghcr.io/home-assistant/base:3.24 docker digest to 5842248 ([#534](https://github.com/owine/claude-terminal-home-assistant/issues/534))
+
+<!-- bundled-versions -->
+### Bundled versions
+
+| Component | Version |
+|---|---|
+| Claude Code | 2.1.311 ¹ |
+| ha-mcp | 9.1.0 |
+| ttyd | 1.7.7 |
+| tmux | 3.7c |
+| Node.js | 24.22.1 |
+| GitHub CLI | 2.103.3 |
+| Home Assistant CLI | 5.6.0 |
+| uv | 0.13.7 |
+
+¹ Claude Code updates itself on a running install; this is the version the image starts with.
+
 ## [3.1.0](https://github.com/owine/claude-terminal-home-assistant/compare/v3.0.0...v3.1.0) (2026-11-04)
 
 **1 feature · 3 dependency updates**
