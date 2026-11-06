@@ -53,6 +53,42 @@ warned=$(get_working_directory 2>&1 >/dev/null)
 assert_contains "the fallback warning is still emitted on stderr" "$warned" "does not exist"
 
 # ---------------------------------------------------------------------------
+# auto_install_packages
+# ---------------------------------------------------------------------------
+# Each spec reaches persist-install exactly as configured. The pip ones used to
+# be passed unquoted, so each was also a filename pattern, expanded against the
+# current directory - /config at the time, which other apps can write.
+printf '\n%s\n' "auto_install_packages"
+
+pkg_dir=$(new_tmpdir)
+pkg_log="$pkg_dir/persist-install.log"
+cat > "$pkg_dir/persist-install" <<EOF
+#!/bin/sh
+for arg in "\$@"; do printf '%s\n' "\$arg"; done >> "$pkg_log"
+echo --- >> "$pkg_log"
+EOF
+chmod +x "$pkg_dir/persist-install"
+printf '%s\n' '{"persistent_apk_packages": ["git", "py3-*"], "persistent_pip_packages": ["requests[socks]", "somepkg==1.*", "black >= 24"]}' \
+    > "$pkg_dir/options.json"
+
+# Files a planted spec would match: requests[socks] is a bracket pattern
+# matching `requestss`, and somepkg==1.* matched an archive pip then installed.
+planted=$(new_tmpdir)
+: > "$planted/requestss"
+: > "$planted/somepkg==1.0.tar.gz"
+: > "$planted/py3-evil"
+
+(cd "$planted" && ADDON_OPTIONS_FILE="$pkg_dir/options.json" PERSIST_INSTALL="$pkg_dir/persist-install" \
+    auto_install_packages 2>/dev/null)
+expected=$(printf '%s\n' --no-record git 'py3-*' --- --python 'requests[socks]' 'somepkg==1.*' 'black >= 24' ---)
+assert_eq "every spec is passed verbatim, never matched against the cwd" "$expected" "$(cat "$pkg_log" 2>/dev/null)"
+
+rm -f "$pkg_log"
+printf '%s\n' '{"persistent_apk_packages": [], "persistent_pip_packages": []}' > "$pkg_dir/options.json"
+(ADDON_OPTIONS_FILE="$pkg_dir/options.json" PERSIST_INSTALL="$pkg_dir/persist-install" auto_install_packages 2>/dev/null)
+assert_status "empty lists install nothing" 1 test -e "$pkg_log"
+
+# ---------------------------------------------------------------------------
 # export_oauth_token
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "export_oauth_token"
