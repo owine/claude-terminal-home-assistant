@@ -45,6 +45,79 @@ tmux_query() {
     printf '%s\n' "$value"
 }
 
+# tmux_has_option <option> - does this tmux know <option> at all? Asked of a
+# server started with no config, so a typo in the shipped file cannot hide it.
+tmux_has_option() {
+    local sock status
+    sock=$(new_tmpdir)
+    local t=(env -u TMUX TMUX_TMPDIR="$sock" tmux)
+    "${t[@]}" -f /dev/null new-session -d -s probe 2>/dev/null &&
+        "${t[@]}" show-options -g "$1" >/dev/null 2>&1
+    status=$?
+    "${t[@]}" kill-server 2>/dev/null
+    return "$status"
+}
+
+# osc52_probe <home> <selection> - on the shipped config, copy a line in
+# copy-mode (what a mouse drag does), then have programs in two new windows
+# write <selection> with OSC 52, and ask for the clipboard with an OSC 52 read.
+# Prints the read's reply, as cat -v shows it, then the top buffer's content.
+osc52_probe() {
+    local home="$1" selection="$2" sock probe out
+    sock=$(new_tmpdir)
+    probe=$(new_tmpdir)
+    out="$probe/reply"
+    # Raw, and a read gives up after a second without input (min 0 time 10;
+    # no timeout(1) on macOS): dd stops at the first read that times out.
+    cat > "$probe/read" <<'EOF'
+#!/bin/sh
+stty raw -echo min 0 time 10
+printf '\033]52;c;?\007'
+dd bs=128 count=8 of="$1" 2>/dev/null
+stty sane
+EOF
+    # Each probe gets its own server: HOME and the socket directory are set
+    # per command, so nothing leaks into the suite's environment.
+    local t=(env -u TMUX HOME="$home" TMUX_TMPDIR="$sock" tmux)
+    "${t[@]}" -f "$CONF" new-session -d -s probe -x 80 -y 20 "echo copied-by-admin; sleep 30" 2>/dev/null || return 0
+    sleep 0.5
+    "${t[@]}" copy-mode -t probe
+    "${t[@]}" send-keys -t probe -X history-top
+    "${t[@]}" send-keys -t probe -X select-line
+    "${t[@]}" send-keys -t probe -X copy-selection-and-cancel
+    "${t[@]}" new-window -d -t probe "sh '$probe/read' '$out'"
+    sleep 2
+    "${t[@]}" new-window -d -t probe "printf '\033]52;c;%s\007' '$(printf '%s' "$selection" | base64)'; sleep 1"
+    sleep 1
+    cat -v "$out" 2>/dev/null
+    printf '|'
+    "${t[@]}" show-buffer 2>/dev/null
+    "${t[@]}" kill-server 2>/dev/null
+}
+
+printf '\n%s\n' "OSC 52: applications may write the clipboard, never read it"
+
+home=$(new_tmpdir)
+assert_eq "set-clipboard is on, so writes reach tmux and the wrapper" "on" "$(tmux_query "$home" set-clipboard)"
+result=$(osc52_probe "$home" written-by-pane)
+
+# get-clipboard is newer than tmux 3.6, which rejects it and answers reads
+# regardless. The image pins a tmux that has it, but the Unit tests job runs
+# this suite on the runner's tmux (Ubuntu 26.04: 3.6). There the read checks
+# skip; Test build reruns the suite on the image's own tmux with
+# CTP_REQUIRE_GET_CLIPBOARD=1, where a missing option fails instead.
+if tmux_has_option get-clipboard; then
+    assert_eq "get-clipboard is off" "off" "$(tmux_query "$home" get-clipboard)"
+    # The default (get-clipboard buffer) answered a read with the line the
+    # admin had just copied: ESC]52;c;Y29waWVkLWJ5LWFkbWluCg==BEL.
+    assert_eq "a pane's OSC 52 read gets no reply, the admin's copy stays private" "" "${result%%|*}"
+elif [ -n "${CTP_REQUIRE_GET_CLIPBOARD:-}" ]; then
+    _fail "this tmux must support get-clipboard" "$(tmux -V) rejects it"
+else
+    printf '  skip %s has no get-clipboard; the OSC 52 read checks run in the image\n' "$(tmux -V)"
+fi
+assert_eq "a pane's OSC 52 write still becomes the top buffer" "written-by-pane" "${result#*|}"
+
 printf '\n%s\n' "user overrides in ~/.tmux.local.conf"
 
 home=$(new_tmpdir)
