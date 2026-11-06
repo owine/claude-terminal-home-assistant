@@ -214,6 +214,14 @@ jobs:
           [ "$SAME_CODE" = "101" ] || { echo "ERROR: same-origin WebSocket got HTTP $SAME_CODE, want 101"; exit 1; }
           echo "WebSocket origin check: cross-origin 403, same-origin 101"
 
+          # The Dockerfile deletes the base image's unused tempio (its CVEs are
+          # no longer suppressed in .trivyignore.yaml). A base image that moved
+          # it, or started to need it, would surface here first.
+          if docker exec smoke-test sh -c 'command -v tempio || [ -e /usr/bin/tempio ]'; then
+            echo "ERROR: tempio is back in the image"; exit 1
+          fi
+          echo "tempio: absent, as intended"
+
           # Verify wrapper returns HTTP 200 — proves the Node service started
           WRAP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:7680/)
           [ "$WRAP_CODE" = "200" ] || { echo "ERROR: wrapper returned HTTP $WRAP_CODE"; exit 1; }
