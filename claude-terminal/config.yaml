@@ -30,7 +30,11 @@ panel_admin: true
 # Port configuration
 #
 # 7680 defaults to null - unpublished - so the only route in is ingress, which
-# Home Assistant authenticates. ttyd (7681) is not listed: it binds the
+# Home Assistant authenticates. Unpublished is not unreachable: the wrapper
+# listens on the hassio network, where every other app can reach it, so it
+# admits only the Supervisor's ingress proxy (172.30.32.2) and loopback until a
+# host port is assigned (createPeerGuard, wrapper/http-guards.js; run.sh sets
+# WRAPPER_DIRECT_PORT from the Network tab). ttyd (7681) is not listed: it binds the
 # container's loopback and is reachable only through the wrapper. Nothing in this app authenticates a direct
 # connection: the web UI proxies straight through to `ttyd --writable` attached
 # to a root tmux session with /config, /share and (when enabled) the host

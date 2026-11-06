@@ -970,6 +970,23 @@ prune_upload_inbox() {
     prune_old_files "$dir" upload_retention_days '*' "upload inbox files" "$marker_name"
 }
 
+# wrapper_port_published <port>
+#
+# Succeed when the Network tab gives <port> a host port. The Supervisor
+# restarts the app when that changes, so reading it once at boot is enough.
+# A failed lookup counts as unpublished: the wrapper then admits only ingress,
+# which is what an install that never published the port expects.
+wrapper_port_published() {
+    local host_port
+    host_port=$(bashio::addon.port "$1") || host_port=""
+    if [ -n "$host_port" ] && [ "$host_port" != "null" ]; then
+        bashio::log.info "Port $1 is published on host port ${host_port}: the web UI admits any client that can reach it"
+        return 0
+    fi
+    bashio::log.info "Port $1 is unpublished: the web UI admits only Home Assistant ingress"
+    return 1
+}
+
 # Start wrapper service (UI, terminal proxy, image uploads, clipboard delivery)
 start_wrapper_service() {
     local wrapper_port=7680
@@ -988,6 +1005,14 @@ start_wrapper_service() {
     export WRAPPER_PORT="${wrapper_port}"
     export TTYD_PORT="${ttyd_port}"
     export UPLOAD_DIR="${upload_dir}"
+    # Unpublished, the wrapper admits only the ingress proxy and loopback
+    # (createPeerGuard, http-guards.js): it listens on 0.0.0.0, where every
+    # other container on the hassio network can reach it.
+    if wrapper_port_published "${wrapper_port}"; then
+        export WRAPPER_DIRECT_PORT=1
+    else
+        export WRAPPER_DIRECT_PORT=0
+    fi
 
     # Check if server.js exists
     if [ ! -f "${server_file}" ]; then

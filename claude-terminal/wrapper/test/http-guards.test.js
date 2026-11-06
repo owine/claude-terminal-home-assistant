@@ -2,7 +2,7 @@
 
 const assert = require('node:assert');
 const {
-    createRateLimiter, createOriginGuard, createUpgradeGuard, createCrossSiteGuard, createRequestDeadline, errorResponseFor,
+    createRateLimiter, createOriginGuard, createUpgradeGuard, createPeerGuard, createCrossSiteGuard, createRequestDeadline, errorResponseFor,
 } = require('../http-guards.js');
 
 let passed = 0;
@@ -463,6 +463,116 @@ test('records the rejected origin so a refused terminal is diagnosable', () => {
     upgrade(guard, req);
     assert.strictEqual(lines.length, 1);
     assert.match(lines[0], /evil\.example/);
+});
+
+// ---------------------------------------------------------------------------
+// createPeerGuard
+// ---------------------------------------------------------------------------
+//
+// The wrapper listens on 0.0.0.0, so with 7680 unpublished every other
+// container on the hassio network could still connect - and with no Origin
+// header it passed the origin checks, straight to the root terminal. Only the
+// Supervisor's ingress proxy and loopback may connect then.
+
+const OTHER_APP = '172.30.33.5';
+
+function peerReq(remoteAddress, headers = {}) {
+    const req = makeReq({ headers });
+    req.socket = { remoteAddress };
+    return req;
+}
+
+function peerUpgrade(guard, remoteAddress) {
+    const socket = makeSocket();
+    socket.remoteAddress = remoteAddress;
+    const allowed = guard.upgrade(makeUpgradeReq({}), socket);
+    return { allowed, socket };
+}
+
+test('unpublished: another app on the hassio network is refused a GET with a 403', () => {
+    const guard = createPeerGuard({ ...silent, directPort: false });
+    const result = run(guard.middleware, peerReq(OTHER_APP));
+    assert.strictEqual(result.allowed, false);
+    assert.strictEqual(result.status, 403);
+    assert.match(result.body.error, /ingress/);
+});
+
+test('unpublished: another app is refused the terminal WebSocket, with no Origin at all', () => {
+    // The case checkOrigin lets through: a non-browser client sends no Origin.
+    const guard = createPeerGuard({ ...silent, directPort: false });
+    const { allowed, socket } = peerUpgrade(guard, OTHER_APP);
+    assert.strictEqual(allowed, false);
+    assert.match(socket.written, /^HTTP\/1\.1 403 Forbidden\r\n/);
+    assert.strictEqual(socket.closed, true);
+});
+
+test('unpublished: the hassio gateway (host-network apps) is refused too', () => {
+    const guard = createPeerGuard({ ...silent, directPort: false });
+    assert.strictEqual(guard.allowed('172.30.32.1'), false);
+    assert.strictEqual(peerUpgrade(guard, '172.30.32.1').allowed, false);
+});
+
+test('unpublished: the ingress proxy and loopback are let through', () => {
+    const guard = createPeerGuard({ ...silent, directPort: false });
+    for (const peer of ['172.30.32.2', '127.0.0.1', '::1', '::ffff:172.30.32.2', '::ffff:127.0.0.1']) {
+        assert.strictEqual(run(guard.middleware, peerReq(peer)).allowed, true, peer);
+        assert.strictEqual(peerUpgrade(guard, peer).allowed, true, peer);
+    }
+});
+
+test('unpublished: a lookalike of the ingress address is refused', () => {
+    const guard = createPeerGuard({ ...silent, directPort: false });
+    for (const peer of ['172.30.32.20', '172.30.32.2.5', '::ffff:172.30.32.22', '', undefined]) {
+        assert.strictEqual(guard.allowed(peer), false, String(peer));
+    }
+});
+
+test('unpublished: an ingress header from another peer changes nothing', () => {
+    const guard = createPeerGuard({ ...silent, directPort: false });
+    const req = peerReq(OTHER_APP, { 'X-Ingress-Path': '/api/hassio_ingress/x' });
+    assert.strictEqual(run(guard.middleware, req).allowed, false);
+});
+
+test('published: every peer may connect, the hassio network included', () => {
+    const guard = createPeerGuard({ ...silent, directPort: true });
+    for (const peer of [OTHER_APP, '172.30.32.1', '192.168.1.20', '172.17.0.1']) {
+        assert.strictEqual(run(guard.middleware, peerReq(peer)).allowed, true, peer);
+        assert.strictEqual(peerUpgrade(guard, peer).allowed, true, peer);
+    }
+});
+
+test('directPort follows WRAPPER_DIRECT_PORT=1 by default, and nothing else', () => {
+    const saved = process.env.WRAPPER_DIRECT_PORT;
+    try {
+        for (const [value, open] of [['1', true], ['0', false], ['true', false], ['', false], [undefined, false]]) {
+            if (value === undefined) delete process.env.WRAPPER_DIRECT_PORT;
+            else process.env.WRAPPER_DIRECT_PORT = value;
+            assert.strictEqual(createPeerGuard(silent).allowed(OTHER_APP), open, String(value));
+        }
+    } finally {
+        if (saved === undefined) delete process.env.WRAPPER_DIRECT_PORT;
+        else process.env.WRAPPER_DIRECT_PORT = saved;
+    }
+});
+
+test('logs a refused peer with its address, capped like the other guards', () => {
+    const lines = [];
+    let t = 0;
+    const guard = createPeerGuard({ directPort: false, log: (l) => lines.push(l), now: () => t });
+    for (let i = 0; i < 8; i++) run(guard.middleware, peerReq(OTHER_APP));
+    peerUpgrade(guard, OTHER_APP);
+    assert.strictEqual(lines.length, 5);
+    assert.match(lines[0], /^Refused request from "172\.30\.33\.5"/);
+    t = 60000;
+    peerUpgrade(guard, OTHER_APP);
+    assert.match(lines[5], /^Refused WebSocket from "172\.30\.33\.5".*\(4 earlier refusals not logged\)$/);
+});
+
+test('a refused upgrade on an unwritable socket is still closed, and does not throw', () => {
+    const guard = createPeerGuard({ ...silent, directPort: false });
+    const socket = { remoteAddress: OTHER_APP, closed: false, end() { throw new Error('EPIPE'); }, destroy() { this.closed = true; } };
+    assert.strictEqual(guard.upgrade(makeUpgradeReq({}), socket), false);
+    assert.strictEqual(socket.closed, true);
 });
 
 // ---------------------------------------------------------------------------

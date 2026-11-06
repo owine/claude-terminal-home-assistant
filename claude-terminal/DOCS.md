@@ -442,6 +442,14 @@ The PWA works with any of these access methods:
 > and save. Only do this on a network you trust, or put an authenticating
 > reverse proxy in front of it — never forward this port to the internet.
 >
+> While the port is unpublished, the app refuses every connection that does
+> not come through Home Assistant ingress — including other apps on the same
+> machine, which could otherwise reach it over Home Assistant's internal
+> network. A reverse proxy running as another app (Nginx Proxy Manager, for
+> example) therefore needs the port published too, even when it reaches this
+> app by its internal hostname; the app log says
+> `Refused request from "172.30.33.x"` when it is being turned away.
+>
 > **Upgrading from 2.8.5 or earlier?** The port used to be published by
 > default. If you reach the app at `http://your-ha-ip:7680` (including a PWA
 > installed from that URL) and it stops loading after the upgrade, re-add the

@@ -113,4 +113,5 @@ configuration:
 network:
   7680/tcp: >-
     Web UI. WARNING: UNAUTHENTICATED - anyone who can reach this port gets a
-    root terminal. Leave blank to use ingress only (recommended).
+    root terminal, other apps included. Leave blank to use ingress only
+    (recommended); blank, the app refuses every connection but ingress.
