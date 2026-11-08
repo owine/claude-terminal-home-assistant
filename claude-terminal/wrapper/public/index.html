@@ -1082,7 +1082,13 @@
             margin-bottom: 8px;
         }
 
-        #files-download-btn:disabled {
+        /* Five buttons do not fit a phone's width on one line. */
+        #files-preview .modal-buttons {
+            flex-wrap: wrap;
+        }
+
+        #files-download-btn:disabled,
+        #files-copy-content-btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
@@ -1284,6 +1290,7 @@
             <div class="modal-buttons">
                 <button type="button" id="files-insert-btn" class="modal-btn modal-btn-primary" title="Type the path at the terminal prompt">Insert path</button>
                 <button type="button" id="files-download-btn" class="modal-btn modal-btn-secondary" title="Save this file to your device" disabled>Download</button>
+                <button type="button" id="files-copy-content-btn" class="modal-btn modal-btn-secondary" title="Copy the file's text to your clipboard" disabled>Copy contents</button>
                 <button type="button" id="files-copy-btn" class="modal-btn modal-btn-secondary">Copy path</button>
                 <button type="button" id="files-close-btn" class="modal-btn modal-btn-secondary">Close</button>
             </div>
