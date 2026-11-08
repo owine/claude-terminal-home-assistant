@@ -831,6 +831,8 @@ async function checkDownloads(browser, url) {
         const downloadBtn = () => wrapper.locator('#files-download-btn');
         const downloadDisabled = () => wrapper.evaluate(
             '!!document.getElementById("files-download-btn")?.disabled');
+        const copyContentDisabled = () => wrapper.evaluate(
+            '!!document.getElementById("files-copy-content-btn")?.disabled');
         await list.locator('.files-row', { hasText: SIDEBAR_FILE }).click();
         await waitFor(async () => (await previewText(wrapper)) === 'sidebar: ok\n');
         const file = await expectDownload(page, () => downloadBtn().click());
@@ -853,6 +855,7 @@ async function checkDownloads(browser, url) {
         await protectedRow().click();
         await waitFor(async () => /Show protected files/.test((await previewText(wrapper)) || ''));
         check('Download is disabled when the preview was refused', await downloadDisabled(), true);
+        check('Copy contents is disabled when the preview was refused', await copyContentDisabled(), true);
         await closePreview();
 
         // With the toggle on, a protected file downloads too, and its request
@@ -896,6 +899,20 @@ async function checkDownloads(browser, url) {
         check('a forced click on Download after switch-off starts nothing',
             { started: stray !== null, downloads: downloads.length - before.downloads },
             (v) => !v.started && v.downloads === 0);
+        // Copy contents holds the file's text, so switching off must drop
+        // it too. The disabled check is what proves the text went (dropping
+        // setPreviewContent from blankPreview fails it); the forced click
+        // proves the handler's own guards refuse the blanked preview.
+        check('switching off disables Copy contents for the blanked preview', await copyContentDisabled(), true);
+        await wrapper.evaluate(`(() => {
+            document.getElementById('status').textContent = 'COPY-PROBE';
+            const el = document.getElementById('files-copy-content-btn');
+            el.disabled = false;
+            el.click();
+        })()`);
+        await sleep(300);
+        check('a forced click on Copy contents after switch-off copies nothing',
+            await wrapper.evaluate('document.getElementById("status").textContent'), 'COPY-PROBE');
         check('no protected=1 download goes out while the toggle is off',
             flagged.filter((f) => !f.on).map((f) => f.url), (v) => v.length === 0);
 
@@ -3869,6 +3886,27 @@ async function run(engine, mode, url) {
         + '&& document.getElementById("files-preview-body").textContent');
     check('clicking a file previews it as text',
         await waitFor(async () => (await previewBody()) === 'sidebar: ok\n'), true);
+
+    // Copy contents puts the previewed text on the clipboard. Seeded first,
+    // so a clipboard that already held the text cannot pass for a copy.
+    // WebKit has no clipboard-read permission in Playwright: the status
+    // line is all it can show.
+    const statusText = () => wrapper.evaluate('document.getElementById("status").textContent');
+    check('a loaded text preview enables Copy contents',
+        await wrapper.evaluate('document.getElementById("files-copy-content-btn").disabled'), false);
+    if (engine === chromium) {
+        await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+        await wrapper.evaluate('navigator.clipboard.writeText("COPY-CONTENTS-SEED")');
+    }
+    await wrapper.locator('#files-copy-content-btn').click();
+    check('Copy contents reports the copy',
+        await waitFor(async () => (await statusText()) === 'Contents copied'), true);
+    if (engine === chromium) {
+        check('Copy contents puts the file text on the clipboard',
+            await wrapper.evaluate('navigator.clipboard.readText()'), 'sidebar: ok\n');
+    } else {
+        console.log('skip  - Copy contents readback (no clipboard-read permission in WebKit)');
+    }
 
     // Typed at the prompt, quoted, and NOT submitted: the line is still the
     // last thing on screen and bash has not tried to run it.

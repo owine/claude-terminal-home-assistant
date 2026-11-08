@@ -1,10 +1,10 @@
-// Files sidebar UI: the /config tree, the file preview with Insert path and
-// Download, the protected toggle, the folder ⋯ menu with its zip download
-// and Upload here, uploads (the Upload button, drops, pastes, the collision
-// prompt, progress), the notice line, Recent changes, the read-only
-// Scratchpad tab (a Claude Code session's scratchpad, with its session
-// picker), the HA configuration check, and the sidebar's open state, tabs
-// and resizable width. The pure helpers it uses
+// Files sidebar UI: the /config tree, the file preview with Insert path,
+// Download and Copy contents, the protected toggle, the folder ⋯ menu with
+// its zip download and Upload here, uploads (the Upload button, drops,
+// pastes, the collision prompt, progress), the notice line, Recent changes,
+// the read-only Scratchpad tab (a Claude Code session's scratchpad, with its
+// session picker), the HA configuration check, and the sidebar's open state,
+// tabs and resizable width. The pure helpers it uses
 // (quoting, sizes, URLs) are files-sidebar.js, and the upload flow it shares
 // with the terminal (asking, sending, batches, reading drops) is
 // upload-client.js; both load before this.
@@ -17,7 +17,9 @@
 // init() gets the only three things it uses from the page script:
 //   injectIntoTerminal(text)  types text at the prompt (Insert path);
 //                             false when the terminal cannot take it
-//   copyToClipboard(text)     resolves true when the text was copied
+//   copyToClipboard(text)     resolves true when the text was copied;
+//                             it strips control bytes itself, which is
+//                             what makes Copy path and Copy contents safe
 //   setStatus(message, type, persistent)  the header's status line
 // Everything else here is its own: its elements, fetches and state. Every
 // name and every file body goes in through textContent, never as HTML. Of
@@ -68,6 +70,7 @@
         const previewMeta = document.getElementById('files-preview-meta');
         const previewBody = document.getElementById('files-preview-body');
         const downloadBtn = document.getElementById('files-download-btn');
+        const copyContentBtn = document.getElementById('files-copy-content-btn');
         const menu = document.getElementById('files-menu');
         const notice = document.getElementById('files-notice');
         const noticeText = document.getElementById('files-notice-text');
@@ -114,6 +117,13 @@
         let previewBase = 'api/files';
         let previewPath = null;
         let previewSensitive = false;   // the open preview is a protected file
+        // The open preview's text, for Copy contents: null until it loads,
+        // and for a binary file or a refused one. Held rather than fetched
+        // on click, because Safari only lets a click write the clipboard
+        // before its first await. `previewTruncatedAt` is the preview
+        // limit when this is only the first part of the file, else null.
+        let previewContent = null;
+        let previewTruncatedAt = null;
         // Bumped by every openPreview and blankPreview, so a reply lands
         // only on the request that asked for it. A path check is not
         // enough: the same file reopened (say with the toggle now off)
@@ -1001,6 +1011,7 @@
             // Enabled once the preview loads: a refused preview (a
             // protected file with the toggle off) means a refused download.
             downloadBtn.disabled = true;
+            setPreviewContent(null);
             previewTitle.textContent = filePath;
             previewMeta.textContent = '';
             previewBody.textContent = 'Loading…';
@@ -1026,9 +1037,11 @@
                 previewMeta.textContent = parts.join(' · ');
                 previewBody.textContent = data.binary ? '(binary file, no preview)' : data.content;
                 downloadBtn.disabled = false;
+                if (!data.binary) setPreviewContent(data.content, data.truncated ? data.limit : null);
             } catch (err) {
                 if (gen !== previewGen) return;
                 downloadBtn.disabled = true;
+                setPreviewContent(null);
                 previewBody.textContent = '⚠️ ' + err.message;
             }
         }
@@ -1062,6 +1075,13 @@
             }
         }
 
+        // Null, or a file with no text, leaves Copy contents disabled.
+        function setPreviewContent(text, truncatedAt = null) {
+            previewContent = typeof text === 'string' ? text : null;
+            previewTruncatedAt = previewContent === null ? null : truncatedAt;
+            copyContentBtn.disabled = previewContent === null;
+        }
+
         // Bumping previewGen also drops an answer still in flight: the
         // generation check in openPreview no longer matches it.
         function blankPreview() {
@@ -1069,6 +1089,7 @@
             previewPath = null;
             previewSensitive = false;
             downloadBtn.disabled = true;
+            setPreviewContent(null);
             previewTitle.textContent = '';
             previewMeta.textContent = '';
             previewBody.textContent = '';
@@ -1198,6 +1219,20 @@
             if (!previewPath) return;
             const ok = await copyToClipboard(previewPath);
             setStatus(ok ? 'Path copied' : 'Copy failed', ok ? 'success' : 'error');
+        });
+        // Copies the text the preview shows. A file over the preview limit
+        // is only partly loaded, so it says so instead of passing the first
+        // part off as the whole file; Download gets all of it. A protected
+        // file follows Download's rule: only while the toggle is on.
+        copyContentBtn.addEventListener('click', async () => {
+            if (!previewPath || previewContent === null || copyContentBtn.disabled) return;
+            if (previewSensitive && !showProtected.checked) return;
+            const truncatedAt = previewTruncatedAt;
+            const ok = await copyToClipboard(previewContent);
+            if (!ok) setStatus('Copy failed', 'error');
+            else if (truncatedAt !== null) {
+                setStatus('Copied the first ' + helpers.formatSize(truncatedAt) + ' only; Download has the whole file', 'success');
+            } else setStatus('Contents copied', 'success');
         });
 
         // The menu closes on a press anywhere else, Escape, Tab, scrolling
