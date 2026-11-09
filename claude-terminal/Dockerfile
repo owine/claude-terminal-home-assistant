@@ -45,7 +45,7 @@ RUN echo "apk refresh: ${APK_REFRESH:-none}" \
     tmux=3.7c-r0 \
     tree=2.3.2-r0 \
     ttyd=1.7.7-r0 \
-    vim=9.2.1202-r0 \
+    vim=9.2.1310-r0 \
     wget=1.25.0-r3 \
     yq-go=4.53.3-r2 \
     && rm -f /usr/bin/tempio
