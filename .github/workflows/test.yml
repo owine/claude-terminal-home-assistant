@@ -393,6 +393,26 @@ jobs:
           restore-keys: |
             ${{ steps.apt-archives.outputs.key-prefix }}
 
+      # The .deb cache shrinks what a slow azure.archive.ubuntu.com has to
+      # serve, but a cache miss or a new package still comes from it, and at the
+      # 33 kB/s recorded above the timeout below fails the job. This speed-tests
+      # the runner's current mirror against 20 random ones from
+      # mirrors.ubuntu.com and switches only if another one wins; on a healthy
+      # day the in-Azure mirror is fastest and nothing changes. It rewrites the
+      # first line of the runner's mirror+file list, so archive/security.ubuntu.com
+      # remain the fallbacks, and apt still verifies every InRelease, so a
+      # third-party mirror can be slow but cannot alter packages.
+      # It cannot help when Canonical's own DNS is down: the mirror list is
+      # under ubuntu.com too. In the 2026-11-11 outage (run 43054847699) it
+      # could not fetch the list, found 0 reachable mirrors and changed nothing.
+      # Best-effort: the script exits 0 when it cannot pick a mirror (8 s that
+      # day), and continue-on-error covers a hang.
+      - name: Pick a reachable apt mirror
+        if: matrix.engine == 'webkit'
+        timeout-minutes: 3
+        continue-on-error: true
+        uses: vegardit/fast-apt-mirror.sh@806c59276adfff2df420124ad5e4587f018c358a # 1.4.5
+
       # Normally ~30 s with all 114 MB downloaded; the timeout is the backstop
       # for a deb-cache miss on a slow mirror, failing the job in minutes, not
       # an hour.
