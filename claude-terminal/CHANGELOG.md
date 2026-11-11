@@ -1,5 +1,35 @@
 # Changelog
 
+## [3.3.0](https://github.com/owine/claude-terminal-home-assistant/compare/v3.2.1...v3.3.0) (2026-11-11)
+
+**1 feature · 3 dependency updates**
+
+### ✨ Features
+
+- copy a previewed file's contents from the Files sidebar ([#548](https://github.com/owine/claude-terminal-home-assistant/issues/548))
+
+### 📦 Dependencies
+
+- update dependency ha-mcp to v9.1.2 ([#553](https://github.com/owine/claude-terminal-home-assistant/issues/553), [#555](https://github.com/owine/claude-terminal-home-assistant/issues/555))
+- update git apk package to v2.54.1-r0 ([#554](https://github.com/owine/claude-terminal-home-assistant/issues/554))
+- update vim apk package to v9.2.1310-r0 ([#550](https://github.com/owine/claude-terminal-home-assistant/issues/550))
+
+<!-- bundled-versions -->
+### Bundled versions
+
+| Component | Version |
+|---|---|
+| Claude Code | 2.1.311 ¹ |
+| ha-mcp | 9.1.2 |
+| ttyd | 1.7.7 |
+| tmux | 3.7c |
+| Node.js | 24.22.1 |
+| GitHub CLI | 2.103.3 |
+| Home Assistant CLI | 5.6.0 |
+| uv | 0.13.7 |
+
+¹ Claude Code updates itself on a running install; this is the version the image starts with.
+
 ## [3.2.1](https://github.com/owine/claude-terminal-home-assistant/compare/v3.2.0...v3.2.1) (2026-11-06)
 
 **2 bug fixes**
