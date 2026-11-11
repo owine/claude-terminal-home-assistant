@@ -31,7 +31,7 @@ RUN echo "apk refresh: ${APK_REFRESH:-none}" \
     && apk add --no-cache \
     bash=5.3.9-r1 \
     curl=8.23.0-r0 \
-    git=2.54.0-r0 \
+    git=2.54.1-r0 \
     jq=1.8.2-r0 \
     nano=9.3-r0 \
     nodejs=24.22.1-r1 \
