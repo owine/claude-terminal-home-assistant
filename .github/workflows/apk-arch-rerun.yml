@@ -1,0 +1,40 @@
+# Reruns a Renovate PR's `Test build <arch>` jobs that lost the race against
+# Alpine's per-architecture publishing.
+#
+# Alpine publishes x86_64 and aarch64 separately, minutes to hours apart. An
+# `alpine packages` PR built inside that gap fails on the late architecture
+# with `unable to select packages` (#558: aarch64, missed by 6 minutes), and
+# Renovate cannot wait it out: the apk datasource dates a release by its
+# source commit time, which is the same on every architecture. Rerunning the
+# failed jobs once every pin is everywhere is all such a PR needs.
+#
+# The logic lives in owine/renovate-config's reusable workflow, which checks
+# each pin in claude-terminal/Dockerfile against every architecture's APKINDEX
+# and leaves any other failure alone. See its README, "Consumer notes &
+# caveats" > "apk architecture lag".
+#
+# `@main` is deliberate, as with the Renovate presets: the whole fleet follows
+# renovate-config's main. Don't pin it to a SHA.
+#
+# `alpine-branch` is a second place the Alpine line is written, next to
+# `branch=` in renovate.json's apk registryUrls. Bump both together. A stale
+# one fails safe: pins read as missing and nothing is rerun.
+name: apk arch-lag rerun
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  pull-requests: read
+  contents: read
+
+jobs:
+  rerun:
+    uses: owine/renovate-config/.github/workflows/apk-arch-rerun.yml@main
+    with:
+      workflow: test.yml
+      dockerfile: claude-terminal/Dockerfile
+      alpine-branch: v3.24
