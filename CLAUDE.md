@@ -205,7 +205,7 @@ Note: Renovate auto-tracks both `pyproject.toml` + `uv.lock`. Manual updates rar
 - All GitHub Actions use SHA256 digest pinning (Renovate auto-updates)
 - Alpine packages in `Dockerfile` are pinned to exact versions; Renovate's dockerfile manager extracts those `apk add` pins natively (datasource `apk`)
 - The HA base image (`ghcr.io/home-assistant/base`) is pinned to a tag + digest in the Dockerfile `BUILD_FROM` ARG and tracked by Renovate's built-in dockerfile manager (digest auto-updated)
-- **IMPORTANT:** When bumping the Alpine base image (e.g., 3.24 → 3.25), you must also update `branch=v3.24` → `branch=v3.25` in the apk `registryUrls` packageRule in `renovate.json` — otherwise Renovate will look up versions from the wrong Alpine release
+- **IMPORTANT:** When bumping the Alpine base image (e.g., 3.24 → 3.25), you must also update `branch=v3.24` → `branch=v3.25` in the apk `registryUrls` packageRule in `renovate.json` — otherwise Renovate will look up versions from the wrong Alpine release. Bump `alpine-branch: v3.24` in `.github/workflows/apk-arch-rerun.yml` with it; a stale one fails safe, but arch-lag failures then never get rerun
 - See `renovate.json` for config
 
 ## Release Management
@@ -300,6 +300,7 @@ gh run list --workflow=publish.yml --limit 3
 | `publish.yml` | Release published | Build + sign + push images, then bump `config.yaml` + prepend `CHANGELOG.md` on main (init → per-arch → manifest → promote + scan) |
 | `security.yml` | Push/PR to main + weekly cron | Trivy filesystem security scan; opens tracking issue on findings |
 | `claude.yml` | @claude mentions | Respond to mentions in issues/PRs (optional) |
+| `apk-arch-rerun.yml` | Cron (:17, :47), manual | Calls renovate-config's reusable workflow: reruns a Renovate PR's failed `test.yml` jobs once Alpine has its apk pins on every architecture (`unable to select packages`, #558) |
 
 **Images:** `ghcr.io/owine/{arch}-claude-terminal-prowine:{version|latest}` and multi-arch manifest at `ghcr.io/owine/claude-terminal-prowine`
 
