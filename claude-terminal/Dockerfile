@@ -38,7 +38,7 @@ RUN echo "apk refresh: ${APK_REFRESH:-none}" \
     npm=11.12.1-r0 \
     py3-aiohttp=3.13.5-r0 \
     py3-beautifulsoup4=4.15.0-r0 \
-    py3-pip=26.1.2-r0 \
+    py3-pip=26.1.2-r1 \
     py3-requests=2.33.1-r0 \
     py3-yaml=6.0.3-r2 \
     python3=3.14.10-r1 \
