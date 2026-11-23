@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   rerun:
-    uses: owine/renovate-config/.github/workflows/apk-arch-rerun.yml@14ed952560b91f9df677c8601c370288ed693184 # main
+    uses: owine/renovate-config/.github/workflows/apk-arch-rerun.yml@c293d28cfb9ede64605773c2fc1c7cce7035123b # main
     with:
       workflow: test.yml
       dockerfile: claude-terminal/Dockerfile
