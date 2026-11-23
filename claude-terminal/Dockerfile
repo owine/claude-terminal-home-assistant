@@ -179,7 +179,7 @@ RUN set -eux; \
 # running the binary, so a truncated or corrupt download fails the build here
 # rather than at runtime inside a user's add-on.
 # renovate: datasource=github-releases depName=home-assistant/cli
-ARG HA_CLI_VERSION=5.7.0
+ARG HA_CLI_VERSION=6.0.0
 ARG TARGETARCH
 RUN set -eux; \
     case "${TARGETARCH}" in \
