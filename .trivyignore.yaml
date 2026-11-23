@@ -28,33 +28,6 @@ vulnerabilities:
     paths:
       - "usr/bin/gh"
 
-  # --- usr/bin/ha (Home Assistant CLI) ---
-  # Go stdlib, x/net and x/text CVEs compiled into the ha-cli binary. HA_CLI_VERSION
-  # is pinned to 5.6.0, the latest release (2026-10-20), built on go1.26.9 with
-  # x/net 0.55.0 and x/text 0.37.0, so there is nothing to bump to. Needs an
-  # upstream ha-cli rebuild on go >= 1.26.10 with x/net >= 0.62.0 and
-  # x/text >= 0.41.0. (go1.26.9 retired CVE-2026-78667 and -97031 here;
-  # CVE-2026-78661, x/net/html DoS, entered the Trivy DB on 2026-11-06 and
-  # needs x/net >= 0.62.0.)
-  - id: CVE-2026-46600
-    paths:
-      - "usr/bin/ha"
-  - id: CVE-2026-78661
-    paths:
-      - "usr/bin/ha"
-  - id: CVE-2026-56851
-    paths:
-      - "usr/bin/ha"
-  - id: CVE-2026-56852
-    paths:
-      - "usr/bin/ha"
-  - id: CVE-2026-78669
-    paths:
-      - "usr/bin/ha"
-  - id: CVE-2026-111943
-    paths:
-      - "usr/bin/ha"
-
 # Misconfiguration (IaC) findings. Unlike the CVEs above, these are deliberate
 # design choices and not waiting on an upstream fix, so there is nothing to prune.
 misconfigurations:
