@@ -1540,7 +1540,9 @@
 
         // Send raw input to the terminal via the iframe's xterm.js instance.
         // Uses triggerDataEvent(data, false) to bypass bracket paste mode,
-        // so control characters like \x03 (Ctrl+C) are sent raw.
+        // so control characters like \x03 (Ctrl+C) are sent raw. Only for
+        // bytes the page means to send as keys (the key-row buttons); text
+        // the user composed goes through pasteIntoTerminal() below.
         function sendInput(data) {
             const iframe = document.getElementById('terminal-frame');
             try {
@@ -1553,6 +1555,38 @@
                 return true;
             } catch (e) {
                 console.error('sendInput failed:', e);
+                setStatus('Cannot send to terminal', 'error');
+                return false;
+            }
+        }
+
+        // Deliver text the user composed (voice transcript, paste bar) as a
+        // paste, not as keystrokes. It is flattened to one inert line first
+        // (sanitizeForTerminalLine: no ESC, CR, LF or TAB), then handed to
+        // xterm's term.paste(), which wraps it in bracketed-paste markers
+        // whenever the program at the prompt enabled them. Flattening is what
+        // makes it safe without that mode too: nothing in the text can act as
+        // Enter, so it waits at the prompt for the admin. Fails closed if the
+        // sanitizer did not load, rather than sending the text unfiltered.
+        function pasteIntoTerminal(rawText) {
+            const clip = window.TerminalClipboard;
+            if (!clip || typeof clip.sanitizeForTerminalLine !== 'function') {
+                setStatus('Cannot send to terminal', 'error');
+                return false;
+            }
+            const text = clip.sanitizeForTerminalLine(rawText);
+            if (!text) return false;
+            const iframe = document.getElementById('terminal-frame');
+            try {
+                const term = iframe.contentWindow?.term;
+                if (!term) {
+                    setStatus('Terminal loading...', 'error');
+                    return false;
+                }
+                term.paste(text);
+                return true;
+            } catch (e) {
+                console.error('pasteIntoTerminal failed:', e);
                 setStatus('Cannot send to terminal', 'error');
                 return false;
             }
@@ -1642,10 +1676,13 @@
         const pasteInput = document.getElementById('paste-input');
         const sendBtn = document.getElementById('send-btn');
 
+        // A single-line field, so typing cannot put a line break in it, but a
+        // value set or pasted into it can still carry ESC and other controls.
+        // pasteIntoTerminal flattens those. The field keeps its text if the
+        // terminal was not ready, so nothing typed is lost.
         function sendPasteInput() {
             const text = pasteInput.value;
-            if (text) {
-                sendInput(text);
+            if (text && pasteIntoTerminal(text)) {
                 pasteInput.value = '';
             }
         }
@@ -2513,13 +2550,20 @@
         }
 
         // Send transcript to terminal
+        // The transcript is a contenteditable the admin may have edited, so its
+        // text is flattened to one line (pasteIntoTerminal) and can never
+        // submit a command on its own: the admin reviews it and presses Enter.
         voiceSendBtn.addEventListener('click', () => {
-            const text = voiceTranscript.textContent.trim();
+            const clip = window.TerminalClipboard;
+            const raw = voiceTranscript.textContent;
+            const text = (clip && clip.sanitizeForTerminalLine)
+                ? clip.sanitizeForTerminalLine(raw).trim()
+                : raw.trim();
             if (!text) {
                 voiceStatus.textContent = 'No text to send';
                 return;
             }
-            if (sendInput(text)) {
+            if (pasteIntoTerminal(text)) {
                 voiceStatus.textContent = 'Sent to terminal!';
                 voiceStatus.className = 'success';
             } else {

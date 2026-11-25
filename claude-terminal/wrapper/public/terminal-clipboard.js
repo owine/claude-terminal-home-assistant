@@ -60,6 +60,32 @@
         return text.replace(CLIPBOARD_CONTROL, '');
     }
 
+    // Flatten text the page delivers into the terminal on the user's behalf —
+    // a voice transcript, the paste bar — to one inert line. Every C0 control
+    // (TAB, LF and CR included), DEL, C1, and the Unicode line and paragraph
+    // separators U+2028/U+2029 is replaced, each run by a single space.
+    //
+    // Stricter than sanitizeForClipboard, which keeps LF so a multi-line copy
+    // stays multi-line: that text is pasted later by the admin, by hand. This
+    // text is delivered by a button, and bracketed paste is only in effect when
+    // the program at the prompt asked for it. Outside it a LF or CR is Enter,
+    // so a transcript holding one would submit a command before the admin read
+    // it, and a TAB would trigger completion. With all of them gone, the text
+    // can only ever land at the prompt, and the admin still presses Enter.
+    // A run becomes a space rather than nothing, so words split across lines
+    // stay separate words. Leading and trailing whitespace is left alone; a
+    // caller that wants it gone trims. A non-string yields '', so a caller's
+    // emptiness check also covers a bad argument.
+    //
+    // Inspired by ESJavadex's terminalText (claude-code-ha, voice input).
+    // eslint-disable-next-line no-control-regex
+    const LINE_CONTROL = /[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g;
+
+    function sanitizeForTerminalLine(text) {
+        if (typeof text !== 'string') return '';
+        return text.replace(LINE_CONTROL, ' ');
+    }
+
     // Decode an OSC 52 payload of the form `<selection>;<base64 | '?'>`.
     // Returns { kind: 'write', text } | { kind: 'read' } | { kind: 'oversize' }
     //       | { kind: 'invalid' }
@@ -100,7 +126,7 @@
         }
     }
 
-    const api = { decodeOsc52, sanitizeForClipboard };
+    const api = { decodeOsc52, sanitizeForClipboard, sanitizeForTerminalLine };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.TerminalClipboard = api;
 })(typeof self !== 'undefined' ? self : this);
