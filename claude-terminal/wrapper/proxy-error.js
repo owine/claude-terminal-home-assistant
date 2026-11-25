@@ -125,4 +125,28 @@ function handleProxyError(err, req, res, {
     res.end(MESSAGE);
 }
 
-module.exports = { handleProxyError, startingPage, STARTING_PAGE, SLOW_START_S };
+// The logger for http-proxy-middleware. With `logger` set, its default
+// logger plugin logs a copy of every proxy error, beside the line
+// handleProxyError writes, which throttles the refusals of a ttyd that is
+// still starting; the copy was one line per starting-page reload, about 60 a
+// minute through a slow start. The plugin also logs every proxied request
+// ("[HPM] GET /terminal/ -> ... [200]"). Both are dropped here. Kept: its
+// WebSocket connect/disconnect lines, which date a dropped terminal, its
+// warnings, and any other error it reports (a path filter that throws).
+// Called from inside the library's event listeners, so it must never throw.
+const HPM_PROXY_ERROR = /^\[HPM\] Error occurred while proxying request /;
+const HPM_EXCHANGE = /^\[HPM\] [A-Z]+ \S+ -> /;
+
+function createProxyLogger(base = console) {
+    const matches = (re, msg) => typeof msg === 'string' && re.test(msg);
+    const safe = (fn) => (...args) => {
+        try { fn(...args); } catch { /* logging must not break the proxy */ }
+    };
+    return {
+        info: safe((msg, ...args) => { if (!matches(HPM_EXCHANGE, msg)) base.info(msg, ...args); }),
+        warn: safe((...args) => base.warn(...args)),
+        error: safe((msg, ...args) => { if (!matches(HPM_PROXY_ERROR, msg)) base.error(msg, ...args); }),
+    };
+}
+
+module.exports = { handleProxyError, startingPage, STARTING_PAGE, SLOW_START_S, createProxyLogger };
