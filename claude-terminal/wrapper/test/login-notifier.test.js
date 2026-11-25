@@ -165,6 +165,23 @@ test('/login while logged in: a credentials read that fails does not later pass 
     assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
 });
 
+test('/login while logged in: unreadable on the very first read, the next good read is the baseline', async () => {
+    const w = world();
+    w.loggedIn();
+    w.readError = 'EACCES';         // no stamp has ever been read
+    w.loginScreen(URL_A);
+    const n = w.notifier();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+    w.readError = null;             // readable, the same login as before
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create'], 'taken as the baseline, not as a new login');
+    w.loggedIn(NOW + 7200_000, 'y');
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
 test('/login while logged in: a half-written credentials file does not later pass for a new login', async () => {
     const w = world();
     w.loggedIn();

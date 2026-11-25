@@ -141,7 +141,10 @@ function createLoginNotifier({
     const abandoned = new Map(); // url -> credentials stamp when it was posted
     let shownUrl = null;  // URL of the notification currently up, if any
     let shownStamp = null; // credentials stamp when shownUrl was posted
-    let lastStamp = 'none'; // the last stamp read successfully (see readCredentials)
+    // The last stamp read successfully (see readCredentials); null until one
+    // has been. A link posted while it is unknown has no baseline yet, and
+    // takes the next good read as its baseline rather than as a change.
+    let lastStamp = null;
     let missing = 0;      // consecutive captures without shownUrl on screen
     let timer = null;
     let delay = pollMs;   // gap before the next poll; see MAX_POLL_MS
@@ -231,12 +234,18 @@ function createLoginNotifier({
             else lastStamp = creds.stamp;
             if (creds.loggedIn) {
                 for (const [u, stamp] of abandoned) {
-                    if (stamp !== creds.stamp) {
+                    if (stamp === null) {
+                        abandoned.set(u, creds.stamp);
+                    } else if (stamp !== creds.stamp) {
                         posted.add(u);
                         abandoned.delete(u);
                     }
                 }
-                if (shownUrl && creds.stamp !== shownStamp) await dismissShown('login complete');
+                if (shownUrl && shownStamp === null) {
+                    shownStamp = creds.stamp;
+                } else if (shownUrl && creds.stamp !== shownStamp) {
+                    await dismissShown('login complete');
+                }
             }
 
             let url;
