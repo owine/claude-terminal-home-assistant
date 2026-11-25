@@ -42,6 +42,7 @@ function world() {
     };
     w.readFile = async (p) => {
         assert.strictEqual(p, CRED_PATH);
+        if (w.readError) throw Object.assign(new Error(w.readError), { code: w.readError });
         if (w.credentials === null) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
         return w.credentials;
     };
@@ -62,8 +63,10 @@ function world() {
         log: { log: (m) => w.logs.push(m) },
         ...opts,
     });
-    w.loggedIn = (expiresAt = NOW + 3600_000) => {
-        w.credentials = JSON.stringify({ claudeAiOauth: { accessToken: 'x', expiresAt } });
+    // A different token is a different saved login: a new login, an account
+    // switch or a refresh.
+    w.loggedIn = (expiresAt = NOW + 3600_000, accessToken = 'x') => {
+        w.credentials = JSON.stringify({ claudeAiOauth: { accessToken, expiresAt } });
     };
     w.loginScreen = (url) => {
         w.screen = ['Browser didn\'t open? Use the url below to sign in:', '', url, '', 'Paste code here if prompted > '].join('\n');
@@ -105,12 +108,149 @@ test('posts nothing when the pane has no auth URL', async () => {
     assert.deepStrictEqual(w.calls, []);
 });
 
-test('posts nothing while logged in, even with a URL on screen', async () => {
+// --- /login while still logged in (renewing, or switching account) ---
+//
+// The old login stays valid until the new one is saved, so "logged in" can
+// neither suppress the link nor dismiss it. Ported from ESJavadex/claude-code-ha
+// 2c4ad18 (Neil Sleightholm).
+
+test('a logged-in user running /login gets the link posted', async () => {
     const w = world();
     w.loggedIn();
     w.loginScreen(URL_A);
     await w.notifier().tick();
-    assert.deepStrictEqual(w.calls, []);
+    assert.deepStrictEqual(w.services(), ['create']);
+    assert.ok(w.calls[0].body.message.includes(URL_A));
+});
+
+test('/login while logged in: the link stays up while the saved login is unchanged', async () => {
+    const w = world();
+    w.loggedIn();
+    w.loginScreen(URL_A);
+    const n = w.notifier();
+    for (let i = 0; i < 5; i++) await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+});
+
+test('/login while logged in: dismissed once the new login is saved', async () => {
+    const w = world();
+    w.loggedIn();
+    w.loginScreen(URL_A);
+    const n = w.notifier();
+    await n.tick();
+    w.loggedIn(NOW + 7200_000, 'y'); // new login written, link still on screen
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+    assert.ok(w.logs.some((m) => /login complete/.test(m)));
+    w.loggedIn(NOW - 1, 'y');        // later expiry must not bring the used link back
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
+test('/login while logged in: a credentials read that fails does not later pass for a new login', async () => {
+    const w = world();
+    w.loggedIn();
+    const n = w.notifier();
+    await n.tick();                 // stamp of the saved login seen once
+    w.readError = 'EACCES';         // unreadable just as the link is posted
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.readError = null;             // readable again, unchanged
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create'], 'still up: nothing new was saved');
+    w.loggedIn(NOW + 7200_000, 'y');
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
+test('/login while logged in: unreadable on the very first read, the next good read is the baseline', async () => {
+    const w = world();
+    w.loggedIn();
+    w.readError = 'EACCES';         // no stamp has ever been read
+    w.loginScreen(URL_A);
+    const n = w.notifier();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+    w.readError = null;             // readable, the same login as before
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create'], 'taken as the baseline, not as a new login');
+    w.loggedIn(NOW + 7200_000, 'y');
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
+test('/login while logged in: a half-written credentials file does not later pass for a new login', async () => {
+    const w = world();
+    w.loggedIn();
+    const saved = w.credentials;
+    const n = w.notifier();
+    await n.tick();
+    w.credentials = saved.slice(0, 10); // caught mid-write as the link is posted
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.credentials = saved;
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+});
+
+test('a changed but logged-out credentials file does not dismiss', async () => {
+    const w = world();
+    w.loggedIn();
+    w.loginScreen(URL_A);
+    const n = w.notifier();
+    await n.tick();
+    w.loggedIn(NOW - 1, 'y');        // rewritten, but expired
+    await n.tick();
+    w.credentials = null;            // or removed (/logout)
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
+});
+
+test('/login while logged in, then cancelled: dismissed once the screen is gone', async () => {
+    const w = world();
+    w.loggedIn();
+    w.loginScreen(URL_A);
+    const n = w.notifier();
+    await n.tick();
+    w.screen = '> '; // Esc back to the prompt; nothing saved
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+    assert.ok(w.logs.some((m) => /login screen gone/.test(m)));
+});
+
+test('/login while logged in, left and come back to unchanged: posted again', async () => {
+    const w = world();
+    w.loggedIn();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = 'root@ha:/config# '; // another window
+    await n.tick();
+    await n.tick();
+    w.loginScreen(URL_A);
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss', 'create']);
+});
+
+test('/login while logged in, left, then the new login saved: never re-posted', async () => {
+    const w = world();
+    w.loggedIn();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = 'root@ha:/config# '; // another window
+    await n.tick();
+    await n.tick();
+    w.loginScreen(URL_A);            // back, code pasted before the next poll
+    w.loggedIn(NOW + 7200_000, 'y');
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
 });
 
 test('the same URL is posted once, not every poll', async () => {
@@ -424,10 +564,10 @@ test('start() clears a stale notification before polling', async () => {
 
 // --- back-off ---
 //
-// isLoggedIn only recognises an unexpired claudeAiOauth token. Console
-// (API-key) logins and idle OAuth logins past expiry read as logged out for
-// good, and each poll spawns two tmux processes - every 3 s, all day, on a Pi.
-// With nothing to watch the loop backs off; a login link brings it back.
+// Every poll captures the pane, logged in or not (/login prints its link
+// while the old login is still valid), and each capture spawns two tmux
+// processes - every 3 s, all day, on a Pi. With nothing to watch the loop
+// backs off; a login link brings it back.
 
 // Fake timers: each setTimeout replaces the one pending callback, and fire()
 // runs it to completion (its tick and the next schedule).
@@ -456,6 +596,19 @@ test('with no login screen, polling backs off to a cap', async () => {
     await n.start();
     for (let i = 0; i < 7; i++) await t.fire();
     assert.deepStrictEqual(t.delays, [3000, 6000, 12000, 24000, 30000, 30000, 30000, 30000]);
+    n.stop();
+});
+
+test('logged in and idle, polling backs off the same way', async () => {
+    const w = world();
+    const t = fakeTimers();
+    const n = w.notifier({ timers: t });
+    w.loggedIn();
+    w.screen = '> ';
+    await n.start();
+    for (let i = 0; i < 5; i++) await t.fire();
+    assert.deepStrictEqual(t.delays, [3000, 6000, 12000, 24000, 30000, 30000]);
+    assert.strictEqual(w.captures, 5, 'the pane is still watched for /login');
     n.stop();
 });
 
