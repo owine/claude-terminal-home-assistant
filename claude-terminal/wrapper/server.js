@@ -24,7 +24,7 @@ const path = require('path');
 const fs = require('fs');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const { cacheControlFor } = require('./cache-policy');
-const { handleProxyError } = require('./proxy-error');
+const { handleProxyError, createProxyLogger } = require('./proxy-error');
 const {
     createRateLimiter,
     createOriginGuard,
@@ -241,7 +241,8 @@ const terminalProxy = createProxyMiddleware({
     on: {
         error: (err, req, res) => handleProxyError(err, req, res),
     },
-    logger: console
+    // Not bare `console`: see createProxyLogger in proxy-error.js.
+    logger: createProxyLogger(console)
 });
 
 app.use('/terminal', terminalProxy);

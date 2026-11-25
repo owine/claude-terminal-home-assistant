@@ -3,7 +3,7 @@
 const assert = require('node:assert');
 const http = require('node:http');
 const net = require('node:net');
-const { handleProxyError, startingPage, STARTING_PAGE, SLOW_START_S } = require('../proxy-error.js');
+const { handleProxyError, startingPage, STARTING_PAGE, SLOW_START_S, createProxyLogger } = require('../proxy-error.js');
 
 // These run against real http servers and sockets rather than doubles. The bug
 // being guarded is a property of Node's ServerResponse - writeHead() throws
@@ -248,6 +248,56 @@ test('refusals answered with the starting page are logged at most once a minute'
     handleProxyError(refused, { method: 'GET', headers: { accept: '*/*' } }, fakeRes(), opts);
     handleProxyError(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }), pageReq, fakeRes(), opts);
     assert.strictEqual(lines.length, 4);
+});
+
+// http-proxy-middleware's logger plugin (logger-plugin.js) logs its own copy
+// of every proxy error, and one line per proxied request. handleProxyError
+// already logs errors (throttling the refusals of a starting ttyd), so the
+// copy was one line per starting-page reload: ~60 a minute during a slow start.
+function recordingConsole() {
+    const lines = [];
+    const rec = (level) => (...args) => lines.push([level, ...args]);
+    return { lines, info: rec('info'), warn: rec('warn'), error: rec('error') };
+}
+
+test('the proxy logger drops the library\'s copy of each proxy error', () => {
+    const base = recordingConsole();
+    const logger = createProxyLogger(base);
+    logger.error('[HPM] Error occurred while proxying request %s to %s [%s] (%s)',
+        'localhost:7680/', 'http://127.0.0.1:7681/', 'ECONNREFUSED', 'https://nodejs.org/api/errors.html');
+    assert.deepStrictEqual(base.lines, []);
+});
+
+test('the proxy logger drops the per-request exchange lines', () => {
+    const base = recordingConsole();
+    const logger = createProxyLogger(base);
+    logger.info('[HPM] GET /terminal/ -> http://127.0.0.1:7681/ [200]');
+    logger.info('[HPM] POST /terminal/token -> http://127.0.0.1:7681/token [200]');
+    assert.deepStrictEqual(base.lines, []);
+});
+
+test('the proxy logger keeps WebSocket connect/disconnect, warnings and other errors', () => {
+    const base = recordingConsole();
+    const logger = createProxyLogger(base);
+    const addr = { address: '127.0.0.1', port: 7681 };
+    logger.info('[HPM] Client connected: %o', addr);
+    logger.info('[HPM] Client disconnected: %o', addr);
+    logger.warn('[HPM] some configuration warning');
+    const filterErr = new Error('pathFilter threw');
+    logger.error(filterErr);
+    assert.deepStrictEqual(base.lines, [
+        ['info', '[HPM] Client connected: %o', addr],
+        ['info', '[HPM] Client disconnected: %o', addr],
+        ['warn', '[HPM] some configuration warning'],
+        ['error', filterErr],
+    ]);
+});
+
+test('the proxy logger never throws, whatever it is handed', () => {
+    const logger = createProxyLogger(recordingConsole());
+    for (const v of [undefined, null, 42, {}, Symbol('s')]) {
+        logger.info(v); logger.warn(v); logger.error(v);
+    }
 });
 
 test('the starting page loads nothing from elsewhere', () => {
