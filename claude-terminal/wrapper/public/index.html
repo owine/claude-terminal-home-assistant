@@ -1361,19 +1361,54 @@
             el.hidden = false;
         }
 
+        // The wrapper's "Starting the terminal…" page (proxy-error.js), served
+        // in the frame while ttyd is not listening yet. It reloads itself every
+        // second, so it is waiting, not stuck.
+        function isTerminalStartingPage(iframe) {
+            try {
+                return !!iframe.contentDocument?.documentElement?.hasAttribute('data-terminal-starting');
+            } catch (e) {
+                return false;   // not same-origin: not ours
+            }
+        }
+
         function loadTerminal() {
             const iframe = document.getElementById('terminal-frame');
             // Use relative path for Home Assistant ingress compatibility
             iframe.src = 'terminal/';
 
-            // Poll for xterm.js term instance to be ready in the iframe
+            // One poll and one give-up timer for the frame, re-armed on each
+            // load. `load` fires for every document the frame gets: ttyd's
+            // page, a ttyd reconnect, and the starting page once a second for
+            // as long as run.sh takes to start ttyd (minutes, with package
+            // installs). Arming per load and never cancelling stacked one 30 s
+            // timer per second, and the first of them reported a failure
+            // while the terminal was still legitimately starting.
+            let checkTerm = null;
+            let giveUp = null;
             iframe.addEventListener('load', () => {
-                let termFound = false;
-                const checkTerm = setInterval(() => {
+                clearInterval(checkTerm);
+                clearTimeout(giveUp);
+                checkTerm = giveUp = null;
+                // Its own refresh brings the next load; the timeout starts
+                // with the first document that is not the starting page.
+                // The frame can come back to it after the terminal was ready
+                // (a reconnect reload while the app restarts), so the
+                // indicator goes back to loading rather than stay green.
+                if (isTerminalStartingPage(iframe)) {
+                    const indicator = document.getElementById('term-indicator');
+                    indicator.style.background = '#f48771';
+                    indicator.title = 'Terminal loading...';
+                    return;
+                }
+
+                // Poll for xterm.js term instance to be ready in the iframe
+                checkTerm = setInterval(() => {
                     try {
                         if (iframe.contentWindow?.term) {
                             clearInterval(checkTerm);
-                            termFound = true;
+                            clearTimeout(giveUp);
+                            checkTerm = giveUp = null;
                             const indicator = document.getElementById('term-indicator');
                             indicator.style.background = '#4ec9b0';
                             indicator.title = 'Terminal ready';
@@ -1385,15 +1420,15 @@
                         // iframe not accessible yet
                     }
                 }, 500);
-                // Stop polling after 30s. Say so if we gave up: without the
-                // terminal instance the mouse handlers were never registered,
-                // so text selection in full-screen apps is unprotected.
-                setTimeout(() => {
+                // Stop polling after 30s, and say so: without the terminal
+                // instance the mouse handlers were never registered, so text
+                // selection in full-screen apps is unprotected. Only reached
+                // if the poll above has not found `term` and cancelled it.
+                giveUp = setTimeout(() => {
                     clearInterval(checkTerm);
-                    if (!termFound) {
-                        console.error('[wrapper] terminal instance never appeared; handlers not registered');
-                        setStatus('Terminal did not finish loading — reload the page', 'error');
-                    }
+                    checkTerm = giveUp = null;
+                    console.error('[wrapper] terminal instance never appeared; handlers not registered');
+                    setStatus('Terminal did not finish loading — reload the page', 'error');
                 }, 30000);
             });
         }

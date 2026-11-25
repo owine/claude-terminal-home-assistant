@@ -3,7 +3,7 @@
 const assert = require('node:assert');
 const http = require('node:http');
 const net = require('node:net');
-const { handleProxyError } = require('../proxy-error.js');
+const { handleProxyError, startingPage, STARTING_PAGE, SLOW_START_S } = require('../proxy-error.js');
 
 // These run against real http servers and sockets rather than doubles. The bug
 // being guarded is a property of Node's ServerResponse - writeHead() throws
@@ -28,12 +28,12 @@ const CLIENT_TIMEOUT_MS = 2000;
 
 // Issue a GET and resolve with what the client observed: a status and body, or
 // the error that ended the request. Never rejects, so tests assert on outcome.
-function get(port) {
+function get(port, { method = 'GET', headers = {} } = {}) {
     return new Promise((resolve) => {
-        const req = http.get({ port, host: '127.0.0.1', path: '/', agent: false }, (res) => {
+        const req = http.request({ port, host: '127.0.0.1', path: '/', method, headers, agent: false }, (res) => {
             let body = '';
             res.on('data', (c) => { body += c; });
-            res.on('end', () => resolve({ status: res.statusCode, body, complete: res.complete }));
+            res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body, complete: res.complete }));
             res.on('error', (err) => resolve({ status: res.statusCode, error: err.code || err.message }));
             res.on('aborted', () => resolve({ status: res.statusCode, error: 'aborted' }));
         });
@@ -42,6 +42,7 @@ function get(port) {
             resolve({ error: 'timeout' });
             req.destroy();
         });
+        req.end();
     });
 }
 
@@ -172,6 +173,151 @@ test('falls back to the error code when the message is empty', async () => {
     try {
         await get(port);
         assert.match(lines[0], /ECONNREFUSED/);
+    } finally { server.close(); }
+});
+
+// --- ttyd not listening yet: the starting page ---
+
+// What a browser sends for the terminal iframe's document.
+const PAGE_ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
+
+function refusingServer() {
+    return http.createServer((req, res) => {
+        handleProxyError(Object.assign(new Error(''), { code: 'ECONNREFUSED' }), req, res, silent);
+    });
+}
+
+test('a page request while ttyd is down gets a 503 starting page that reloads itself', async () => {
+    // run.sh starts the wrapper minutes before ttyd. The iframe loads
+    // terminal/ at once; a bare 502 would sit in it until a manual reload.
+    const server = refusingServer();
+    const port = await listen(server);
+    try {
+        const result = await get(port, { headers: { Accept: PAGE_ACCEPT } });
+        assert.strictEqual(result.status, 503);
+        assert.strictEqual(result.headers['retry-after'], '1');
+        assert.strictEqual(result.headers['cache-control'], 'no-store',
+            'a cached starting page would outlive ttyd coming up');
+        assert.match(result.headers['content-type'], /^text\/html/);
+        assert.match(result.body, /<meta http-equiv="refresh" content="1">/);
+        assert.match(result.body, /Starting the terminal/);
+        assert.strictEqual(result.body, STARTING_PAGE);
+        assert.ok(result.complete, 'the page was cut short');
+    } finally { server.close(); }
+});
+
+test('the starting page carries the marker index.html uses to recognise it', () => {
+    // index.html's frame `load` handler skips its "did not finish loading"
+    // timeout for this document; without the marker it would fire while the
+    // terminal is legitimately still starting.
+    assert.match(STARTING_PAGE, /<html[^>]*\bdata-terminal-starting\b/);
+});
+
+test('index.html looks for the same marker the starting page carries', () => {
+    // The check lives in index.html's inline script, out of reach of a unit
+    // test, so the two are tied together here by the attribute name.
+    const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/index.html'), 'utf8');
+    const marker = STARTING_PAGE.match(/<html[^>]*\b(data-terminal-starting)\b/)[1];
+    assert.ok(html.includes(`hasAttribute('${marker}')`), `index.html checks hasAttribute('${marker}')`);
+});
+
+test('a start that takes long says so, and where to look', () => {
+    assert.strictEqual(startingPage(SLOW_START_S - 1), STARTING_PAGE, 'no note before the threshold');
+    const slow = startingPage(SLOW_START_S + 130);
+    assert.match(slow, /Still starting after 7 minutes/);
+    assert.match(slow, /Log tab/);
+    assert.match(slow, /<html[^>]*\bdata-terminal-starting\b/, 'still recognised as the starting page');
+});
+
+test('refusals answered with the starting page are logged at most once a minute', () => {
+    const lines = [];
+    const state = { last: -Infinity, skipped: 0 };
+    let t = 1000;
+    const refused = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:7681'), { code: 'ECONNREFUSED' });
+    const pageReq = { method: 'GET', headers: { accept: 'text/html,*/*' } };
+    const fakeRes = () => ({ headersSent: false, writeHead() {}, end() {} });
+    const opts = { log: (m) => lines.push(m), now: () => t, uptime: () => 5, logState: state };
+    for (let i = 0; i < 30; i++, t += 1000) handleProxyError(refused, pageReq, fakeRes(), opts);
+    assert.strictEqual(lines.length, 1, 'one line for 30 refreshes inside a minute');
+    assert.match(lines[0], /ECONNREFUSED/);
+    t += 60000;
+    handleProxyError(refused, pageReq, fakeRes(), opts);
+    assert.strictEqual(lines.length, 2);
+    assert.match(lines[1], /29 more since the last line/);
+    // Anything else is still logged every time.
+    handleProxyError(refused, { method: 'GET', headers: { accept: '*/*' } }, fakeRes(), opts);
+    handleProxyError(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }), pageReq, fakeRes(), opts);
+    assert.strictEqual(lines.length, 4);
+});
+
+test('the starting page loads nothing from elsewhere', () => {
+    // Nothing else under /terminal/ answers while ttyd is down, and the
+    // page must not depend on the network to render.
+    assert.doesNotMatch(STARTING_PAGE, /<script|<link|\bsrc=|url\(|@import/i);
+});
+
+test('a non-page GET while ttyd is down still gets the 502', async () => {
+    // ttyd's own token fetch, or any script: a page body would be nonsense
+    // to them, and they are not reloaded by a meta refresh anyway.
+    const server = refusingServer();
+    const port = await listen(server);
+    try {
+        for (const accept of ['application/json', '*/*', undefined]) {
+            const headers = accept === undefined ? {} : { Accept: accept };
+            const result = await get(port, { headers });
+            assert.strictEqual(result.status, 502, `Accept ${accept}: got ${result.status}`);
+            assert.strictEqual(result.body, 'Failed to connect to terminal');
+        }
+    } finally { server.close(); }
+});
+
+test('a non-GET request that accepts HTML still gets the 502', async () => {
+    const server = refusingServer();
+    const port = await listen(server);
+    try {
+        for (const method of ['POST', 'HEAD']) {
+            const result = await get(port, { method, headers: { Accept: PAGE_ACCEPT } });
+            assert.strictEqual(result.status, 502, `${method}: got ${result.status}`);
+        }
+    } finally { server.close(); }
+});
+
+test('a page request that fails after headers were sent is still cut, not answered', async () => {
+    // The headersSent check comes first: the starting page must never be
+    // written over a response ttyd had already begun.
+    let thrown = null;
+    const server = http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.write('<html>partial');
+        try {
+            handleProxyError(new Error('socket hang up'), req, res, silent);
+        } catch (err) {
+            thrown = err;
+        }
+    });
+    const port = await listen(server);
+    try {
+        const result = await get(port, { headers: { Accept: PAGE_ACCEPT } });
+        assert.strictEqual(thrown, null, `handler threw: ${thrown && thrown.code}`);
+        assert.notStrictEqual(result.error, 'timeout', 'connection was left hanging');
+        assert.ok(result.error || result.complete === false,
+            `expected a truncated response, got ${JSON.stringify(result)}`);
+    } finally { server.close(); }
+});
+
+test('a failed WebSocket upgrade that accepts HTML still gets the raw 502', async () => {
+    // The upgrade path is untouched by the starting page: `res` there is a
+    // socket, and the reply is the hand-written status line.
+    const server = http.createServer();
+    server.on('upgrade', (req, socket) => {
+        req.headers.accept = PAGE_ACCEPT;
+        handleProxyError(new Error('ECONNREFUSED'), req, socket, silent);
+    });
+    const port = await listen(server);
+    try {
+        const reply = await rawUpgrade(port);
+        assert.strictEqual(reply,
+            'HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 29\r\n\r\nFailed to connect to terminal');
     } finally { server.close(); }
 });
 
