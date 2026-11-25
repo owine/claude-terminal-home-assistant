@@ -2553,9 +2553,19 @@
         // The transcript is a contenteditable the admin may have edited, so its
         // text is flattened to one line (pasteIntoTerminal) and can never
         // submit a command on its own: the admin reviews it and presses Enter.
+        // The transcript as the admin sees it. It is contenteditable, and an
+        // edit can split it into block elements (<div>, <br>); textContent
+        // joins those with nothing between, merging the words either side,
+        // while innerText renders each boundary as a line break, which the
+        // sanitizers then keep (copy) or turn into a space (send).
+        function transcriptText() {
+            const t = voiceTranscript.innerText;
+            return typeof t === 'string' ? t : voiceTranscript.textContent;
+        }
+
         voiceSendBtn.addEventListener('click', () => {
             const clip = window.TerminalClipboard;
-            const raw = voiceTranscript.textContent;
+            const raw = transcriptText();
             const text = (clip && clip.sanitizeForTerminalLine)
                 ? clip.sanitizeForTerminalLine(raw).trim()
                 : raw.trim();
@@ -2575,7 +2585,7 @@
         // bytes, but every clipboard write is sanitized so the rule has no
         // exceptions to reason about.
         voiceCopyBtn.addEventListener('click', async () => {
-            const raw = voiceTranscript.textContent.trim();
+            const raw = transcriptText().trim();
             const text = (window.TerminalClipboard && window.TerminalClipboard.sanitizeForClipboard)
                 ? window.TerminalClipboard.sanitizeForClipboard(raw)
                 : raw;
