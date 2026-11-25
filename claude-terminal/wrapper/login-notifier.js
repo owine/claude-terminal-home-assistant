@@ -81,13 +81,30 @@ async function readCredentials({ readFile, homeDir, now }) {
 // is still usable; an old one scrolled into history belongs to a finished
 // login and must not be posted again (e.g. after a wrapper restart, which
 // forgets which URLs were posted).
+// The start of a login link: host and authorize path, which come in the
+// first few dozen characters of every one. A capture that shows one but
+// yields no complete URL (cut short, elided, mid-redraw) is inconclusive,
+// not proof the login screen is gone. It is looked for in the capture with
+// whitespace and box borders removed, so a wrap that splits the host or path
+// across rows still matches. The authorize path is required: another link
+// to the same hosts (docs, a URL Claude printed) must not keep a stale
+// notification up.
+const LOGIN_LINK_START =
+    /https:\/\/(?:[a-z0-9-]+\.)*(?:claude\.ai|claude\.com|anthropic\.com)\/(?:[a-z0-9-]+\/)*oauth\/authorize/i;
+const UNWRAP = /[\s│┃┆┇┊┋║|]+/g;
+
+// { url: the complete login URL on the pane, or null; linkStart: whether the
+// pane shows the start of a login-host link at all }.
 async function findLoginUrl({ execFile }) {
     const [screen, width] = await Promise.all([
         runFile(execFile, 'tmux', ['capture-pane', '-p', '-t', SESSION]),
         runFile(execFile, 'tmux', ['display-message', '-p', '-t', SESSION, '#{pane_width}']),
     ]);
     const cols = parseInt(width, 10);
-    return reconstructLoginUrl(screen.split('\n'), Number.isFinite(cols) ? cols : undefined);
+    return {
+        url: reconstructLoginUrl(screen.split('\n'), Number.isFinite(cols) ? cols : undefined),
+        linkStart: LOGIN_LINK_START.test(screen.replace(UNWRAP, '')),
+    };
 }
 
 // Markdown link targets end at ')' and break at whitespace. Claude's OAuth URLs
@@ -248,9 +265,9 @@ function createLoginNotifier({
                 }
             }
 
-            let url;
+            let url, linkStart;
             try {
-                url = await findLoginUrl({ execFile });
+                ({ url, linkStart } = await findLoginUrl({ execFile }));
             } catch {
                 waitingForPane = !paneSeen;
                 return; // no tmux session yet, or tmux busy - try next tick
@@ -286,7 +303,12 @@ function createLoginNotifier({
             // back before a login completes.
             if (shownUrl) {
                 const onScreen = url === shownUrl || (url && isTruncationOf(url, shownUrl));
-                missing = onScreen ? 0 : missing + 1;
+                // No complete URL, but a login link still starts on the pane:
+                // a capture cut short or elided. It neither confirms nor
+                // counts against the link; only a pane without one does.
+                const inconclusive = !url && linkStart;
+                if (onScreen) missing = 0;
+                else if (!inconclusive) missing += 1;
                 if (missing >= 2) await dismissShown('login screen gone', { forget: true });
             }
         } catch (err) {
