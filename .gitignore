@@ -49,3 +49,6 @@ Thumbs.db
 docs/superpowers/
 docs/plans/
 .superpowers/
+
+# Playwright MCP output (console logs, page snapshots, screenshots)
+.playwright-mcp/
