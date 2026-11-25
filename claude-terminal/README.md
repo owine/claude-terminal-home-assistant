@@ -61,6 +61,10 @@ claude-doctor
 
 ## Installation
 
+You need a paid Claude plan that includes Claude Code (Pro, Max, Ultra, Team or
+Enterprise) or a Claude Console account with API credits; the free Claude plan
+doesn't include Claude Code. See [Claude Code's quickstart](https://code.claude.com/docs/en/quickstart#before-you-begin).
+
 1. Add this repository to your Home Assistant app store:
    - Go to Settings → Apps → App Store
    - Click the menu (⋮) and select Repositories
@@ -68,7 +72,7 @@ claude-doctor
 2. Install the Claude Terminal Prowine app
 3. Start the app
 4. Click "OPEN WEB UI" or the sidebar icon to access
-5. On first use, follow the OAuth prompts to log in to your Anthropic account
+5. On first use, follow the login prompts and sign in with your Claude plan or Claude Console account
 
 ## Configuration
 
