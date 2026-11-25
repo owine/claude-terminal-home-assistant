@@ -485,6 +485,31 @@ test('captures that show only an elided or cut-off link do not dismiss it', asyn
     assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
 });
 
+test('another link to a Claude host does not keep a gone login link up', async () => {
+    const w = world();
+    w.credentials = '{}';
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.screen = 'Login cancelled. See https://code.claude.com/docs/en/authentication\n> ';
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
+test('a cut-off link whose host a wrap splits across rows still counts as on the pane', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    // Narrow pane: the host is split, and the URL ends elided.
+    const cut = `${URL_A.slice(0, 90)}…`;
+    w.screen = ['Use the url below to sign in:', cut.slice(0, 14), cut.slice(14, 40), cut.slice(40), ''].join('\n');
+    w.width = '200'; // rows not filled to it, so they are not joined into a URL
+    for (let i = 0; i < 3; i++) await n.tick();
+    assert.deepStrictEqual(w.services(), ['create'], 'still up');
+});
+
 test('a truncated URL seen first is replaced by the full one', async () => {
     const w = world();
     const n = w.notifier();

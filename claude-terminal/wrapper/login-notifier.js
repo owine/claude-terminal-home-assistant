@@ -81,10 +81,17 @@ async function readCredentials({ readFile, homeDir, now }) {
 // is still usable; an old one scrolled into history belongs to a finished
 // login and must not be posted again (e.g. after a wrapper restart, which
 // forgets which URLs were posted).
-// The start of a link to a Claude login host. Short enough to survive any
-// wrap, so a capture that shows one but yields no complete URL (cut short,
-// elided, mid-redraw) is inconclusive, not proof the login screen is gone.
-const LOGIN_LINK_START = /https:\/\/(?:[a-z0-9-]+\.)*(?:claude\.ai|claude\.com|anthropic\.com)\//i;
+// The start of a login link: host and authorize path, which come in the
+// first few dozen characters of every one. A capture that shows one but
+// yields no complete URL (cut short, elided, mid-redraw) is inconclusive,
+// not proof the login screen is gone. It is looked for in the capture with
+// whitespace and box borders removed, so a wrap that splits the host or path
+// across rows still matches. The authorize path is required: another link
+// to the same hosts (docs, a URL Claude printed) must not keep a stale
+// notification up.
+const LOGIN_LINK_START =
+    /https:\/\/(?:[a-z0-9-]+\.)*(?:claude\.ai|claude\.com|anthropic\.com)\/(?:[a-z0-9-]+\/)*oauth\/authorize/i;
+const UNWRAP = /[\s│┃┆┇┊┋║|]+/g;
 
 // { url: the complete login URL on the pane, or null; linkStart: whether the
 // pane shows the start of a login-host link at all }.
@@ -96,7 +103,7 @@ async function findLoginUrl({ execFile }) {
     const cols = parseInt(width, 10);
     return {
         url: reconstructLoginUrl(screen.split('\n'), Number.isFinite(cols) ? cols : undefined),
-        linkStart: LOGIN_LINK_START.test(screen),
+        linkStart: LOGIN_LINK_START.test(screen.replace(UNWRAP, '')),
     };
 }
 
