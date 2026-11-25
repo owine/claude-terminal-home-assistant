@@ -87,6 +87,10 @@
         var clock = opts.now || function () { return Date.now(); };
         var recoveredAt = null;
         var flaps = 0;
+        // An immediate check (online, tab shown) asked for while one is in
+        // flight: if that one fails, the next runs at once, not after the
+        // back-off.
+        var wantNow = false;
         var log = opts.log || function (msg) {
             if (win.console) {
                 win.console.info('[terminal-reconnect] ' + msg);
@@ -128,6 +132,14 @@
                         reloadAttempt = 0;
                         attempt = 0;
                         recoveredAt = clock();
+                        wantNow = false;
+                        // The reload's watchdog is done with. Left armed, it
+                        // would stop a drop soon after from scheduling its
+                        // own check (onMutation waits for a free timer).
+                        if (timer !== null) {
+                            clearTimer(timer);
+                            timer = null;
+                        }
                     }
                 } catch { /* a browser error page may be inaccessible */ }
             }
@@ -180,8 +192,10 @@
 
         function check() {
             timer = null;
-            // A check already in flight schedules the next one itself
+            // A check already in flight schedules the next one itself; it
+            // is told to make that one immediate.
             if (checking) {
+                wantNow = true;
                 return Promise.resolve();
             }
             if (!needsRecovery()) {
@@ -197,6 +211,14 @@
                     if (resp && resp.ok) {
                         return true;
                     }
+                    // /health shares a rate limit with /config, and behind
+                    // ingress every browser shares one address, so several
+                    // recovering panels can exhaust it. Only the wrapper
+                    // answers 429 (ingress never does), so it is up.
+                    if (resp && resp.status === 429) {
+                        log('health rate-limited; the app is up');
+                        return true;
+                    }
                     log('health answered ' + (resp ? resp.status : 'nothing'));
                     return false;
                 }, function (err) {
@@ -205,6 +227,8 @@
                 })
                 .then(function (ok) {
                     checking = false;
+                    var now = wantNow;
+                    wantNow = false;
                     // Enter pressed in the meantime may have reconnected it
                     if (!needsRecovery()) {
                         attempt = 0;
@@ -214,18 +238,32 @@
                         reloading = true;
                         reload();
                         // Navigation can fail after health succeeds. Keep a watchdog
-                        // until a replacement terminal document appears.
+                        // until a replacement terminal document appears. Any
+                        // check still pending (an immediate one from `online`)
+                        // goes: run now, it would reload the loading frame again.
                         var reloadDelay = Math.min(10000 * Math.pow(2, reloadAttempt), 60000);
                         reloadAttempt = Math.min(reloadAttempt + 1, 3);
+                        if (timer !== null) {
+                            clearTimer(timer);
+                        }
                         timer = setTimer(check, reloadDelay);
+                    } else if (now) {
+                        schedule(true);
+                        log('checking again at once');
                     } else {
                         log('retrying in ' + schedule(false) / 1000 + ' s');
                     }
                 });
         }
 
+        // needsRecovery() runs even with a timer armed: a replacement terminal
+        // loading under the reload watchdog ends recovery here and frees the
+        // timer, so a drop soon after can schedule its own check.
         function onMutation() {
-            if (timer === null && !checking && needsRecovery()) {
+            if (checking) {
+                return;
+            }
+            if (needsRecovery() && timer === null) {
                 schedule(false);
             }
         }

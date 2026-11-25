@@ -138,7 +138,7 @@ test('stuck, and the add-on answers: the frame is reloaded once', async () => {
     assert.strictEqual(s.timers.length, 1, 'navigation watchdog remains active');
     s.setStuck(null);
     s.frameLoad();
-    await s.fire();
+    assert.strictEqual(s.timers.length, 0, 'recovery at load frees the reload watchdog');
     assert.strictEqual(s.timers.length, 0);
 });
 
@@ -194,7 +194,7 @@ test('after a reload, the new frame document is watched', async () => {
     assert.strictEqual(s.iframe.reloads, 1);
     s.setStuck(null);
     s.frameLoad();
-    await s.fire();
+    assert.strictEqual(s.timers.length, 0, 'recovery at load frees the reload watchdog');
     const live = s.observers.filter(o => o.target);
     assert.strictEqual(live.length, 1, 'only the new document is observed');
     s.advance(reconnect.STABLE_MS); // a later drop, not a flap
@@ -231,7 +231,7 @@ test('failed navigation keeps retrying until a terminal document loads', async (
     await s.fire();
     assert.strictEqual(s.iframe.reloads, 2);
     s.frameLoad();
-    await s.fire();
+    assert.strictEqual(s.timers.length, 0, 'recovery at load frees the reload watchdog');
     assert.strictEqual(s.timers.length, 0);
 });
 
@@ -253,7 +253,7 @@ test('repeated failed navigations back off and recovery resets the delay', async
     }
     s.setStuck(null);
     s.frameLoad();
-    await s.fire();
+    assert.strictEqual(s.timers.length, 0, 'recovery at load frees the reload watchdog');
     assert.strictEqual(s.timers.length, 0);
     s.advance(reconnect.STABLE_MS); // a later drop, not a flap
     s.setStuck(STUCK);
@@ -271,7 +271,7 @@ test('flapping: stuck again soon after each recovery, the wait doubles up to the
     for (let i = 0; i < 7; i++) {
         s.setStuck(null);
         s.frameLoad();          // ttyd's page loads: recovery ends...
-        await s.fire();         // ...and the watchdog finds it recovered
+        assert.strictEqual(s.timers.length, 0, 'recovery at load frees the reload watchdog');
         assert.strictEqual(s.timers.length, 0);
         s.advance(2000);        // ...then the socket fails again at once
         s.setStuck(STUCK);
@@ -282,7 +282,7 @@ test('flapping: stuck again soon after each recovery, the wait doubles up to the
     // Once it stays up for STABLE_MS, a later drop is quick again.
     s.setStuck(null);
     s.frameLoad();
-    await s.fire();
+    assert.strictEqual(s.timers.length, 0, 'recovery at load frees the reload watchdog');
     s.advance(reconnect.STABLE_MS);
     s.setStuck(STUCK);
     assert.strictEqual(await s.fire(), 1000);
@@ -294,13 +294,72 @@ test('flapping: coming back online still checks at once', async () => {
     await s.fire();
     s.setStuck(null);
     s.frameLoad();
-    await s.fire();
+    assert.strictEqual(s.timers.length, 0, 'recovery at load frees the reload watchdog');
     s.advance(1000);
     s.setStuck(STUCK);
     assert.strictEqual(s.timers[0].ms, 10000, 'a flap waits');
     s.emitWindow('online');
     assert.strictEqual(s.timers.length, 1);
     assert.strictEqual(s.timers[0].ms, 0, 'online replaces the wait with an immediate check');
+});
+
+// --- timer bookkeeping (Sourcery on #595) ---
+
+function deferred() {
+    let resolve;
+    const promise = new Promise(r => { resolve = r; });
+    return { promise, resolve };
+}
+const settle = () => new Promise(r => setImmediate(r));
+
+test('a 429 from /health counts as the app being up: only the wrapper answers it', async () => {
+    const s = makeSetup([{ ok: false, status: 429 }]);
+    s.setStuck(STUCK);
+    await s.fire();
+    assert.strictEqual(s.iframe.reloads, 1);
+});
+
+test('a replacement terminal loading under the watchdog frees it, so a drop soon after schedules its own check', async () => {
+    const s = makeSetup();
+    s.setStuck(STUCK);
+    await s.fire();
+    assert.strictEqual(s.timers[0].ms, 10000, 'the reload watchdog');
+    s.setStuck(null);
+    s.frameLoad();
+    assert.strictEqual(s.api.recovering(), false);
+    assert.strictEqual(s.timers.length, 0, 'the watchdog is gone');
+    s.advance(reconnect.STABLE_MS);
+    s.setStuck(STUCK);
+    assert.strictEqual(s.timers.length, 1);
+    assert.strictEqual(s.timers[0].ms, 1000, 'its own check, not the old watchdog');
+});
+
+test('online during an in-flight check that then fails: the next check runs at once', async () => {
+    const d = deferred();
+    const s = makeSetup([d.promise]);
+    s.setStuck(STUCK);
+    const first = s.timers.shift();
+    first.fn();                        // /health in flight
+    s.emitWindow('online');
+    assert.strictEqual(s.timers[0].ms, 0);
+    await s.fire();                    // runs while the first is in flight
+    d.resolve({ ok: false, status: 502 });
+    await settle(); await settle();
+    assert.strictEqual(s.timers.length, 1);
+    assert.strictEqual(s.timers[0].ms, 0, 'immediate, not the 2 s back-off');
+});
+
+test('online during an in-flight check that then succeeds: one reload, not two', async () => {
+    const d = deferred();
+    const s = makeSetup([d.promise, { ok: true }]);
+    s.setStuck(STUCK);
+    s.timers.shift().fn();             // /health in flight
+    s.emitWindow('online');            // an immediate check is queued...
+    d.resolve({ ok: true });           // ...but the in-flight one wins
+    await settle(); await settle();
+    assert.strictEqual(s.iframe.reloads, 1);
+    assert.strictEqual(s.timers.length, 1, 'only the reload watchdog');
+    assert.strictEqual(s.timers[0].ms, 10000);
 });
 
 // --- ours: documents a reload can land on in this app ---
@@ -319,7 +378,7 @@ test('a reload answered by the service worker\'s offline.html keeps recovering',
     assert.strictEqual(await s.fire(), 10000);
     assert.strictEqual(s.iframe.reloads, 2, 'offline.html was reloaded past');
     s.frameLoad();                       // ttyd's page again
-    await s.fire();
+    assert.strictEqual(s.timers.length, 0, 'recovery at load frees the reload watchdog');
     assert.strictEqual(s.api.recovering(), false);
     assert.strictEqual(s.timers.length, 0);
 });
