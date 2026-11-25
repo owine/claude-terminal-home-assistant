@@ -184,3 +184,42 @@ test('the ^C key goes through the Ctrl+C guard', () => {
 });
 
 console.log(`\n${passed} passed`);
+
+test('release(): a ^C that never reached the terminal does not hold the next one', () => {
+    const { clock, timers, events, allow } = guardHarness();
+    assert.strictEqual(allow(), true);
+    allow.release();
+    assert.deepStrictEqual(events, ['lock', 'unlock'], 'released at once');
+    clock.t = 10;
+    assert.strictEqual(allow(), true, 'an immediate retry is let through');
+    assert.deepStrictEqual(events, ['lock', 'unlock', 'lock']);
+    timers[0].fn(); // the released tap's timer is stale
+    assert.deepStrictEqual(events, ['lock', 'unlock', 'lock'], 'a stale timer does not unlock the retry');
+    timers[1].fn();
+    assert.deepStrictEqual(events, ['lock', 'unlock', 'lock', 'unlock']);
+});
+
+test('release() when nothing is locked is a no-op', () => {
+    const { events, allow } = guardHarness();
+    allow.release();
+    assert.deepStrictEqual(events, []);
+});
+
+test('the default clock is monotonic when performance.now exists', () => {
+    const real = globalThis.performance;
+    let t = 0;
+    Object.defineProperty(globalThis, 'performance', { value: { now: () => t }, configurable: true, writable: true });
+    const realNow = Date.now;
+    Date.now = () => { throw new Error('Date.now must not be used'); };
+    try {
+        const allow = createCtrlCGuard({ setTimeout: () => {} });
+        assert.strictEqual(allow(), true);
+        t = 1999;
+        assert.strictEqual(allow(), false);
+        t = 2000;
+        assert.strictEqual(allow(), true);
+    } finally {
+        Date.now = realNow;
+        Object.defineProperty(globalThis, 'performance', { value: real, configurable: true, writable: true });
+    }
+});

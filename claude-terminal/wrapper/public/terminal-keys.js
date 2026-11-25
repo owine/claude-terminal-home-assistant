@@ -49,7 +49,11 @@
     const CTRL_C_WINDOW_MS = 2000;
 
     function createCtrlCGuard(options = {}) {
-        const now = options.now || Date.now;
+        // Monotonic by default: a wall-clock change between two taps must
+        // neither shorten nor stretch the window.
+        const now = options.now || (typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? () => performance.now()
+            : Date.now);
         const windowMs = options.windowMs === undefined ? CTRL_C_WINDOW_MS : options.windowMs;
         const later = options.setTimeout || ((fn, ms) => setTimeout(fn, ms));
         const noop = () => {};
@@ -59,7 +63,18 @@
         let lastSent = null;
         let locked = false;
         let newest = 0;
-        return function allow() {
+        // release(): the tap allow() just let through never reached the
+        // terminal (not loaded yet), so it must not hold the next one. Clears
+        // the window and unlocks now; the pending timer is made stale.
+        function release() {
+            lastSent = null;
+            newest++;
+            if (locked) {
+                locked = false;
+                onUnlock();
+            }
+        }
+        function allow() {
             const t = now();
             if (lastSent !== null && t - lastSent < windowMs) {
                 onHeld();
@@ -77,7 +92,9 @@
                 onUnlock();
             }, windowMs);
             return true;
-        };
+        }
+        allow.release = release;
+        return allow;
     }
 
     const api = { createKeyHandler, createCtrlCGuard, NEWLINE_INPUT, CTRL_C_WINDOW_MS };
