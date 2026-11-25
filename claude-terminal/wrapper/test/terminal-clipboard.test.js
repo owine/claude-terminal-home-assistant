@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { decodeOsc52, sanitizeForClipboard } = require('../public/terminal-clipboard.js');
+const { decodeOsc52, sanitizeForClipboard, sanitizeForTerminalLine } = require('../public/terminal-clipboard.js');
 
 // Helper: base64 of an arbitrary byte string, so a payload can carry control
 // bytes a real OSC 52 write would.
@@ -145,6 +145,58 @@ test('decodeOsc52 strips control bytes from the decoded write', () => {
 test('decodeOsc52 keeps newlines in a legitimate multi-line copy', () => {
     assert.deepStrictEqual(decodeOsc52(osc('line one\nline two\n')),
         { kind: 'write', text: 'line one\nline two\n' });
+});
+
+// --- sanitizeForTerminalLine ---
+//
+// SECURITY: the voice "Send to terminal" button and the paste bar deliver text
+// to the PTY on the admin's behalf. Bracketed paste is only on when the program
+// at the prompt asked for it, so outside it a CR or LF is Enter: the text must
+// reach the terminal as one line that waits for the admin to submit it.
+
+test('sanitizeForTerminalLine leaves nothing that can submit or escape', () => {
+    const result = sanitizeForTerminalLine('rm -rf x\rtouch pwned\x1b[201~\nexit');
+    assert.strictEqual(result, 'rm -rf x touch pwned [201~ exit');
+    for (const ch of ['\r', '\n', '\x1b']) {
+        assert.ok(!result.includes(ch), `no 0x${ch.charCodeAt(0).toString(16)} survives`);
+    }
+});
+
+test('sanitizeForTerminalLine replaces every C0, DEL and C1, TAB and LF included', () => {
+    // Each control between two letters becomes exactly one space.
+    for (let c = 0; c <= 0x9f; c++) {
+        if (c >= 0x20 && c < 0x7f) continue;
+        const ch = String.fromCharCode(c);
+        assert.strictEqual(sanitizeForTerminalLine(`a${ch}b`), 'a b',
+            `0x${c.toString(16)} should become a space`);
+    }
+});
+
+test('sanitizeForTerminalLine replaces the Unicode line and paragraph separators', () => {
+    assert.strictEqual(sanitizeForTerminalLine('one\u2028two\u2029three'), 'one two three');
+});
+
+test('sanitizeForTerminalLine collapses a run of controls to one space', () => {
+    // A CRLF line break, or a blank line, keeps the words apart without
+    // padding them.
+    assert.strictEqual(sanitizeForTerminalLine('first line\r\n\r\nsecond'), 'first line second');
+    assert.strictEqual(sanitizeForTerminalLine('a\t\x1b\x9bb'), 'a b');
+});
+
+test('sanitizeForTerminalLine leaves printable and non-ASCII text, and outer spaces, alone', () => {
+    const s = '  café — ünicode ✂ "quoted" $HOME  ';
+    assert.strictEqual(sanitizeForTerminalLine(s), s);
+});
+
+test('sanitizeForTerminalLine is idempotent', () => {
+    const once = sanitizeForTerminalLine('x\r\ny\x1b]52;c;?\x07z');
+    assert.strictEqual(sanitizeForTerminalLine(once), once);
+});
+
+test('sanitizeForTerminalLine yields an empty string for a non-string', () => {
+    assert.strictEqual(sanitizeForTerminalLine(null), '');
+    assert.strictEqual(sanitizeForTerminalLine(undefined), '');
+    assert.strictEqual(sanitizeForTerminalLine(42), '');
 });
 
 console.log(`\n${passed} passed`);
