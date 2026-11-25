@@ -565,10 +565,11 @@ Wait a minute and send those again.
 Behind your own reverse proxy (NGINX, Nginx Proxy Manager, Caddy, a tunnel),
 the proxy's limit on request size applies first, to every upload, from the
 terminal or the Files sidebar. NGINX allows 1 MB unless
-`client_max_body_size` is raised, so set it above `upload_max_mb`
+`client_max_body_size` is raised, so set it above both `upload_max_mb` and
+the 10 MB limit for terminal images, whichever is larger
 (`client_max_body_size 30m;` for the default 25 MB) wherever it serves Home
 Assistant, or this app's port. A file the proxy turns away is reported as
-over the upload limit even though it is under `upload_max_mb`. Home
+over the upload limit even though it is under the app's own limit. Home
 Assistant ingress is not the cause: the app has it stream uploads through,
 so the Supervisor's 16 MiB cap on buffered requests does not apply.
 
