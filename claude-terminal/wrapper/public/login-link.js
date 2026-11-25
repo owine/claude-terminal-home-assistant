@@ -13,9 +13,33 @@
     // Authoritative auth-URL shape (hosts + path verified from the CLI binary).
     const AUTH_URL =
         /^https:\/\/(?:[a-z0-9-]+\.)*(?:claude\.ai|claude\.com|anthropic\.com)\/[^\s]*oauth\/authorize\b/i;
+    // Query parameters Claude Code always puts on the authorize URL (it
+    // appends them unconditionally; orgUUID, login_hint and login_method come
+    // after state, and only sometimes). A capture missing one was cut short.
+    const REQUIRED_PARAMS = ['client_id', 'response_type', 'redirect_uri', 'code_challenge', 'state'];
+    // Endings no complete URL has: an ellipsis where the renderer elided the
+    // rest, half a %-escape, or a separator with nothing after it.
+    const CUT_SHORT = /(?:\.\.\.|…|%[0-9A-Fa-f]?|[?&=])$/;
+    // A row of URL characters ending in an ellipsis: the URL it continues
+    // was elided, not wrapped.
+    const ELIDED = new RegExp('^[' + URLCHARS + ']*…$');
 
+    // A complete OAuth authorize URL: the right host and path, and every
+    // parameter the login needs present and non-empty. Truncated captures
+    // (a row cut short, an elided "…" tail) are rejected rather than posted
+    // as a link that cannot log anyone in. A truncation inside the last
+    // parameter's value still passes; the notifier's isTruncationOf covers
+    // that once the full URL has been seen.
     function isAuthUrl(url) {
-        return typeof url === 'string' && AUTH_URL.test(url);
+        if (typeof url !== 'string' || !AUTH_URL.test(url) || CUT_SHORT.test(url)) return false;
+        let parsed;
+        try {
+            parsed = new URL(url);
+        } catch {
+            return false;
+        }
+        if (!/\/oauth\/authorize$/.test(parsed.pathname)) return false;
+        return REQUIRED_PARAMS.every((name) => Boolean(parsed.searchParams.get(name)));
     }
 
     // A trimmed row that is one unbroken run of URL characters (a wrapped middle
@@ -52,11 +76,17 @@
                 const startRun = (clean[i].slice(at).match(LEAD_URL) || [''])[0];
                 let url = startRun;
                 const ranToEnd = at + startRun.length === clean[i].length;
+                // Whether the renderer elided the rest with "…", right after
+                // the run or on the row the join stopped at.
+                let elided = clean[i].startsWith('…', at + startRun.length);
                 for (let j = i + 1; ranToEnd && filledToBoundary(raw, clean, j - 1, cols) && j < clean.length; j++) {
-                    if (!isAllUrl(clean[j])) break; // prose / blank / border → stop
+                    if (!isAllUrl(clean[j])) { // prose / blank / border → stop
+                        elided = ELIDED.test(clean[j]);
+                        break;
+                    }
                     url += clean[j];
                 }
-                if (isAuthUrl(url)) return url;
+                if (!elided && isAuthUrl(url)) return url;
                 from = at + Math.max(startRun.length, 1);
             }
         }

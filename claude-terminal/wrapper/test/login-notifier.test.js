@@ -13,8 +13,13 @@ const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
 
 const NOW = 1_800_000_000_000;
-const URL_A = 'https://claude.com/cai/oauth/authorize?code=true&client_id=abc&state=AAA';
-const URL_B = 'https://claude.com/cai/oauth/authorize?code=true&client_id=abc&state=BBB';
+// A complete authorize URL, as isAuthUrl requires (see login-link.test.js).
+const AUTHORIZE =
+    'https://claude.com/cai/oauth/authorize?code=true&client_id=abc&response_type=code' +
+    '&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback' +
+    '&scope=user%3Ainference&code_challenge=challenge&code_challenge_method=S256';
+const URL_A = `${AUTHORIZE}&state=AAAAAAAA`;
+const URL_B = `${AUTHORIZE}&state=BBBBBBBB`;
 const CRED_PATH = '/home/.claude/.credentials.json';
 
 // A fake world for one notifier: a tmux pane, a credentials file and the
@@ -94,11 +99,24 @@ test('posts the login URL found on the pane', async () => {
 test('rebuilds a URL Ink hard-wrapped across rows, using the pane width', async () => {
     const w = world();
     w.width = '40';
-    const rows = [URL_A.slice(0, 40), URL_A.slice(40)];
+    const rows = URL_A.match(/.{1,40}/g);
     w.screen = ['Sign in:', ...rows, '', 'Paste code here if prompted >'].join('\n');
     await w.notifier().tick();
     assert.strictEqual(w.calls.length, 1);
     assert.ok(w.calls[0].body.message.includes(URL_A));
+});
+
+test('posts nothing for a login URL cut short on the pane', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A.slice(0, URL_A.indexOf('&code_challenge=')));
+    await n.tick();
+    w.loginScreen(`${URL_A.slice(0, 80)}…`);
+    await n.tick();
+    assert.deepStrictEqual(w.calls, []);
+    w.loginScreen(URL_A);
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
 });
 
 test('posts nothing when the pane has no auth URL', async () => {
@@ -420,9 +438,10 @@ test('a link forgotten as gone, then used to log in, is never re-posted', async 
 // mid-resize rebuilds the URL from rows at the wrong width and stops short:
 // a prefix of the real URL that still looks like an auth URL. Posted, it
 // replaced the good link with a broken one, and the good one - already
-// posted - was never put back.
+// posted - was never put back. isAuthUrl now rejects most such prefixes (a
+// parameter missing); one cut inside the state value still gets through.
 
-const TRUNCATED_A = URL_A.slice(0, 50);
+const TRUNCATED_A = URL_A.slice(0, -3);
 
 test('a truncated capture of the posted URL does not replace it', async () => {
     assert.ok(require('../public/login-link.js').isAuthUrl(TRUNCATED_A), 'fixture still looks like an auth URL');
