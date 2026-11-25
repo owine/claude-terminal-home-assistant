@@ -88,6 +88,16 @@ printf '%s\n' '{"persistent_apk_packages": [], "persistent_pip_packages": []}' >
 (ADDON_OPTIONS_FILE="$pkg_dir/options.json" PERSIST_INSTALL="$pkg_dir/persist-install" auto_install_packages 2>/dev/null)
 assert_status "empty lists install nothing" 1 test -e "$pkg_log"
 
+# An install that fails - offline, say, once pip gives up - warns and lets
+# startup carry on to the terminal; it must never abort run.sh.
+make_stub "$pkg_dir/persist-install-fails" 1
+printf '%s\n' '{"persistent_apk_packages": [], "persistent_pip_packages": ["requests"]}' > "$pkg_dir/options.json"
+pkg_status=0
+pkg_err=$( (ADDON_OPTIONS_FILE="$pkg_dir/options.json" PERSIST_INSTALL="$pkg_dir/persist-install-fails" \
+    auto_install_packages) 2>&1 >/dev/null) || pkg_status=$?
+assert_eq "a failed pip install does not fail startup" "0" "$pkg_status"
+assert_contains "it is logged as a warning" "$pkg_err" "WARNING: Failed to install Python packages"
+
 # ---------------------------------------------------------------------------
 # export_oauth_token
 # ---------------------------------------------------------------------------

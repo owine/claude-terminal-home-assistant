@@ -25,6 +25,14 @@ PERSIST_CACHE="${PERSIST_CACHE:-$PERSIST_ROOT/apk-cache}"
 PERSIST_PYTHON="${PERSIST_PYTHON:-$PERSIST_ROOT/python}"
 PERSIST_LEGACY_BIN="${PERSIST_LEGACY_BIN:-$PERSIST_ROOT/bin}"
 PERSIST_MIGRATED="${PERSIST_MIGRATED:-$PERSIST_ROOT/.legacy-migrated}"
+# Options for every pip call. run.sh installs persistent_pip_packages on each
+# start, before the terminal is up, so an unreachable index must give up fast:
+# pip's defaults (a 15 s timeout, 5 retries with back-off) held an offline
+# boot for minutes. --timeout bounds each socket read, not the whole download,
+# so 10 s is generous for a slow link; one retry covers a transient failure.
+# --disable-pip-version-check skips pip's own query to PyPI for a newer pip.
+# (Inspired by Neil Sleightholm's bounded reinstalls in ESJavadex/claude-code-ha.)
+PIP_BOUNDED_OPTS=(--disable-pip-version-check --timeout 10 --retries 1)
 # Where an installed command lives on the container filesystem. A test seam;
 # production checks the real system directories.
 SYSTEM_BIN_DIRS="${SYSTEM_BIN_DIRS:-/usr/bin /usr/sbin /bin /sbin}"
@@ -349,6 +357,7 @@ install_python_packages() {
     # Python version. The last case happens after an Alpine base-image upgrade
     # bumps the interpreter (e.g. 3.12 -> 3.14), orphaning the old pip and
     # breaking it with "No module named 'pip'".
+    local fresh_venv=no
     if venv_needs_recreate "$PERSIST_PYTHON/venv"; then
         if [ -d "$PERSIST_PYTHON/venv" ]; then
             local had
@@ -365,6 +374,7 @@ install_python_packages() {
             echo "❌ Failed to create virtual environment"
             exit 1
         fi
+        fresh_venv=yes
         echo "✅ Virtual environment ready"
         echo ""
     fi
@@ -377,11 +387,18 @@ install_python_packages() {
 
     # The exit status is how run.sh learns an install failed, so a failure here
     # must not fall through to the success message below.
+    #
+    # pip upgrades itself only in a venv built just now, whose pip is the one
+    # ensurepip bundled with the interpreter. Doing it on every call queried the
+    # index on each start, even with every package already installed (which
+    # pip otherwise settles without the network), and an offline boot waited
+    # out every retry before the terminal came up. An upgrade that fails is not
+    # an install failure: the installed pip still works.
     echo "⏳ Installing packages..."
-    if ! pip install --upgrade pip -q; then
+    if [ "$fresh_venv" = yes ] && ! pip install "${PIP_BOUNDED_OPTS[@]}" --upgrade pip -q; then
         echo "⚠️  Could not upgrade pip; continuing with the installed version"
     fi
-    if ! pip install "${packages[@]}"; then
+    if ! pip install "${PIP_BOUNDED_OPTS[@]}" "${packages[@]}"; then
         echo "❌ Failed to install Python packages: ${packages[*]}"
         exit 1
     fi
