@@ -1591,7 +1591,13 @@
         // dimmed meanwhile; its text stays "^C" so the header does not reflow.
         // Screen readers read the aria-label, so that says "locked" too.
         function ctrlCKeyGuard(btn) {
-            if (!window.TerminalKeys) return () => true;
+            // No guard without the module, or with a stale cached copy from
+            // before it had one: ^C still works, unguarded. Calling a missing
+            // createCtrlCGuard would throw here and abort the rest of this
+            // script, every handler after it included.
+            if (!window.TerminalKeys || typeof window.TerminalKeys.createCtrlCGuard !== 'function') {
+                return () => true;
+            }
             let label = null;
             return window.TerminalKeys.createCtrlCGuard({
                 onLock: () => {

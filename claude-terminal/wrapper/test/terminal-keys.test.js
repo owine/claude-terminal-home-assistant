@@ -183,7 +183,6 @@ test('the ^C key goes through the Ctrl+C guard', () => {
     assert.ok(page.includes('window.TerminalKeys.createCtrlCGuard('));
 });
 
-console.log(`\n${passed} passed`);
 
 test('release(): a ^C that never reached the terminal does not hold the next one', () => {
     const { clock, timers, events, allow } = guardHarness();
@@ -223,3 +222,5 @@ test('the default clock is monotonic when performance.now exists', () => {
         Object.defineProperty(globalThis, 'performance', { value: real, configurable: true, writable: true });
     }
 });
+
+console.log(`\n${passed} passed`);
