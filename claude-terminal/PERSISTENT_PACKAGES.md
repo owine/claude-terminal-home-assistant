@@ -101,11 +101,17 @@ network once.
 ```
 
 System packages land where apk always puts them (`/usr/bin`, `/usr/lib`, ...),
-so they need nothing special on `PATH`. At startup `run.sh` exports:
+so they need nothing special on `PATH`. In the terminal - every tmux pane and
+shell, Claude, and the `init_commands` - the venv and `~/.local/bin` come first:
 
 ```bash
 export PATH="/data/packages/python/venv/bin:$HOME/.local/bin:$PATH:/data/packages/bin"
 ```
+
+The app's own services (the web UI, tmux, ttyd and the startup script) use the
+system's programs first and these folders after them, so a Python package that
+installs a command named `node`, or a file saved in `~/.local/bin`, cannot
+replace the app's runtime.
 
 ### Upgrading from copied packages
 
