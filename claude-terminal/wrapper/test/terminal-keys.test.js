@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { createKeyHandler, NEWLINE_INPUT } = require('../public/terminal-keys.js');
+const { createKeyHandler, createCtrlCGuard, NEWLINE_INPUT, CTRL_C_WINDOW_MS } = require('../public/terminal-keys.js');
 
 let passed = 0;
 function test(name, fn) {
@@ -82,6 +82,145 @@ test('a held chord sends once per keydown', () => {
     handle(key('keydown', 'Enter', { shiftKey: true }));
     handle(key('keydown', 'Enter', { shiftKey: true }));
     assert.deepStrictEqual(sent, [NEWLINE_INPUT, NEWLINE_INPUT]);
+});
+
+// --- createCtrlCGuard ---
+
+// A guard on a manual clock, with the timers it starts and what it reported.
+function guardHarness(windowMs) {
+    const clock = { t: 0 };
+    const timers = [];
+    const events = [];
+    const allow = createCtrlCGuard({
+        now: () => clock.t,
+        windowMs,
+        setTimeout: (fn, ms) => timers.push({ fn, ms }),
+        onLock: () => events.push('lock'),
+        onUnlock: () => events.push('unlock'),
+        onHeld: () => events.push('held'),
+    });
+    return { clock, timers, events, allow };
+}
+
+test('the guard window is two seconds by default', () => {
+    assert.strictEqual(CTRL_C_WINDOW_MS, 2000);
+    const { timers, allow } = guardHarness();
+    allow();
+    assert.strictEqual(timers[0].ms, 2000);
+});
+
+test('the first Ctrl+C goes through and locks the key', () => {
+    const { events, allow } = guardHarness();
+    assert.strictEqual(allow(), true);
+    assert.deepStrictEqual(events, ['lock']);
+});
+
+test('a second Ctrl+C inside the window is held, so a double tap cannot quit Claude', () => {
+    const { clock, timers, events, allow } = guardHarness();
+    allow();
+    clock.t = 1999;
+    assert.strictEqual(allow(), false);
+    assert.deepStrictEqual(events, ['lock', 'held']);
+    assert.strictEqual(timers.length, 1, 'a held tap starts no timer');
+});
+
+test('the key unlocks when the window ends, and the next Ctrl+C goes through', () => {
+    const { clock, timers, events, allow } = guardHarness();
+    allow();
+    clock.t = 2000;
+    timers[0].fn();
+    assert.deepStrictEqual(events, ['lock', 'unlock']);
+    assert.strictEqual(allow(), true);
+    assert.deepStrictEqual(events, ['lock', 'unlock', 'lock']);
+});
+
+test('the window counts from the last Ctrl+C let through, not the last tap', () => {
+    // Held taps must not extend the window, or tapping steadily would lock
+    // the key for good.
+    const { clock, allow } = guardHarness();
+    allow();
+    clock.t = 1500;
+    allow();
+    clock.t = 2000;
+    assert.strictEqual(allow(), true);
+});
+
+test('a late timer does not unlock a key the clock already locked again', () => {
+    // iOS throttles timers: the clock lets the next tap in before the first
+    // timer fires. The key must stay locked until the newest timer, and
+    // onLock must not run twice (it saves the label onUnlock restores).
+    const { clock, timers, events, allow } = guardHarness();
+    allow();
+    clock.t = 2000;
+    assert.strictEqual(allow(), true);
+    assert.deepStrictEqual(events, ['lock'], 'still locked: no second onLock');
+    timers[0].fn();
+    assert.deepStrictEqual(events, ['lock'], 'the stale timer is ignored');
+    timers[1].fn();
+    assert.deepStrictEqual(events, ['lock', 'unlock']);
+});
+
+test('the guard works without callbacks', () => {
+    const timers = [];
+    const allow = createCtrlCGuard({ now: () => 0, setTimeout: (fn) => timers.push(fn) });
+    assert.strictEqual(allow(), true);
+    assert.strictEqual(allow(), false);
+    timers[0]();
+});
+
+// --- the header's key buttons (index.html) ---
+
+const page = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/index.html'), 'utf8');
+
+test('the header has a new-line key that sends the Shift+Enter bytes', () => {
+    assert.match(page, /<button class="ctrl-btn" data-input="newline"[^>]*aria-label="[^"]+"/);
+    assert.ok(page.includes("'newline': window.TerminalKeys && window.TerminalKeys.NEWLINE_INPUT"));
+});
+
+test('the ^C key goes through the Ctrl+C guard', () => {
+    assert.ok(page.includes('<button class="ctrl-btn" data-input="\\x03"'));
+    assert.ok(page.includes("rawInput === '\\\\x03' ? ctrlCKeyGuard(btn)"));
+    assert.ok(page.includes('window.TerminalKeys.createCtrlCGuard('));
+});
+
+
+test('release(): a ^C that never reached the terminal does not hold the next one', () => {
+    const { clock, timers, events, allow } = guardHarness();
+    assert.strictEqual(allow(), true);
+    allow.release();
+    assert.deepStrictEqual(events, ['lock', 'unlock'], 'released at once');
+    clock.t = 10;
+    assert.strictEqual(allow(), true, 'an immediate retry is let through');
+    assert.deepStrictEqual(events, ['lock', 'unlock', 'lock']);
+    timers[0].fn(); // the released tap's timer is stale
+    assert.deepStrictEqual(events, ['lock', 'unlock', 'lock'], 'a stale timer does not unlock the retry');
+    timers[1].fn();
+    assert.deepStrictEqual(events, ['lock', 'unlock', 'lock', 'unlock']);
+});
+
+test('release() when nothing is locked is a no-op', () => {
+    const { events, allow } = guardHarness();
+    allow.release();
+    assert.deepStrictEqual(events, []);
+});
+
+test('the default clock is monotonic when performance.now exists', () => {
+    const real = globalThis.performance;
+    let t = 0;
+    Object.defineProperty(globalThis, 'performance', { value: { now: () => t }, configurable: true, writable: true });
+    const realNow = Date.now;
+    Date.now = () => { throw new Error('Date.now must not be used'); };
+    try {
+        const allow = createCtrlCGuard({ setTimeout: () => {} });
+        assert.strictEqual(allow(), true);
+        t = 1999;
+        assert.strictEqual(allow(), false);
+        t = 2000;
+        assert.strictEqual(allow(), true);
+    } finally {
+        Date.now = realNow;
+        Object.defineProperty(globalThis, 'performance', { value: real, configurable: true, writable: true });
+    }
 });
 
 console.log(`\n${passed} passed`);

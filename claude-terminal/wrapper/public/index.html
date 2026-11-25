@@ -432,8 +432,21 @@
             .ctrl-btn {
                 padding-left: 4px;
                 padding-right: 4px;
-                min-width: 26px;
+                min-width: 24px;
             }
+
+            /* The new-line key pushed a 360px phone's keys onto two rows
+               again; 24px keys (above) and a 4px gap between items keep
+               them on one. The gap between rows is unchanged. */
+            #header {
+                column-gap: 4px;
+            }
+        }
+
+        /* ^C right after a ^C: held for two seconds (see ctrlCKeyGuard) */
+        .ctrl-btn.key-wait {
+            opacity: 0.4;
+            cursor: not-allowed;
         }
 
         .ctrl-btn:hover {
@@ -1144,7 +1157,7 @@
     <div id="container">
         <div id="header">
             <!-- Terminal control buttons -->
-            <button class="ctrl-btn" data-input="\x03" title="Ctrl+C (Interrupt)">^C</button>
+            <button class="ctrl-btn" data-input="\x03" title="Ctrl+C (Interrupt). A second tap within 2 s is held, since two quit Claude">^C</button>
             <button class="ctrl-btn" data-input="\x09" title="Tab (Autocomplete)">Tab</button>
             <button class="ctrl-btn" data-input="\x1b[Z" title="Shift+Tab (in Claude: switch permission mode)">&#8679;Tab</button>
             <button class="ctrl-btn" data-input="\x1b" title="Escape">Esc</button>
@@ -1152,6 +1165,7 @@
             <button class="ctrl-btn" data-input="\x1b[A" title="Up Arrow">&uarr;</button>
             <button class="ctrl-btn" data-input="\x1b[B" title="Down Arrow">&darr;</button>
             <button class="ctrl-btn" data-input="\x1b[C" title="Right Arrow">&rarr;</button>
+            <button class="ctrl-btn" data-input="newline" title="Shift+Enter (in Claude: new line without sending)" aria-label="Shift+Enter, new line">&#8679;&#8629;</button>
             <button class="ctrl-btn" data-input="\r" title="Enter / Return">Enter</button>
 
             <!-- Paste input bar -->
@@ -1567,16 +1581,60 @@
             '\\x1b[C': '\x1b[C',  // Right
             '\\x1b[D': '\x1b[D',  // Left
             '\\r': '\r',          // Enter
+            // Shift+Enter's bytes (see terminal-keys.js): on-screen keyboards
+            // have no Shift+Enter, so this is a phone's only way to a new line
+            'newline': window.TerminalKeys && window.TerminalKeys.NEWLINE_INPUT,
         };
 
+        // Two Ctrl+C in a row quit Claude Code, and a double tap is easy on a
+        // phone: a second tap on ^C within two seconds is held. The key looks
+        // dimmed meanwhile; its text stays "^C" so the header does not reflow.
+        // Screen readers read the aria-label, so that says "locked" too.
+        function ctrlCKeyGuard(btn) {
+            // No guard without the module, or with a stale cached copy from
+            // before it had one: ^C still works, unguarded. Calling a missing
+            // createCtrlCGuard would throw here and abort the rest of this
+            // script, every handler after it included.
+            if (!window.TerminalKeys || typeof window.TerminalKeys.createCtrlCGuard !== 'function') {
+                return () => true;
+            }
+            let label = null;
+            return window.TerminalKeys.createCtrlCGuard({
+                onLock: () => {
+                    label = btn.getAttribute('aria-label');
+                    btn.classList.add('key-wait');
+                    btn.setAttribute('aria-disabled', 'true');
+                    btn.setAttribute('aria-label', 'Ctrl+C, locked, wait a moment');
+                },
+                onUnlock: () => {
+                    btn.classList.remove('key-wait');
+                    btn.removeAttribute('aria-disabled');
+                    if (label === null) btn.removeAttribute('aria-label');
+                    else btn.setAttribute('aria-label', label);
+                },
+                onHeld: () => setStatus('^C held: two in a row quit Claude'),
+            });
+        }
+
         document.querySelectorAll('.ctrl-btn').forEach(btn => {
+            const rawInput = btn.getAttribute('data-input');
+            const allow = rawInput === '\\x03' ? ctrlCKeyGuard(btn) : () => true;
+            const press = () => {
+                const input = INPUT_MAP[rawInput];
+                // A ^C that never reached the terminal must not hold the next.
+                if (input && allow() && !sendInput(input) && allow.release) allow.release();
+            };
+            // Sent on pointerdown, so a tap does not wait for click (and the
+            // terminal keeps focus).
             btn.addEventListener('pointerdown', (e) => {
                 e.preventDefault();
-                const rawInput = btn.getAttribute('data-input');
-                const input = INPUT_MAP[rawInput];
-                if (input) {
-                    sendInput(input);
-                }
+                press();
+            });
+            // Keyboard and assistive-technology activation dispatch only a
+            // click, with detail 0; a pointer's click (detail >= 1) follows
+            // its pointerdown, which already sent the key.
+            btn.addEventListener('click', (e) => {
+                if (e.detail === 0) press();
             });
         });
 
