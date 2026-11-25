@@ -91,14 +91,16 @@ init_environment() {
     prune_claude_versions
 
     # Persistent packages are reinstalled into the system paths by apk (see
-    # setup_persistent_packages), so they need no PATH entry of their own. The
-    # venv and $HOME/.local/bin (Claude Code's native launcher) come first.
+    # setup_persistent_packages), so they need no PATH entry of their own.
     # $persist_root/bin goes LAST: it holds binaries copied by persist-install
     # before it recorded packages instead, which may only fill gaps now - never
     # shadow a real installation. Their copied libraries get no
     # LD_LIBRARY_PATH entry at all: every entry there is searched before the
     # system directories wherever it sits, so a stale .so would win.
-    export PATH="$persist_python/venv/bin:$HOME/.local/bin:$PATH:$persist_root/bin"
+    #
+    # The venv and $HOME/.local/bin (Claude Code's native launcher) come in two
+    # orders; see set_path_orders.
+    set_path_orders "$persist_python/venv/bin:$HOME/.local/bin" "$persist_root/bin"
 
     # Python virtual environment if it exists
     if [ -d "$persist_python/venv" ]; then
@@ -141,6 +143,8 @@ export GH_CONFIG_DIR="/data/.config/gh"
 # Persistent packages: apk reinstalls them into the system paths at start.
 # The venv and Claude Code's native launcher come first; copies persist-install
 # made before it recorded packages come last, to fill gaps only (see run.sh).
+# This is the terminal's order. run.sh and the app's services use the other
+# one, system first (set_path_orders in run.sh).
 export PATH="/data/packages/python/venv/bin:$HOME/.local/bin:$PATH:/data/packages/bin"
 
 # Python virtual environment if it exists
@@ -205,6 +209,36 @@ PROFILE_EOF
     bashio::log.info "  - GitHub config: $GH_CONFIG_DIR"
     bashio::log.info "  - Cache: $XDG_CACHE_HOME"
     bashio::log.info "  - Persistent packages: $persist_root"
+}
+
+# set_path_orders <user dirs> <legacy dir>
+#
+# Two orders of the same PATH, from the system PATH run.sh starts with:
+#
+# - PATH, for run.sh and every service it starts (the wrapper's node, the tmux
+#   server, ttyd, bashio's curl and jq, the health check, persist-install):
+#   the system first, then <user dirs>, then <legacy dir>.
+# - TERMINAL_PATH, for what the user types and what Claude runs: <user dirs>
+#   first, as before, then the system, then <legacy dir>.
+#
+# <user dirs> are the persistent venv's bin and $HOME/.local/bin, and both are
+# writable from the terminal: pip installs console scripts into the first
+# (nodejs-wheel-binaries ships a `node`), and anything can be saved into the
+# second. First on run.sh's PATH, such a file silently replaced the app's own
+# node, tmux or ttyd on the next start. Still on PATH after the system, a
+# program only they provide is found - `claude` for setup-ha-mcp.sh, which no
+# system directory has.
+#
+# TERMINAL_PATH is not exported; it is applied where the interactive
+# environment is born - the tmux session environment (setup_tmux_session) and
+# the init_commands (run_init_commands). Login shells, which is what the panes
+# run, get the same order from /etc/profile.d/persistent-packages.sh, since
+# Alpine's /etc/profile resets PATH before sourcing it.
+# Inspired by Eifel-Joe/claude-workbench a7bee30 and b37bb78 (Eifel-Joe).
+set_path_orders() {
+    local user_dirs="$1" legacy_dir="$2" system_path="$PATH"
+    TERMINAL_PATH="$user_dirs:$system_path:$legacy_dir"
+    export PATH="$system_path:$user_dirs:$legacy_dir"
 }
 
 # Copy the image's Claude binary into the persistent home if none is there.
@@ -588,7 +622,11 @@ run_init_commands() {
             continue
         fi
         status=0
-        (cd "$workdir" && timeout -k "$kill_after" "$timeout_seconds" bash -c "$command") \
+        # The command is the user's, so it runs with the terminal's PATH (venv
+        # and $HOME/.local/bin first, set_path_orders); timeout and env are
+        # run.sh's, and bash is named in full so no other one is picked up.
+        (cd "$workdir" && timeout -k "$kill_after" "$timeout_seconds" \
+            env PATH="${TERMINAL_PATH:-$PATH}" /bin/bash -c "$command") \
             < /dev/null > "$output_file" 2>&1 || status=$?
         log_init_output "$output_file"
         rm -f "$output_file"
@@ -1194,7 +1232,17 @@ setup_tmux_session() {
         # Create detached session running our command
         # The session runs bash with our launch command
         # Set TERM and COLORTERM explicitly for full color support
+        #
+        # PATH: this call starts the tmux server, which keeps run.sh's
+        # system-first PATH, so a `tmux` or `bash` in the venv cannot replace
+        # the app's. The session environment gets TERMINAL_PATH, for what runs
+        # there without a login shell. It does not reach the first pane: tmux
+        # 3.7 gives that one the PATH of the client running new-session
+        # (spawn.c), run.sh's - `tmux show-environment` looks right while the
+        # pane is not. The pane's `bash -l` is what sets it, through
+        # /etc/profile.d/persistent-packages.sh (see set_path_orders).
         tmux new-session -d -s "$session_name" -x 200 -y 50 -c "$workdir" \
+            -e "PATH=${TERMINAL_PATH:-$PATH}" \
             "TERM=xterm-256color COLORTERM=truecolor bash -l -c \"$launch_command; exec bash -l\""
         bashio::log.info "tmux session created successfully"
     fi
