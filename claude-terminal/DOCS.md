@@ -8,6 +8,10 @@ Claude Terminal Prowine is a personal fork by [@owine](https://github.com/owine)
 
 ## Installation
 
+You need a paid Claude plan that includes Claude Code (Pro, Max, Ultra, Team or
+Enterprise) or a Claude Console account with API credits; the free Claude plan
+doesn't include Claude Code. See [Claude Code's quickstart](https://code.claude.com/docs/en/quickstart#before-you-begin).
+
 1. Add this repository to your Home Assistant app store:
    - Go to Settings → Apps → App Store
    - Click the menu (⋮) and select Repositories
@@ -15,7 +19,7 @@ Claude Terminal Prowine is a personal fork by [@owine](https://github.com/owine)
 2. Install the Claude Terminal Prowine app
 3. Start the app
 4. Click "OPEN WEB UI" to access the terminal
-5. On first use, follow the OAuth prompts to log in to your Anthropic account
+5. On first use, follow the login prompts and sign in with your Claude plan or Claude Console account
 
 ## Configuration
 
@@ -557,6 +561,17 @@ sent, and the message names the limit. It stays until the next message.
 Uploads are limited in rate: when the app answers "too many uploads", the
 batch stops at that file, and the status bar says how many were not uploaded.
 Wait a minute and send those again.
+
+Behind your own reverse proxy (NGINX, Nginx Proxy Manager, Caddy, a tunnel),
+the proxy's limit on request size applies first, to every upload, from the
+terminal or the Files sidebar. NGINX allows 1 MB unless
+`client_max_body_size` is raised, so set it above both `upload_max_mb` and
+the 10 MB limit for terminal images, whichever is larger
+(`client_max_body_size 30m;` for the default 25 MB) wherever it serves Home
+Assistant, or this app's port. A file the proxy turns away is reported as
+over the upload limit even though it is under the app's own limit. Home
+Assistant ingress is not the cause: the app has it stream uploads through,
+so the Supervisor's 16 MiB cap on buffered requests does not apply.
 
 Both places are cleared at startup. `/data/images/` loses the app's own
 `pasted-*` files once they are older than `image_retention_days`. **The inbox
