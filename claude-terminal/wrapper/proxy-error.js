@@ -21,6 +21,12 @@
  */
 const MESSAGE = 'Failed to connect to terminal';
 
+// After this long the starting page (below) says so, and where to look: a
+// start can take minutes (package installs), but one stuck in run.sh would
+// otherwise show "Starting" for ever. Declared first: STARTING_PAGE is built
+// at load time and reads it.
+const SLOW_START_S = 300;
+
 // run.sh starts the wrapper minutes before ttyd: package installs, Docker,
 // ha-mcp and init commands all run in between, so the UI is up long before
 // the terminal is. The terminal frame asks for `terminal/` straight away, and
@@ -33,16 +39,28 @@ const MESSAGE = 'Failed to connect to terminal';
 // `data-terminal-starting` lets index.html tell this page from ttyd's: its
 // "did not finish loading" timeout must not run while this is legitimately
 // waiting. Keep the attribute if this markup changes.
-const STARTING_PAGE = `<!doctype html>
+function startingPage(uptimeSeconds = 0) {
+    const note = uptimeSeconds >= SLOW_START_S
+        ? `<p>Still starting after ${Math.floor(uptimeSeconds / 60)} minutes. The app's Log tab shows what it is doing.</p>`
+        : '';
+    return `<!doctype html>
 <html lang="en" data-terminal-starting><head><meta charset="utf-8">
 <meta http-equiv="refresh" content="1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Starting the terminal</title>
 <style>html,body{margin:0;height:100%;background:#1e1e1e;color:#ccc;color-scheme:dark}
-body{display:flex;align-items:center;justify-content:center;font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+body{display:flex;align-items:center;justify-content:center;text-align:center;padding:0 16px;box-sizing:border-box;font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
 @media (prefers-color-scheme: light){html,body{background:#f5f5f5;color:#333;color-scheme:light}}</style>
-</head><body>Starting the terminal…</body></html>
+</head><body><div><p>Starting the terminal…</p>${note}</div></body></html>
 `;
+}
+const STARTING_PAGE = startingPage(0);
+
+// The refusals a page request meets while ttyd is not listening yet are
+// expected, and with the page reloading once a second they would fill the
+// app's log. They are logged at most once a minute, with a count.
+const QUIET_MS = 60000;
+const startingLog = { last: -Infinity, skipped: 0 };
 
 // A document request: what the iframe (or a browser tab) sends, as opposed to
 // ttyd's own token fetch or a script. Read from the raw header so this does
@@ -53,8 +71,25 @@ function wantsPage(req) {
     return typeof accept === 'string' && /(^|[\s,])text\/html(\s*[;,]|\s*$)/i.test(accept);
 }
 
-function handleProxyError(err, req, res, { log = console.error } = {}) {
-    log(`Proxy error: ${err.message || err.code || err.name}`);
+function handleProxyError(err, req, res, {
+    log = console.error,
+    uptime = process.uptime,
+    now = Date.now,
+    logState = startingLog,
+} = {}) {
+    const reason = err.message || err.code || err.name;
+    if (wantsPage(req) && err.code === 'ECONNREFUSED') {
+        if (now() - logState.last >= QUIET_MS) {
+            const more = logState.skipped ? `; ${logState.skipped} more since the last line` : '';
+            log(`Proxy error: ${reason} (terminal not listening yet, starting page served${more})`);
+            logState.last = now();
+            logState.skipped = 0;
+        } else {
+            logState.skipped++;
+        }
+    } else {
+        log(`Proxy error: ${reason}`);
+    }
     if (!res) return;
 
     if (typeof res.writeHead !== 'function') {
@@ -75,13 +110,14 @@ function handleProxyError(err, req, res, { log = console.error } = {}) {
     }
 
     if (wantsPage(req)) {
+        const page = startingPage(uptime());
         res.writeHead(503, {
             'Content-Type': 'text/html; charset=utf-8',
-            'Content-Length': Buffer.byteLength(STARTING_PAGE),
+            'Content-Length': Buffer.byteLength(page),
             'Retry-After': '1',
             'Cache-Control': 'no-store',
         });
-        res.end(STARTING_PAGE);
+        res.end(page);
         return;
     }
 
@@ -89,4 +125,4 @@ function handleProxyError(err, req, res, { log = console.error } = {}) {
     res.end(MESSAGE);
 }
 
-module.exports = { handleProxyError, STARTING_PAGE };
+module.exports = { handleProxyError, startingPage, STARTING_PAGE, SLOW_START_S };

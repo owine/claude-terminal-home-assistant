@@ -3,7 +3,7 @@
 const assert = require('node:assert');
 const http = require('node:http');
 const net = require('node:net');
-const { handleProxyError, STARTING_PAGE } = require('../proxy-error.js');
+const { handleProxyError, startingPage, STARTING_PAGE, SLOW_START_S } = require('../proxy-error.js');
 
 // These run against real http servers and sockets rather than doubles. The bug
 // being guarded is a property of Node's ServerResponse - writeHead() throws
@@ -211,6 +211,43 @@ test('the starting page carries the marker index.html uses to recognise it', () 
     // timeout for this document; without the marker it would fire while the
     // terminal is legitimately still starting.
     assert.match(STARTING_PAGE, /<html[^>]*\bdata-terminal-starting\b/);
+});
+
+test('index.html looks for the same marker the starting page carries', () => {
+    // The check lives in index.html's inline script, out of reach of a unit
+    // test, so the two are tied together here by the attribute name.
+    const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/index.html'), 'utf8');
+    const marker = STARTING_PAGE.match(/<html[^>]*\b(data-terminal-starting)\b/)[1];
+    assert.ok(html.includes(`hasAttribute('${marker}')`), `index.html checks hasAttribute('${marker}')`);
+});
+
+test('a start that takes long says so, and where to look', () => {
+    assert.strictEqual(startingPage(SLOW_START_S - 1), STARTING_PAGE, 'no note before the threshold');
+    const slow = startingPage(SLOW_START_S + 130);
+    assert.match(slow, /Still starting after 7 minutes/);
+    assert.match(slow, /Log tab/);
+    assert.match(slow, /<html[^>]*\bdata-terminal-starting\b/, 'still recognised as the starting page');
+});
+
+test('refusals answered with the starting page are logged at most once a minute', () => {
+    const lines = [];
+    const state = { last: -Infinity, skipped: 0 };
+    let t = 1000;
+    const refused = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:7681'), { code: 'ECONNREFUSED' });
+    const pageReq = { method: 'GET', headers: { accept: 'text/html,*/*' } };
+    const fakeRes = () => ({ headersSent: false, writeHead() {}, end() {} });
+    const opts = { log: (m) => lines.push(m), now: () => t, uptime: () => 5, logState: state };
+    for (let i = 0; i < 30; i++, t += 1000) handleProxyError(refused, pageReq, fakeRes(), opts);
+    assert.strictEqual(lines.length, 1, 'one line for 30 refreshes inside a minute');
+    assert.match(lines[0], /ECONNREFUSED/);
+    t += 60000;
+    handleProxyError(refused, pageReq, fakeRes(), opts);
+    assert.strictEqual(lines.length, 2);
+    assert.match(lines[1], /29 more since the last line/);
+    // Anything else is still logged every time.
+    handleProxyError(refused, { method: 'GET', headers: { accept: '*/*' } }, fakeRes(), opts);
+    handleProxyError(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }), pageReq, fakeRes(), opts);
+    assert.strictEqual(lines.length, 4);
 });
 
 test('the starting page loads nothing from elsewhere', () => {

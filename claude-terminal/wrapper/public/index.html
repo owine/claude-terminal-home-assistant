@@ -1392,7 +1392,15 @@
                 checkTerm = giveUp = null;
                 // Its own refresh brings the next load; the timeout starts
                 // with the first document that is not the starting page.
-                if (isTerminalStartingPage(iframe)) return;
+                // The frame can come back to it after the terminal was ready
+                // (a reconnect reload while the app restarts), so the
+                // indicator goes back to loading rather than stay green.
+                if (isTerminalStartingPage(iframe)) {
+                    const indicator = document.getElementById('term-indicator');
+                    indicator.style.background = '#f48771';
+                    indicator.title = 'Terminal loading...';
+                    return;
+                }
 
                 // Poll for xterm.js term instance to be ready in the iframe
                 checkTerm = setInterval(() => {
