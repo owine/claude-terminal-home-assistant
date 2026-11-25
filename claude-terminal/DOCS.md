@@ -255,10 +255,11 @@ Two things help with that:
 - **Home Assistant notification**: while Claude is waiting for a login, the
   app posts the link as a "Claude Code login" notification, which also
   reaches the Companion app. Open it, sign in, then paste the code the browser
-  shows into the terminal. While nothing needs it, the app checks for a
-  login screen less often, so the first notification can take up to 30
-  seconds to arrive. The notification goes away by itself once the login
-  succeeds, or once the login screen is gone (a cancelled login, or a Console
+  shows into the terminal. That includes running `/login` to renew a login
+  or switch account while you are still logged in. While nothing needs it,
+  the app checks for a login screen less often, so the first notification
+  can take up to 30 seconds to arrive. The notification goes away by itself
+  once the new login is saved, or once the login screen is gone (a cancelled login, or a Console
   login, which does not leave the credentials it watches for). Notifications
   live in Home Assistant's memory, so if HA restarts mid-login the same link
   is not posted again; use the banner below instead. Turn it off with

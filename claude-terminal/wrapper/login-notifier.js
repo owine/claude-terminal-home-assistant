@@ -18,6 +18,7 @@
 // and the loop carries on.
 
 const { execFile: nodeExecFile } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { reconstructLoginUrl } = require('./public/login-link.js');
@@ -25,11 +26,12 @@ const { reconstructLoginUrl } = require('./public/login-link.js');
 const NOTIFICATION_ID = 'claude_terminal_login';
 const SESSION = 'claude'; // run.sh setup_tmux_session
 const POLL_MS = 3000;
-// Each poll spawns two tmux processes. With nothing to watch - logged in, or
-// logged in a way isLoggedIn cannot see (a Console API key, an idle OAuth
-// token past its expiry) - the gap doubles up to this, so an idle add-on does
-// not spawn ~57,600 of them a day. A link to post or a notification to watch
-// brings it straight back to POLL_MS. The price is a slower first notice of a
+// Each poll spawns two tmux processes, logged in or not: /login to renew a
+// login or switch account prints a link while the old login is still valid.
+// With nothing to watch - no link to post and no notification up - the gap
+// doubles up to this, so an idle add-on does not spawn ~57,600 of them a day.
+// A link to post or a notification to watch brings it straight back to
+// POLL_MS. The price is a slower first notice of a
 // new login screen: up to this long after it appears.
 const MAX_POLL_MS = 30000;
 const TMUX_TIMEOUT_MS = 5000;
@@ -45,15 +47,27 @@ function runFile(execFile, file, args) {
     });
 }
 
-// Logged in = the credentials file holds an access token that has not expired.
-// A missing or unreadable file, or one without claudeAiOauth, is logged out.
-async function isLoggedIn({ readFile, homeDir, now }) {
+// The saved login, as two facts about the credentials file:
+//
+// - loggedIn: it holds an access token that has not expired. A missing or
+//   unreadable file, or one without claudeAiOauth, is logged out.
+// - stamp: a digest of its contents, which changes whenever the saved login
+//   does (a new login, an account switch, a token refresh). Only ever
+//   compared, never logged or sent anywhere; 'none' when there is no file to
+//   read.
+async function readCredentials({ readFile, homeDir, now }) {
+    let raw;
     try {
-        const raw = await readFile(path.join(homeDir, '.claude', '.credentials.json'), 'utf8');
-        const expiresAt = Number(JSON.parse(raw)?.claudeAiOauth?.expiresAt);
-        return Number.isFinite(expiresAt) && expiresAt > now();
+        raw = String(await readFile(path.join(homeDir, '.claude', '.credentials.json'), 'utf8'));
     } catch {
-        return false;
+        return { loggedIn: false, stamp: 'none' };
+    }
+    const stamp = createHash('sha256').update(raw).digest('hex');
+    try {
+        const expiresAt = Number(JSON.parse(raw)?.claudeAiOauth?.expiresAt);
+        return { loggedIn: Number.isFinite(expiresAt) && expiresAt > now(), stamp };
+    } catch {
+        return { loggedIn: false, stamp };
     }
 }
 
@@ -108,12 +122,20 @@ function createLoginNotifier({
     // challenge), so it is still posted. One dismissed because it left the
     // capture moves to `abandoned` (see dismissShown) and may be posted
     // again, since the login may still be waiting - the capture only sees the
-    // session's active window. Any login that completes moves every abandoned
-    // URL back here: the user may have used one without the notifier ever
-    // seeing it on screen again.
+    // session's active window. Any login that completes after it was posted
+    // moves an abandoned URL back here: the user may have used it without the
+    // notifier ever seeing it on screen again.
+    //
+    // "A login completes" = logged in, with a credentials stamp other than
+    // the one taken when the link was posted. Being logged in is not enough
+    // on its own: /login to renew or switch account runs while the old login
+    // is still valid, and its link must stay up until the new one is saved.
+    // A token refresh changes the stamp too, so one landing mid-/login
+    // dismisses that link early; the terminal banner still has it.
     const posted = new Set();
-    const abandoned = new Set();
+    const abandoned = new Map(); // url -> credentials stamp when it was posted
     let shownUrl = null;  // URL of the notification currently up, if any
+    let shownStamp = null; // credentials stamp when shownUrl was posted
     let missing = 0;      // consecutive captures without shownUrl on screen
     let timer = null;
     let delay = pollMs;   // gap before the next poll; see MAX_POLL_MS
@@ -169,9 +191,10 @@ function createLoginNotifier({
         if (await dismiss()) {
             if (forget) {
                 posted.delete(url);
-                abandoned.add(url);
+                abandoned.set(url, shownStamp);
             }
             shownUrl = null;
+            shownStamp = null;
             missing = 0;
             log.log(`Login notifier: ${reason}, notification dismissed`);
         }
@@ -195,11 +218,17 @@ function createLoginNotifier({
         let unposted = false;
         waitingForPane = false;
         try {
-            if (await isLoggedIn({ readFile, homeDir, now })) {
-                for (const u of abandoned) posted.add(u);
-                abandoned.clear();
-                if (shownUrl) await dismissShown('login complete');
-                return;
+            // Links are looked for while logged in too, so this does not
+            // return: a login completing is only grounds to dismiss.
+            const creds = await readCredentials({ readFile, homeDir, now });
+            if (creds.loggedIn) {
+                for (const [u, stamp] of abandoned) {
+                    if (stamp !== creds.stamp) {
+                        posted.add(u);
+                        abandoned.delete(u);
+                    }
+                }
+                if (shownUrl && creds.stamp !== shownStamp) await dismissShown('login complete');
             }
 
             let url;
@@ -217,6 +246,7 @@ function createLoginNotifier({
                     posted.add(url);
                     abandoned.delete(url);
                     shownUrl = url;
+                    shownStamp = creds.stamp;
                     missing = 0;
                     log.log('Login notifier: login link posted as a Home Assistant notification');
                 }
@@ -226,11 +256,12 @@ function createLoginNotifier({
             // The credentials file is not the only way a login ends. A Console
             // (API-billing) login stores an API key in ~/.claude.json and
             // never writes claudeAiOauth, and an aborted one (Esc, claude
-            // exiting) writes nothing. Both take the login screen away, so a
-            // link that has left the pane for two polls in a row is done
-            // with. Two, so one odd capture mid-redraw does not count; a
-            // failed capture returned above and does not count either, and
-            // a truncated one still shows the login screen.
+            // exiting, a /login cancelled while still logged in) writes
+            // nothing. Both take the login screen away, so a link that has
+            // left the pane for two polls in a row is done with. Two, so one
+            // odd capture mid-redraw does not count; a failed capture
+            // returned above and does not count either, and a truncated one
+            // still shows the login screen.
             //
             // Gone from the capture is not proof the login is over, though:
             // the user may only have switched tmux windows. So the link is
