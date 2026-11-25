@@ -47,6 +47,9 @@ orders() {
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "set_path_orders"
 
+# Arrives exported, as if from the environment run.sh was started with:
+# set_path_orders must still leave it unexported.
+export TERMINAL_PATH="inherited"
 orders
 assert_eq "run.sh's PATH: the system first, then the venv and launcher, legacy last" \
     "$sys:$host_path:$venv:$launcher:$legacy" "$PATH"

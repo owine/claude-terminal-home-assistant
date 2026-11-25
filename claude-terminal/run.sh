@@ -238,6 +238,9 @@ PROFILE_EOF
 set_path_orders() {
     local user_dirs="$1" legacy_dir="$2" system_path="$PATH"
     TERMINAL_PATH="$user_dirs:$system_path:$legacy_dir"
+    # Not exported even when it arrived exported (from the environment run.sh
+    # was started with): an assignment keeps the export attribute.
+    export -n TERMINAL_PATH
     export PATH="$system_path:$user_dirs:$legacy_dir"
 }
 
