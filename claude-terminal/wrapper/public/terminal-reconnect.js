@@ -47,6 +47,16 @@
     // appends to the xterm element (addons/overlay.ts)
     var STUCK_TEXT = 'Press ⏎ to Reconnect';
     var DELAYS_MS = [1000, 2000, 5000, 10000];
+    // Flapping: recovery ends as soon as ttyd's page loads, before its
+    // WebSocket connects. If /health answers but the socket keeps failing
+    // (a proxy that drops the upgrade, an origin the wrapper refuses), every
+    // cycle would end in a fresh "recovery" and reload again within seconds,
+    // forever. A terminal stuck again within STABLE_MS of recovering counts
+    // as a flap, and each flap in a row doubles the wait before the next
+    // check, from 10 s up to FLAP_MAX_MS. A terminal that stays up for
+    // STABLE_MS clears the count.
+    var STABLE_MS = 30000;
+    var FLAP_MAX_MS = 300000;
 
     function isStuck(doc) {
         var term;
@@ -74,6 +84,9 @@
         var setTimer = opts.setTimeout || function (fn, ms) { return win.setTimeout(fn, ms); };
         var clearTimer = opts.clearTimeout || function (id) { win.clearTimeout(id); };
         var healthUrl = opts.healthUrl || 'health';
+        var clock = opts.now || function () { return Date.now(); };
+        var recoveredAt = null;
+        var flaps = 0;
         var log = opts.log || function (msg) {
             if (win.console) {
                 win.console.info('[terminal-reconnect] ' + msg);
@@ -101,7 +114,10 @@
         }
 
         function needsRecovery() {
-            if (stuck()) recovering = true;
+            if (stuck() && !recovering) {
+                recovering = true;
+                flaps = recoveredAt !== null && clock() - recoveredAt < STABLE_MS ? flaps + 1 : 0;
+            }
             var d = frameDoc();
             // Only a replacement terminal document can finish a reload.
             if (recovering && (!reloading || d !== reloadDoc) && !stuck()) {
@@ -111,6 +127,7 @@
                         reloading = false;
                         reloadAttempt = 0;
                         attempt = 0;
+                        recoveredAt = clock();
                     }
                 } catch { /* a browser error page may be inaccessible */ }
             }
@@ -142,8 +159,12 @@
             if (!now) {
                 delay = DELAYS_MS[Math.min(attempt, DELAYS_MS.length - 1)];
                 attempt++;
+                if (flaps > 0) {
+                    delay = Math.max(delay, Math.min(10000 * Math.pow(2, flaps - 1), FLAP_MAX_MS));
+                }
             }
             timer = setTimer(check, delay);
+            return delay;
         }
 
         function reload() {
@@ -188,7 +209,7 @@
                     if (!needsRecovery()) {
                         attempt = 0;
                     } else if (ok) {
-                        log('add-on reachable, reloading the terminal');
+                        log('app reachable, reloading the terminal');
                         reloadDoc = frameDoc();
                         reloading = true;
                         reload();
@@ -198,8 +219,7 @@
                         reloadAttempt = Math.min(reloadAttempt + 1, 3);
                         timer = setTimer(check, reloadDelay);
                     } else {
-                        schedule(false);
-                        log('retrying in ' + DELAYS_MS[Math.min(attempt - 1, DELAYS_MS.length - 1)] / 1000 + ' s');
+                        log('retrying in ' + schedule(false) / 1000 + ' s');
                     }
                 });
         }
@@ -252,6 +272,8 @@
         install: install,
         isStuck: isStuck,
         STUCK_TEXT: STUCK_TEXT,
-        DELAYS_MS: DELAYS_MS
+        DELAYS_MS: DELAYS_MS,
+        STABLE_MS: STABLE_MS,
+        FLAP_MAX_MS: FLAP_MAX_MS
     };
 });

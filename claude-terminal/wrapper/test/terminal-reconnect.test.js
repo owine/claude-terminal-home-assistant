@@ -59,6 +59,7 @@ function makeSetup(healthResults) {
 
     let timers = [];
     let nextId = 1;
+    let clockMs = 0;
     const fetches = [];
     const api = reconnect.install(iframe, {
         window: win,
@@ -66,6 +67,7 @@ function makeSetup(healthResults) {
         setTimeout(fn, ms) { const id = nextId++; timers.push({ id, fn, ms }); return id; },
         clearTimeout(id) { timers = timers.filter(t => t.id !== id); },
         log() {},
+        now: () => clockMs,
         fetch(url, init) {
             fetches.push({ url, init });
             const r = results.length ? results.shift() : { ok: true };
@@ -76,6 +78,7 @@ function makeSetup(healthResults) {
     return {
         api, iframe, fetches,
         get timers() { return timers; },
+        advance(ms) { clockMs += ms; },
         setStuck(text) {
             overlay.textContent = text;
             xterm.children = text === null ? [] : [overlay];
@@ -194,6 +197,7 @@ test('after a reload, the new frame document is watched', async () => {
     await s.fire();
     const live = s.observers.filter(o => o.target);
     assert.strictEqual(live.length, 1, 'only the new document is observed');
+    s.advance(reconnect.STABLE_MS); // a later drop, not a flap
     s.setStuck(STUCK);
     assert.strictEqual(await s.fire(), 1000, 'the wait starts again from 1 s');
     assert.strictEqual(s.iframe.reloads, 2);
@@ -251,9 +255,52 @@ test('repeated failed navigations back off and recovery resets the delay', async
     s.frameLoad();
     await s.fire();
     assert.strictEqual(s.timers.length, 0);
+    s.advance(reconnect.STABLE_MS); // a later drop, not a flap
     s.setStuck(STUCK);
     assert.strictEqual(await s.fire(), 1000);
     assert.strictEqual(s.timers[0].ms, 10000);
+});
+
+// A terminal whose page loads but whose socket keeps failing would otherwise
+// "recover" and reload again every couple of seconds, forever.
+test('flapping: stuck again soon after each recovery, the wait doubles up to the cap', async () => {
+    const s = makeSetup();
+    s.setStuck(STUCK);
+    assert.strictEqual(await s.fire(), 1000, 'the first drop is quick');
+    const waits = [];
+    for (let i = 0; i < 7; i++) {
+        s.setStuck(null);
+        s.frameLoad();          // ttyd's page loads: recovery ends...
+        await s.fire();         // ...and the watchdog finds it recovered
+        assert.strictEqual(s.timers.length, 0);
+        s.advance(2000);        // ...then the socket fails again at once
+        s.setStuck(STUCK);
+        waits.push(await s.fire());
+    }
+    assert.deepStrictEqual(waits, [10000, 20000, 40000, 80000, 160000, 300000, 300000]);
+    assert.strictEqual(reconnect.FLAP_MAX_MS, 300000);
+    // Once it stays up for STABLE_MS, a later drop is quick again.
+    s.setStuck(null);
+    s.frameLoad();
+    await s.fire();
+    s.advance(reconnect.STABLE_MS);
+    s.setStuck(STUCK);
+    assert.strictEqual(await s.fire(), 1000);
+});
+
+test('flapping: coming back online still checks at once', async () => {
+    const s = makeSetup();
+    s.setStuck(STUCK);
+    await s.fire();
+    s.setStuck(null);
+    s.frameLoad();
+    await s.fire();
+    s.advance(1000);
+    s.setStuck(STUCK);
+    assert.strictEqual(s.timers[0].ms, 10000, 'a flap waits');
+    s.emitWindow('online');
+    assert.strictEqual(s.timers.length, 1);
+    assert.strictEqual(s.timers[0].ms, 0, 'online replaces the wait with an immediate check');
 });
 
 // --- ours: documents a reload can land on in this app ---
