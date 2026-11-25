@@ -42,6 +42,7 @@ function world() {
     };
     w.readFile = async (p) => {
         assert.strictEqual(p, CRED_PATH);
+        if (w.readError) throw Object.assign(new Error(w.readError), { code: w.readError });
         if (w.credentials === null) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
         return w.credentials;
     };
@@ -145,6 +146,38 @@ test('/login while logged in: dismissed once the new login is saved', async () =
     w.loggedIn(NOW - 1, 'y');        // later expiry must not bring the used link back
     await n.tick();
     assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
+test('/login while logged in: a credentials read that fails does not later pass for a new login', async () => {
+    const w = world();
+    w.loggedIn();
+    const n = w.notifier();
+    await n.tick();                 // stamp of the saved login seen once
+    w.readError = 'EACCES';         // unreadable just as the link is posted
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.readError = null;             // readable again, unchanged
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create'], 'still up: nothing new was saved');
+    w.loggedIn(NOW + 7200_000, 'y');
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
+test('/login while logged in: a half-written credentials file does not later pass for a new login', async () => {
+    const w = world();
+    w.loggedIn();
+    const saved = w.credentials;
+    const n = w.notifier();
+    await n.tick();
+    w.credentials = saved.slice(0, 10); // caught mid-write as the link is posted
+    w.loginScreen(URL_A);
+    await n.tick();
+    w.credentials = saved;
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create']);
 });
 
 test('a changed but logged-out credentials file does not dismiss', async () => {

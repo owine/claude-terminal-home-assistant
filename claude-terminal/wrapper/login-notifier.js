@@ -53,22 +53,27 @@ function runFile(execFile, file, args) {
 //   unreadable file, or one without claudeAiOauth, is logged out.
 // - stamp: a digest of its contents, which changes whenever the saved login
 //   does (a new login, an account switch, a token refresh). Only ever
-//   compared, never logged or sent anywhere; 'none' when there is no file to
-//   read.
+//   compared, never logged or sent anywhere; 'none' when there is no file.
+//   null when the file could not be read or parsed (EACCES, caught
+//   mid-write): that says nothing about the saved login, so the caller keeps
+//   the last stamp it had rather than taking a digest of a half-written file
+//   or a synthetic one that would look like a new login on the next read.
 async function readCredentials({ readFile, homeDir, now }) {
     let raw;
     try {
         raw = String(await readFile(path.join(homeDir, '.claude', '.credentials.json'), 'utf8'));
+    } catch (err) {
+        return { loggedIn: false, stamp: err && err.code === 'ENOENT' ? 'none' : null };
+    }
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
     } catch {
-        return { loggedIn: false, stamp: 'none' };
+        return { loggedIn: false, stamp: null };
     }
     const stamp = createHash('sha256').update(raw).digest('hex');
-    try {
-        const expiresAt = Number(JSON.parse(raw)?.claudeAiOauth?.expiresAt);
-        return { loggedIn: Number.isFinite(expiresAt) && expiresAt > now(), stamp };
-    } catch {
-        return { loggedIn: false, stamp };
-    }
+    const expiresAt = Number(parsed?.claudeAiOauth?.expiresAt);
+    return { loggedIn: Number.isFinite(expiresAt) && expiresAt > now(), stamp };
 }
 
 // The visible pane only, not scrollback. Claude shows the URL on the login
@@ -136,6 +141,7 @@ function createLoginNotifier({
     const abandoned = new Map(); // url -> credentials stamp when it was posted
     let shownUrl = null;  // URL of the notification currently up, if any
     let shownStamp = null; // credentials stamp when shownUrl was posted
+    let lastStamp = 'none'; // the last stamp read successfully (see readCredentials)
     let missing = 0;      // consecutive captures without shownUrl on screen
     let timer = null;
     let delay = pollMs;   // gap before the next poll; see MAX_POLL_MS
@@ -221,6 +227,8 @@ function createLoginNotifier({
             // Links are looked for while logged in too, so this does not
             // return: a login completing is only grounds to dismiss.
             const creds = await readCredentials({ readFile, homeDir, now });
+            if (creds.stamp === null) creds.stamp = lastStamp;
+            else lastStamp = creds.stamp;
             if (creds.loggedIn) {
                 for (const [u, stamp] of abandoned) {
                     if (stamp !== creds.stamp) {
