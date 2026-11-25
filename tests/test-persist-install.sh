@@ -197,6 +197,106 @@ assert_eq "no interpreter call runs without -I" "0" \
     "$(grep -cv '^-I ' "$stubs/python3.log")"
 
 # ---------------------------------------------------------------------------
+# install_python_packages - offline boot
+# ---------------------------------------------------------------------------
+printf '\n%s\n' "install_python_packages: an offline boot is not held up"
+
+# Stub pip that logs each call's arguments, one call per line, to
+# <dir>/pip.log. A call whose arguments include `--upgrade pip` exits with
+# <upgrade status>; every other call exits with <install status>.
+#   make_pip_stub <dir> <upgrade status> <install status>
+make_pip_stub() {
+    local dir="$1" upgrade_status="$2" install_status="$3"
+    mkdir -p "$dir"
+    cat > "$dir/pip" <<EOF
+#!/bin/sh
+echo "\$*" >> "$dir/pip.log"
+case " \$* " in
+    *" --upgrade pip "*) exit $upgrade_status ;;
+esac
+exit $install_status
+EOF
+    chmod +x "$dir/pip"
+}
+pip_calls() { grep -c . "$1/pip.log" 2>/dev/null || echo 0; }
+
+# run.sh installs persistent_pip_packages on every start, before the terminal.
+# A self-upgrade there queried the index each time, and offline waited out
+# pip's default 15 s timeout and 5 retries. With the venv already in place,
+# pip is called once, for the packages, and never upgrades itself.
+reset_install_fixtures
+stubs=$(new_tmpdir)
+make_python_stub "$stubs" 0
+make_pip_stub "$stubs" 0 0
+make_existing_venv
+run_install "$stubs" install_python_packages requests
+assert_eq "an existing venv: exits 0" "0" "$INSTALL_STATUS"
+assert_eq "an existing venv: pip is called once" "1" "$(pip_calls "$stubs")"
+assert_not_contains "an existing venv: pip does not upgrade itself" \
+    "$(cat "$stubs/pip.log")" "--upgrade pip"
+
+# Every pip call gives up fast and skips pip's own version query.
+assert_contains "the install is bounded" \
+    "$(cat "$stubs/pip.log")" "install --disable-pip-version-check --timeout 10 --retries 1 requests"
+
+# A venv built just now still gets a current pip, through the same bounds,
+# before the packages go in.
+reset_install_fixtures
+stubs=$(new_tmpdir)
+make_python_stub "$stubs" 0
+make_pip_stub "$stubs" 0 0
+run_install "$stubs" install_python_packages requests
+assert_eq "a new venv: exits 0" "0" "$INSTALL_STATUS"
+assert_eq "a new venv: pip upgrades itself, then installs" \
+    "$(printf '%s\n' \
+        'install --disable-pip-version-check --timeout 10 --retries 1 --upgrade pip -q' \
+        'install --disable-pip-version-check --timeout 10 --retries 1 requests')" \
+    "$(cat "$stubs/pip.log")"
+
+# Offline with a new venv: the upgrade fails, which is not an install failure.
+# The packages are still attempted with the pip the venv has.
+reset_install_fixtures
+stubs=$(new_tmpdir)
+make_python_stub "$stubs" 0
+make_pip_stub "$stubs" 1 0
+run_install "$stubs" install_python_packages requests
+assert_eq "a failed self-upgrade does not fail the install" "0" "$INSTALL_STATUS"
+assert_contains "and says it carried on" "$INSTALL_OUTPUT" "Could not upgrade pip"
+assert_eq "and the packages are still installed, after the upgrade" \
+    "$(printf '%s\n' \
+        'install --disable-pip-version-check --timeout 10 --retries 1 --upgrade pip -q' \
+        'install --disable-pip-version-check --timeout 10 --retries 1 requests')" \
+    "$(cat "$stubs/pip.log")"
+
+# Offline with packages pip cannot find: the exit status still reports it,
+# so run.sh can warn (and carry on starting).
+reset_install_fixtures
+stubs=$(new_tmpdir)
+make_python_stub "$stubs" 0
+make_pip_stub "$stubs" 1 1
+run_install "$stubs" install_python_packages requests
+assert_eq "an offline install into a new venv exits non-zero" "1" "$INSTALL_STATUS"
+assert_not_contains "and does not report success" \
+    "$INSTALL_OUTPUT" "Python packages installed!"
+
+# Specs reach pip as single arguments, after the bounded options: a spec
+# with spaces is not split, and none is matched against the cwd.
+reset_install_fixtures
+stubs=$(new_tmpdir)
+make_python_stub "$stubs" 0
+make_pip_stub "$stubs" 0 0
+make_existing_venv
+cat > "$stubs/pip" <<EOF
+#!/bin/sh
+for arg in "\$@"; do printf '%s\n' "\$arg"; done >> "$stubs/pip.log"
+EOF
+chmod +x "$stubs/pip"
+run_install "$stubs" install_python_packages 'black >= 24' 'requests[socks]'
+assert_eq "specs are passed verbatim" \
+    "$(printf '%s\n' install --disable-pip-version-check --timeout 10 --retries 1 'black >= 24' 'requests[socks]')" \
+    "$(cat "$stubs/pip.log")"
+
+# ---------------------------------------------------------------------------
 # install_system_packages - install and record
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "install_system_packages: installs through the cache and records"
