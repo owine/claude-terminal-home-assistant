@@ -1333,6 +1333,7 @@
     <script src="upload-client.js"></script>
     <script src="files-sidebar-ui.js"></script>
     <script src="viewport-fit.js"></script>
+    <script src="terminal-reconnect.js"></script>
     <script>
         let ttydPort = 7681;
 
@@ -1372,10 +1373,28 @@
             }
         }
 
+        // Set by loadTerminal() once terminal-reconnect.js is installed.
+        let terminalReconnect = null;
+
         function loadTerminal() {
             const iframe = document.getElementById('terminal-frame');
             // Use relative path for Home Assistant ingress compatibility
             iframe.src = 'terminal/';
+
+            // ttyd gives up after one failed reconnect (sleep, a network drop,
+            // an HA restart, the wrapper restarted by supervise()) and waits
+            // at "Press Enter to Reconnect". Poll /health and reload the frame
+            // once the wrapper answers; the load handler below then wires the
+            // new document's `term` like the first one.
+            if (window.ClaudeTerminalReconnect) {
+                try {
+                    terminalReconnect = window.ClaudeTerminalReconnect.install(iframe);
+                } catch (e) {
+                    console.error('[wrapper] terminal reconnect failed to install:', e);
+                }
+            } else {
+                console.error('[wrapper] terminal-reconnect.js did not load');
+            }
 
             // One poll and one give-up timer for the frame, re-armed on each
             // load. `load` fires for every document the frame gets: ttyd's
@@ -1427,6 +1446,17 @@
                 giveUp = setTimeout(() => {
                     clearInterval(checkTerm);
                     checkTerm = giveUp = null;
+                    // A document the reconnect is already reloading past
+                    // (offline.html during an outage) is not a failure to
+                    // report: telling the user to reload would only race it.
+                    let recovering = false;
+                    try {
+                        recovering = !!terminalReconnect?.recovering();
+                    } catch (e) { /* report as before */ }
+                    if (recovering) {
+                        console.info('[wrapper] terminal not back yet; reconnect still retrying');
+                        return;
+                    }
                     console.error('[wrapper] terminal instance never appeared; handlers not registered');
                     setStatus('Terminal did not finish loading — reload the page', 'error');
                 }, 30000);
