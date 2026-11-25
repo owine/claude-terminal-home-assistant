@@ -33,7 +33,54 @@
         };
     }
 
-    const api = { createKeyHandler, NEWLINE_INPUT };
+    // Two Ctrl+C in a row quit Claude Code, and on a phone a double tap on the
+    // header's ^C key is easy. The guard lets one through per window, counted
+    // from the last one it let through; a tap inside the window is held, not
+    // queued. Only the key is guarded: a real keyboard's Ctrl+C goes straight
+    // to xterm.
+    //
+    // allow() decides on the clock, but the key's locked look is undone by a
+    // timer, and a throttled page (iOS) can fire that timer late, after the
+    // clock has already let the next tap in. So onLock runs only on the way
+    // from unlocked to locked, and only the newest timer runs onUnlock: the
+    // caller can save the key's label in onLock and trust onUnlock to put it
+    // back once. Adapted from Claude Workbench (Eifel-Joe) by way of
+    // ESJavadex/claude-code-ha's key bar.
+    const CTRL_C_WINDOW_MS = 2000;
+
+    function createCtrlCGuard(options = {}) {
+        const now = options.now || Date.now;
+        const windowMs = options.windowMs === undefined ? CTRL_C_WINDOW_MS : options.windowMs;
+        const later = options.setTimeout || ((fn, ms) => setTimeout(fn, ms));
+        const noop = () => {};
+        const onLock = options.onLock || noop;
+        const onUnlock = options.onUnlock || noop;
+        const onHeld = options.onHeld || noop;
+        let lastSent = null;
+        let locked = false;
+        let newest = 0;
+        return function allow() {
+            const t = now();
+            if (lastSent !== null && t - lastSent < windowMs) {
+                onHeld();
+                return false;
+            }
+            lastSent = t;
+            const mine = ++newest;
+            if (!locked) {
+                locked = true;
+                onLock();
+            }
+            later(() => {
+                if (mine !== newest) return;
+                locked = false;
+                onUnlock();
+            }, windowMs);
+            return true;
+        };
+    }
+
+    const api = { createKeyHandler, createCtrlCGuard, NEWLINE_INPUT, CTRL_C_WINDOW_MS };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.TerminalKeys = api;
 })(typeof self !== 'undefined' ? self : this);
