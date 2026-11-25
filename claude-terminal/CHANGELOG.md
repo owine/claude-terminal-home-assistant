@@ -1,5 +1,50 @@
 # Changelog
 
+## [3.4.0](https://github.com/owine/claude-terminal-home-assistant/compare/v3.3.0...v3.4.0) (2026-11-25)
+
+**1 feature · 7 bug fixes · 8 dependency updates**
+
+### ✨ Features
+
+- a ⇧↵ key in the key row adds a new line to Claude's prompt on phones, and a quick second tap on ^C is held so a double tap no longer quits Claude ([#587](https://github.com/owine/claude-terminal-home-assistant/issues/587))
+
+### 🐛 Bug Fixes
+
+- the terminal reconnects by itself after a laptop sleeps, the network drops, or Home Assistant or the app restarts, instead of stopping at "Press ⏎ to Reconnect" ([#595](https://github.com/owine/claude-terminal-home-assistant/issues/595))
+- while the app is still starting (installing packages, say), the terminal shows "Starting the terminal…" instead of a 502, and points to the Log tab if it takes more than five minutes ([#594](https://github.com/owine/claude-terminal-home-assistant/issues/594))
+- a login link cut short on screen is no longer posted as a notification ([#592](https://github.com/owine/claude-terminal-home-assistant/issues/592))
+- voice and paste-bar text is typed as one line and can no longer press Enter, Tab or Escape by itself; you review it and press Enter ([#589](https://github.com/owine/claude-terminal-home-assistant/issues/589))
+- running /login while already logged in (to renew or switch account) now posts the login link as a notification too ([#593](https://github.com/owine/claude-terminal-home-assistant/issues/593))
+- a Python package installed in the persistent venv can no longer replace the app's own programs, such as a pip package that ships its own `node` ([#591](https://github.com/owine/claude-terminal-home-assistant/issues/591))
+- with persistent_pip_packages set, an offline start no longer waits minutes on pip ([#590](https://github.com/owine/claude-terminal-home-assistant/issues/590))
+
+### 📦 Dependencies
+
+- update python3 apk package to v3.14.10-r2 ([#585](https://github.com/owine/claude-terminal-home-assistant/issues/585))
+- update dependency claude-code to v2.1.325 ([#584](https://github.com/owine/claude-terminal-home-assistant/issues/584))
+- update dependency home-assistant/cli to v6 ([#580](https://github.com/owine/claude-terminal-home-assistant/issues/580))
+- update all non-major dependencies ([#567](https://github.com/owine/claude-terminal-home-assistant/issues/567), [#578](https://github.com/owine/claude-terminal-home-assistant/issues/578))
+- update py3-pip apk package to v26.1.2-r1 ([#575](https://github.com/owine/claude-terminal-home-assistant/issues/575))
+- update dependency eslint to v10.15.0 ([#572](https://github.com/owine/claude-terminal-home-assistant/issues/572))
+- update vim apk package to v9.2.1352-r0 ([#560](https://github.com/owine/claude-terminal-home-assistant/issues/560), [#561](https://github.com/owine/claude-terminal-home-assistant/issues/561), [#568](https://github.com/owine/claude-terminal-home-assistant/issues/568))
+- update nodejs apk package to v24.22.3-r0 ([#558](https://github.com/owine/claude-terminal-home-assistant/issues/558))
+
+<!-- bundled-versions -->
+### Bundled versions
+
+| Component | Version |
+|---|---|
+| Claude Code | 2.1.325 ¹ |
+| ha-mcp | 9.2.0 |
+| ttyd | 1.7.7 |
+| tmux | 3.7c |
+| Node.js | 24.22.3 |
+| GitHub CLI | 2.105.0 |
+| Home Assistant CLI | 6.0.0 |
+| uv | 0.13.9 |
+
+¹ Claude Code updates itself on a running install; this is the version the image starts with.
+
 ## [3.3.0](https://github.com/owine/claude-terminal-home-assistant/compare/v3.2.1...v3.3.0) (2026-11-11)
 
 **1 feature · 3 dependency updates**
