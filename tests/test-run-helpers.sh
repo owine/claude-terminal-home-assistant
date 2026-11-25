@@ -92,11 +92,19 @@ assert_status "empty lists install nothing" 1 test -e "$pkg_log"
 # startup carry on to the terminal; it must never abort run.sh.
 make_stub "$pkg_dir/persist-install-fails" 1
 printf '%s\n' '{"persistent_apk_packages": [], "persistent_pip_packages": ["requests"]}' > "$pkg_dir/options.json"
-pkg_status=0
-pkg_err=$( (ADDON_OPTIONS_FILE="$pkg_dir/options.json" PERSIST_INSTALL="$pkg_dir/persist-install-fails" \
-    auto_install_packages) 2>&1 >/dev/null) || pkg_status=$?
-assert_eq "a failed pip install does not fail startup" "0" "$pkg_status"
-assert_contains "it is logged as a warning" "$pkg_err" "WARNING: Failed to install Python packages"
+# Under errexit, as run.sh runs it. The subshell is a plain command, not part
+# of a `||` or `if`: bash ignores `set -e` inside any of those, subshells
+# included, so a bare failing install there would fall through unnoticed.
+(
+    set -e
+    ADDON_OPTIONS_FILE="$pkg_dir/options.json" PERSIST_INSTALL="$pkg_dir/persist-install-fails" \
+        auto_install_packages
+    echo "startup continued"
+) > "$pkg_dir/out" 2> "$pkg_dir/err"
+pkg_status=$?
+assert_eq "a failed pip install does not fail startup (errexit on)" "0" "$pkg_status"
+assert_contains "startup carries on past it" "$(cat "$pkg_dir/out")" "startup continued"
+assert_contains "it is logged as a warning" "$(cat "$pkg_dir/err")" "WARNING: Failed to install Python packages"
 
 # ---------------------------------------------------------------------------
 # export_oauth_token

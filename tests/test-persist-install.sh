@@ -262,7 +262,11 @@ make_pip_stub "$stubs" 1 0
 run_install "$stubs" install_python_packages requests
 assert_eq "a failed self-upgrade does not fail the install" "0" "$INSTALL_STATUS"
 assert_contains "and says it carried on" "$INSTALL_OUTPUT" "Could not upgrade pip"
-assert_eq "and the packages are still installed" "2" "$(pip_calls "$stubs")"
+assert_eq "and the packages are still installed, after the upgrade" \
+    "$(printf '%s\n' \
+        'install --disable-pip-version-check --timeout 10 --retries 1 --upgrade pip -q' \
+        'install --disable-pip-version-check --timeout 10 --retries 1 requests')" \
+    "$(cat "$stubs/pip.log")"
 
 # Offline with packages pip cannot find: the exit status still reports it,
 # so run.sh can warn (and carry on starting).
