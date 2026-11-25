@@ -59,6 +59,13 @@ assert_eq "run.sh's node is the system's, not the venv's" "system node" "$(node)
 assert_eq "a program only the launcher folder has is still found (claude)" \
     "launcher claude" "$(claude-test-only)"
 assert_eq "in the terminal, the venv's node wins" "venv node" "$(PATH="$TERMINAL_PATH" node)"
+# The helpers above are exercised directly; this ties them to startup. The
+# whole of init_environment touches /data, so its wiring is checked by name.
+# The call itself: the profile heredoc init_environment writes mentions the
+# name too, so the bare name would match a comment.
+# shellcheck disable=SC2016  # the needle is run.sh's source text, unexpanded
+assert_contains "init_environment sets both orders" "$(declare -f init_environment)" \
+    'set_path_orders "$persist_python/venv/bin:$HOME/.local/bin" "$persist_root/bin"'
 assert_eq "TERMINAL_PATH is not exported into run.sh's children" \
     "unset" "$(sh -c 'printf %s "${TERMINAL_PATH-unset}"')"
 
@@ -130,6 +137,8 @@ printf '%s\n' '{"init_commands": ["node", "claude-test-only", "printf \"%s\\n\" 
 out=$(orders; ADDON_OPTIONS_FILE="$work/options.json" INIT_COMMANDS_DIR="$work" run_init_commands 2>&1)
 assert_contains "an init command runs the venv's node" "$out" "[init] venv node"
 assert_contains "and finds the launcher's claude" "$out" "[init] launcher claude"
-assert_contains "with the terminal's PATH" "$out" "[init] $venv:$launcher:$sys:"
+init_path=$(printf '%s\n' "$out" | sed -n "s|.*\[init\] \($venv:.*\)|\1|p" | head -n 1)
+assert_eq "with the terminal's whole PATH, nothing dropped" \
+    "$venv:$launcher:$sys:$host_path:$legacy" "$init_path"
 
 finish_suite
