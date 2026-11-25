@@ -79,14 +79,23 @@
                 // Whether the renderer elided the rest with "…", right after
                 // the run or on the row the join stopped at.
                 let elided = clean[i].startsWith('…', at + startRun.length);
-                for (let j = i + 1; ranToEnd && filledToBoundary(raw, clean, j - 1, cols) && j < clean.length; j++) {
+                // Whether the URL may go on past the end of the capture: its
+                // last row is filled to the wrap boundary and nothing after
+                // it was captured (or only the empty string a trailing
+                // newline leaves). Then the rest - part of `state`, say - is
+                // below the pane, and what was read is only a prefix.
+                let cut = false;
+                let j = i + 1;
+                for (; ranToEnd && filledToBoundary(raw, clean, j - 1, cols) && j < clean.length; j++) {
                     if (!isAllUrl(clean[j])) { // prose / blank / border → stop
                         elided = ELIDED.test(clean[j]);
+                        cut = j === clean.length - 1 && clean[j] === '';
                         break;
                     }
                     url += clean[j];
                 }
-                if (!elided && isAuthUrl(url)) return url;
+                if (j === clean.length && ranToEnd && filledToBoundary(raw, clean, j - 1, cols)) cut = true;
+                if (!elided && !cut && isAuthUrl(url)) return url;
                 from = at + Math.max(startRun.length, 1);
             }
         }

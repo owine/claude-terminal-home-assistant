@@ -466,6 +466,25 @@ test('a truncated capture still counts as the login screen being up', async () =
     assert.deepStrictEqual(w.services(), ['create']);
 });
 
+test('captures that show only an elided or cut-off link do not dismiss it', async () => {
+    const w = world();
+    const n = w.notifier();
+    w.loginScreen(URL_A);
+    await n.tick();
+    // Rejected as incomplete (no state at all, then an ellipsis), so no URL
+    // comes back, but the link still starts on the pane.
+    w.loginScreen(AUTHORIZE);
+    for (let i = 0; i < 3; i++) await n.tick();
+    w.loginScreen(`${URL_A.slice(0, 60)}…`);
+    for (let i = 0; i < 3; i++) await n.tick();
+    assert.deepStrictEqual(w.services(), ['create'], 'still up');
+    // A pane with no login link at all still ends it after two polls.
+    w.screen = 'Login successful. Press Enter to continue\n> ';
+    await n.tick();
+    await n.tick();
+    assert.deepStrictEqual(w.services(), ['create', 'dismiss']);
+});
+
 test('a truncated URL seen first is replaced by the full one', async () => {
     const w = world();
     const n = w.notifier();

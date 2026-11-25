@@ -105,6 +105,26 @@ test('a URL elided with an ellipsis is rejected', () => {
     assert.strictEqual(reconstructLoginUrl([`│ ${PLATFORM}… │`]), null);
 });
 
+test('a URL cut off by the end of the capture, part-way through state, is rejected', () => {
+    // A width at which the last row holds only the tail of the state value,
+    // so every row before it still parses with a non-empty state.
+    const stateAt = PLATFORM.indexOf('state=') + 'state='.length;
+    let width = 0;
+    for (let w = 40; w <= 90 && !width; w++) {
+        const tail = PLATFORM.length % w;
+        if (tail > 0 && PLATFORM.length - tail > stateAt) width = w;
+    }
+    assert.ok(width, 'fixture: a width that splits the state value');
+    const rows = wrap(PLATFORM, width);
+    const prefix = rows.slice(0, -1).join('');
+    assert.ok(isAuthUrl(prefix), 'the prefix alone passes the parameter check');
+    // tmux capture-pane ends with a newline, leaving one empty string.
+    assert.strictEqual(reconstructLoginUrl([...rows.slice(0, -1), ''], width), null, 'capture ends after it');
+    assert.strictEqual(reconstructLoginUrl(rows.slice(0, -1), width), null, 'no row after it at all');
+    // The whole URL, followed by what the login screen shows next, still passes.
+    assert.strictEqual(reconstructLoginUrl([...rows, '', 'Paste code here if prompted >', ''], width), PLATFORM);
+});
+
 test('an incomplete URL on screen does not hide a complete one after it', () => {
     const rows = [wrap(CAI, 40)[0], '', CAI, '', 'Paste code here if prompted >'];
     assert.strictEqual(reconstructLoginUrl(rows), CAI);
