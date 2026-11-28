@@ -1,5 +1,34 @@
 # Changelog
 
+## [3.4.1](https://github.com/owine/claude-terminal-home-assistant/compare/v3.4.0...v3.4.1) (2026-11-28)
+
+**1 bug fix · 2 dependency updates**
+
+### 🐛 Bug Fixes
+
+- stop logging a proxy error line per starting-page reload ([#599](https://github.com/owine/claude-terminal-home-assistant/issues/599))
+
+### 📦 Dependencies
+
+- update ghcr.io/home-assistant/base:3.24 docker digest to 5021aac ([#600](https://github.com/owine/claude-terminal-home-assistant/issues/600))
+- update all non-major dependencies ([#602](https://github.com/owine/claude-terminal-home-assistant/issues/602))
+
+<!-- bundled-versions -->
+### Bundled versions
+
+| Component | Version |
+|---|---|
+| Claude Code | 2.1.326 ¹ |
+| ha-mcp | 9.2.0 |
+| ttyd | 1.7.7 |
+| tmux | 3.7c |
+| Node.js | 24.22.3 |
+| GitHub CLI | 2.105.0 |
+| Home Assistant CLI | 6.0.0 |
+| uv | 0.13.10 |
+
+¹ Claude Code updates itself on a running install; this is the version the image starts with.
+
 ## [3.4.0](https://github.com/owine/claude-terminal-home-assistant/compare/v3.3.0...v3.4.0) (2026-11-25)
 
 **1 feature · 7 bug fixes · 8 dependency updates**
